@@ -333,7 +333,7 @@ impl Office {
         };
         if run.proposed.is_some() {
             run.needs_you.push("Proposes bigger changes that need your OK.".into());
-            self.sink().notify(&format!("{name} proposes tidy changes"), "Open the report in the sidebar to approve them.");
+            self.sink().notify(&format!("{name} proposes tidy changes"), "Open the report in your Inbox to approve them.");
         }
         if earlier < tidy::REVIEWED_FIRST {
             run.needs_you.push(format!("One of {name}'s first tidies: open it to see what changed. Every change can be reverted."));

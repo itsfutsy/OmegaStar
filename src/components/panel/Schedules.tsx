@@ -163,7 +163,7 @@ export function ScheduleEditor({ e, initial, onDone }: { e: EmployeeView; initia
             <span className="field-label">Reports</span>
             <div className="misfire" role="radiogroup" aria-label="Reports">
               <button type="button" role="radio" aria-checked={!d.quiet} className="misfire-opt" onClick={() => set("quiet", false)}>
-                <span className="misfire-radio" /><span className="stack"><b>Every run</b><span>Each report shows up in your sidebar.</span></span>
+                <span className="misfire-radio" /><span className="stack"><b>Every run</b><span>Each report lands in your Inbox.</span></span>
               </button>
               <button type="button" role="radio" aria-checked={d.quiet} className="misfire-opt" onClick={() => set("quiet", true)}>
                 <span className="misfire-radio" /><span className="stack"><b>Only when something needs you</b><span>Routine runs stay in Activity. Anything {firstName(e.name)} flags, and any failed run, reaches you with a desktop notification.</span></span>
