@@ -52,6 +52,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "publisher": "Abram Industries Pty Ltd",
     "copyright": "Copyright (C) 2026 Abram Industries Pty Ltd",
     "targets": "all",
@@ -65,5 +66,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4RkNBOUEwQTg5M0E4RkMKUldUOHFKT29vS244V1BsWXYxVW1lYmJhVDJrUWxvQUR2cFIvd1VLMUJpMjFteVlCZUhmNjZ4RzIK",
+      "endpoints": ["https://github.com/itsfutsy/Omegastar/releases/latest/download/latest.json"]
+    }
   }
 }

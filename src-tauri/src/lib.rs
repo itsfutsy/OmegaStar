@@ -15,6 +15,7 @@ mod schedule;
 mod store;
 mod threads;
 mod tidy;
+mod update;
 mod watch;
 
 use log::log;
@@ -131,6 +132,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let data_dir = office::default_data_dir();
             if let Err(e) = std::fs::create_dir_all(&data_dir).and_then(|_| log::to_file(&data_dir.join("omega.log"))) {
@@ -240,6 +242,8 @@ pub fn run() {
             commands::open_backup_dir,
             commands::usage_limits,
             commands::refresh_usage,
+            commands::check_update,
+            commands::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Omega Star")
