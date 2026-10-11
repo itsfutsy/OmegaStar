@@ -1,5 +1,5 @@
 //! The sidebar's conversations: every open thread across the office, the threads archived today, and
-//! each employee's ongoing chat, composed from the Inbox's and the Chat tab's queries in one read.
+//! each employee's ongoing chat, composed from the Inbox's queries and the open tasks in one read.
 
 use super::*;
 use std::cmp::Reverse;

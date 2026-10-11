@@ -306,14 +306,11 @@ export type Commands = {
   chat: { args: { employeeId: string }; ret: Run[] };
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };
   run_detail: { args: { runId: string }; ret: RunDetail };
-  inbox: { args: Record<string, never>; ret: Thread[] };
   archived: { args: Record<string, never>; ret: Thread[] };
   /** Every open thread, the threads archived since `doneSince` (RFC 3339), and each employee's ongoing chat. */
   conversations: { args: { doneSince: string }; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
-  /** The employee's open threads, not archived: their tasks oldest first, then reports you replied to, most recently active first. */
-  threads: { args: { employeeId: string }; ret: Thread[] };
   /** Briefs left for the employee's current chat conversation, oldest first. */
   chat_briefs: { args: { employeeId: string }; ret: Brief[] };
   /** Archives a thread (any run in it) or moves it back. Archiving one you replied in briefs the ongoing chat unless `brief: false`. */

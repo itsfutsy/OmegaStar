@@ -167,11 +167,6 @@ pub async fn run_detail(office: O<'_>, run_id: String) -> Result<RunDetail> {
 }
 
 #[tauri::command]
-pub async fn inbox(office: O<'_>) -> Result<Vec<Thread>> {
-    office.inbox()
-}
-
-#[tauri::command]
 pub async fn archived(office: O<'_>) -> Result<Vec<Thread>> {
     office.archived()
 }
@@ -184,11 +179,6 @@ pub async fn conversations(office: O<'_>, done_since: String) -> Result<Conversa
 #[tauri::command]
 pub async fn thread(office: O<'_>, run_id: String) -> Result<Thread> {
     office.thread(&run_id)
-}
-
-#[tauri::command]
-pub async fn threads(office: O<'_>, employee_id: String) -> Result<Vec<Thread>> {
-    office.threads(&employee_id)
 }
 
 #[tauri::command]

@@ -976,7 +976,7 @@ impl Run {
 }
 
 /// A report and the replies you exchanged on it: the root run and every Reply run chained to it,
-/// oldest first. One chip in the employee's Chat tab. In the Inbox and the Archive a thread is a row's
+/// oldest first. One conversation in the sidebar. In the Inbox and the Archive a thread is a row's
 /// lead, with the row's other threads in `related`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
