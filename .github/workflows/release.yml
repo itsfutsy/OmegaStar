@@ -15,10 +15,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest # Apple Silicon
+          - platform: macos-latest
             args: --target aarch64-apple-darwin
-          - platform: macos-latest # Intel
-            args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
           - platform: windows-latest
@@ -42,7 +40,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -73,9 +70,9 @@ jobs:
           releaseBody: |
             Download the installer for your computer from the assets below. You'll need [Claude Code](https://claude.com/claude-code) installed and signed in.
 
-            - **macOS:** the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel).
+            - **macOS:** the `.dmg`, for Apple Silicon Macs only.
             - **Windows:** the `-setup.exe` or `.msi`. If SmartScreen appears, click **More info**, then **Run anyway**.
-            - **Linux:** the `.AppImage`, `.deb` or `.rpm` (untested).
+            - **Linux:** the `.AppImage` (untested).
           releaseDraft: true
           args: ${{ matrix.args }}
 

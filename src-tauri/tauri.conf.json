@@ -55,7 +55,7 @@
     "createUpdaterArtifacts": true,
     "publisher": "Abram Industries Pty Ltd",
     "copyright": "Copyright (C) 2026 Abram Industries Pty Ltd",
-    "targets": "all",
+    "targets": ["app", "dmg", "appimage", "nsis", "msi"],
     "macOS": {
       "signingIdentity": "-"
     },
