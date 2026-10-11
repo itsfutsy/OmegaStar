@@ -44,7 +44,7 @@ export function OrgScreen({ route }: { route: Extract<Route, { page: "org" }> })
           </>
         )}
       </PageHeader>
-      <Chart snap={snap} selectedId={route.memberId} panelOpen={panelOpen} tab={route.tab} empty={empty} />
+      <Chart snap={snap} selectedId={route.memberId} panelOpen={panelOpen} tab={route.tab} empty={empty} onClear={close} />
       {employee ? <EmployeePanel key={employee.id} employee={employee} tab={route.tab} focus={route.focus} onClose={close} /> : null}
       {person ? <PersonPanel key={person.id} person={person} onClose={close} /> : null}
       {you ? <YouPanel onClose={close} /> : null}
@@ -54,7 +54,7 @@ export function OrgScreen({ route }: { route: Extract<Route, { page: "org" }> })
 
 const VIEWS: { id: OrgView; label: string }[] = [{ id: "everyone", label: "Everyone" }, { id: "employees", label: "Employees" }, { id: "people", label: "People" }];
 
-function Chart({ snap, selectedId, panelOpen, tab, empty }: { snap: OrgSnapshot; selectedId: string | null; panelOpen: boolean; tab: PanelTab | null; empty: boolean }) {
+function Chart({ snap, selectedId, panelOpen, tab, empty, onClear }: { snap: OrgSnapshot; selectedId: string | null; panelOpen: boolean; tab: PanelTab | null; empty: boolean; onClear: () => void }) {
   const shell = useShell();
   const chart = useRef<OrgChartHandle>(null);
   const [view, setView] = useState<OrgView>("everyone");
@@ -67,7 +67,7 @@ function Chart({ snap, selectedId, panelOpen, tab, empty }: { snap: OrgSnapshot;
         <>
           <OrgChart
             ref={chart} company={snap.company} employees={snap.employees} people={snap.people} view={view}
-            selectedId={selectedId} onSelect={(id) => openMember(id, selectedId === id ? tab : null)} panelOpen={panelOpen}
+            selectedId={selectedId} onSelect={(id) => openMember(id, selectedId === id ? tab : null)} onClear={onClear} panelOpen={panelOpen}
           />
           <div className="org-controls">
             {snap.people.length > 0 ? (

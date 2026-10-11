@@ -25,8 +25,8 @@ function visibleParent(org: Parameters<typeof up>[0], id: string, visible: Set<s
 
 export const OrgChart = forwardRef<OrgChartHandle, {
   company: Company; employees: EmployeeView[]; people: PersonView[]; selectedId: string | null; view: OrgView;
-  onSelect: (id: string) => void; panelOpen: boolean;
-}>(function OrgChart({ company, employees, people, selectedId, view, onSelect, panelOpen }, ref) {
+  onSelect: (id: string) => void; onClear: () => void; panelOpen: boolean;
+}>(function OrgChart({ company, employees, people, selectedId, view, onSelect, onClear, panelOpen }, ref) {
   const shownEmployees = view === "people" ? [] : employees;
   const shownPeople = view === "employees" ? [] : people;
   const members = useMemo(() => {
@@ -79,7 +79,7 @@ export const OrgChart = forwardRef<OrgChartHandle, {
 
   const you = layout.boxes.get(YOU_ID);
   return (
-    <div className="orgscroll" ref={scroller}>
+    <div className="orgscroll" ref={scroller} onClick={(e) => { if (!(e.target as Element).closest("[data-member]")) onClear(); }}>
       <div className="orgcanvas-wrap">
         <div className="orgcanvas" style={{ width: layout.width, height: layout.height, zoom } as React.CSSProperties}>
           <svg className="org-edges" width={layout.width} height={layout.height} aria-hidden>
