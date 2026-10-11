@@ -199,6 +199,7 @@ pub fn run() {
             commands::run_detail,
             commands::inbox,
             commands::archived,
+            commands::conversations,
             commands::thread,
             commands::threads,
             commands::chat_briefs,

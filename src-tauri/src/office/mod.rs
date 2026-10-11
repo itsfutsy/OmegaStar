@@ -1,6 +1,7 @@
 //! The Office: the single writer. Owns the store, the run queue and lanes, the scheduler tick,
 //! chat, delegation and people requests. It talks to the UI only through an `EventSink`.
 
+mod conversations;
 mod inbox;
 mod members;
 mod requests;

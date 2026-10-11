@@ -24,7 +24,7 @@ impl Office {
     }
 
     /// The employees who report to you.
-    fn top_ids(employees: &[Employee]) -> HashSet<String> {
+    pub(super) fn top_ids(employees: &[Employee]) -> HashSet<String> {
         employees.iter().filter(|e| e.manager_id.is_none()).map(|e| e.id.clone()).collect()
     }
 
@@ -42,7 +42,7 @@ impl Office {
     }
 
     /// The Inbox, or with `archive` the Archive, as rows (`threads::file`).
-    fn rows(db: &Store, archive: bool) -> Result<Vec<Thread>> {
+    pub(super) fn rows(db: &Store, archive: bool) -> Result<Vec<Thread>> {
         let employees = db.employees()?;
         let top = Self::top_ids(&employees);
         let all: Vec<String> = employees.into_iter().map(|e| e.id).collect();

@@ -994,6 +994,32 @@ impl Thread {
     }
 }
 
+/// Where an employee's ongoing chat stands, for the sidebar: read from its current session's turns.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatHead {
+    pub employee_id: String,
+    /// When the newest finished turn ended; None before the first answer.
+    pub last_ended_at: Option<Ts>,
+    /// A turn is running.
+    pub live: bool,
+    /// A turn is waiting to start.
+    pub queued: bool,
+}
+
+/// Every conversation across the office, for the sidebar's shelves, in one read.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Conversations {
+    /// Open threads of every employee, one per root, most recently active first: Inbox rows (with
+    /// `related`), open tasks, reports you replied to, and top-level reports still being written.
+    pub threads: Vec<Thread>,
+    /// Threads archived since the cutoff, most recently archived first; an Inbox row comes as its lead.
+    pub done: Vec<Thread>,
+    /// One per current employee.
+    pub chats: Vec<ChatHead>,
+}
+
 /// What an employee's ongoing chat is told about a thread you archived. Written when you archive it,
 /// read by the next chat turn in that session, shown in the chat as a card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
