@@ -2,19 +2,20 @@ import { useSyncExternalStore } from "react";
 import { YOU_ID } from "./org";
 
 /** An employee panel's tabs. People and you have a single page, so no tab. */
-export type PanelTab = "work" | "skills" | "profile";
+export type PanelTab = "chat" | "work" | "skills" | "profile";
 export type ActivityView = "runs" | "skills";
 
 export type Route =
+  /** The org chart, with a member's panel open. On an employee's Chat tab, `focus` says which conversation is open. */
   | { page: "org"; memberId: string | null; tab: PanelTab | null; focus: string | null }
-  /** A conversation with an employee. `focus`: null for the ongoing chat, `thread~<root run id>`, or `new-task`. */
+  /** A conversation with an employee filling the window. `focus`: null for the ongoing chat, `thread~<root run id>`, or `new-task`. */
   | { page: "chat"; employeeId: string; focus: string | null }
   | { page: "inbox" }
   | { page: "activity"; view: ActivityView }
   | { page: "settings" }
   | { page: "run"; runId: string };
 
-const TABS: PanelTab[] = ["work", "skills", "profile"];
+const TABS: PanelTab[] = ["chat", "work", "skills", "profile"];
 
 function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
@@ -60,9 +61,14 @@ export function navigate(r: Route, opts: { replace?: boolean } = {}) {
 
 export const openMember = (memberId: string, tab: PanelTab | null = null, focus: string | null = null, replace = false) =>
   navigate({ page: "org", memberId, tab, focus }, { replace });
-/** A conversation with an employee: the ongoing chat, or with `focus` a thread or a new task. */
-export const openChat = (employeeId: string, focus: string | null = null, replace = false) =>
-  navigate({ page: "chat", employeeId, focus }, { replace });
+/** A conversation with an employee: the ongoing chat, or with `focus` a thread or a new task. It opens in the mode
+ *  you are in: full window while a conversation fills the window, else on their panel's Chat tab over the org chart. */
+export function openChat(employeeId: string, focus: string | null = null, replace = false) {
+  if (routeOf(location.hash).page === "chat") navigate({ page: "chat", employeeId, focus }, { replace });
+  else openMember(employeeId, "chat", focus, replace);
+}
+/** The conversation filling the window, whatever mode you are in. */
+export const openFullChat = (employeeId: string, focus: string | null = null) => navigate({ page: "chat", employeeId, focus });
 export const openRun = (runId: string) => navigate({ page: "run", runId });
 /** Your own panel on the org chart: name, title, company and who you report to. */
 export const openYou = () => openMember(YOU_ID);

@@ -4,7 +4,8 @@ import type { EmployeeView } from "../../api/types";
 import { firstName, relTime, whenInline } from "../../lib/format";
 import { useOrg } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
-import { openChat, openMember, openRun, type PanelTab } from "../../lib/router";
+import { openMember, openRun, type PanelTab } from "../../lib/router";
+import { Conversation } from "../../screens/Conversation";
 import { Icon } from "../Icon";
 import { Avatar, Popover, SlideOver, Tabs } from "../ui";
 import { WorkTab } from "./WorkTab";
@@ -13,12 +14,14 @@ import { ProfileTab } from "./ProfileTab";
 import "./Panel.css";
 
 const TABS: { id: PanelTab; label: string }[] = [
-  { id: "work", label: "Work" }, { id: "skills", label: "Skills" }, { id: "profile", label: "Profile" },
+  { id: "chat", label: "Chat" }, { id: "work", label: "Work" }, { id: "skills", label: "Skills" }, { id: "profile", label: "Profile" },
 ];
 
+/** An employee's slide-over on the org chart: who they are, then their conversations on the Chat tab (where it
+ *  opens), their Work, Skills and Profile. */
 export function EmployeePanel({ employee: e, tab, focus, onClose }: { employee: EmployeeView; tab: PanelTab | null; focus: string | null; onClose: () => void }) {
   const { snap } = useOrg();
-  const current = tab ?? "work";
+  const current = tab ?? "chat";
   const managerName = e.managerId
     ? snap?.employees.find((x) => x.id === e.managerId)?.name ?? snap?.people.find((x) => x.id === e.managerId)?.name ?? "None"
     : snap?.company.ceoName ?? "you";
@@ -33,13 +36,13 @@ export function EmployeePanel({ employee: e, tab, focus, onClose }: { employee: 
           <PresenceLine e={e} />
         </div>
         <div className="row" style={{ gap: 4, alignSelf: "flex-start" }}>
-          <button className="btn" onClick={() => openChat(e.id)}><Icon name="chat" size={13} /> Chat</button>
           <RunNow e={e} />
           <button className="btn btn-ghost btn-icon" aria-label="Close panel" onClick={onClose}><Icon name="close" /></button>
         </div>
       </header>
       <Tabs tabs={TABS} value={current} onChange={(t) => openMember(e.id, t, null, true)} />
       <div className="panel-body">
+        {current === "chat" ? <Conversation e={e} focus={focus} variant="panel" /> : null}
         {current === "work" ? <WorkTab e={e} /> : null}
         {current === "skills" ? <SkillsTab e={e} focus={focus} /> : null}
         {current === "profile" ? <ProfileTab e={e} onGone={onClose} /> : null}
@@ -51,7 +54,7 @@ export function EmployeePanel({ employee: e, tab, focus, onClose }: { employee: 
 function PresenceLine({ e }: { e: EmployeeView }) {
   if (e.working > 1) {
     return (
-      <button className="panel-presence panel-presence-accent" onClick={() => openChat(e.id)}>
+      <button className="panel-presence panel-presence-accent" onClick={() => openMember(e.id, "chat", null, true)}>
         <span className="panel-presence-dot" />
         Working on {e.working} things
         {e.waiting ? <><span className="faint">·</span>{e.waiting} waiting</> : null}

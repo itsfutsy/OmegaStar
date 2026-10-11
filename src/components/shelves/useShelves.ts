@@ -44,10 +44,14 @@ export const showAllOpen = (all: boolean) => openAllStore.set(all);
 /** After an explicit action (pin, snooze, done, reopen), the selected row goes where it now belongs at once. */
 export const unstick = () => stickyStore.set(null);
 
-/** The conversation key the route has open: a thread's root run id, `chat:<employee id>`, or null. */
+/** The conversation key the route has open, full window or on a panel's Chat tab (an employee panel opens on it):
+ *  a thread's root run id, `chat:<employee id>`, or null. */
 export function routeKey(route: Route): string | null {
-  if (route.page !== "chat") return null;
-  return route.focus === null ? chatKey(route.employeeId) : parseThreadFocus(route.focus);
+  const open = route.page === "chat" ? { id: route.employeeId, focus: route.focus }
+    : route.page === "org" && route.memberId && (route.tab ?? "chat") === "chat" ? { id: route.memberId, focus: route.focus }
+    : null;
+  if (!open) return null;
+  return open.focus === null ? chatKey(open.id) : parseThreadFocus(open.focus);
 }
 
 /** Opens a thread or ongoing chat row. A proposal row opens a sheet instead, so its caller handles it. */

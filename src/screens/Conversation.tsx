@@ -1,26 +1,30 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { call, errorMessage } from "../api/client";
-import type { EmployeeView, NewAttachment } from "../api/types";
+import type { EmployeeView, NewAttachment, Run } from "../api/types";
 import { firstName, runKindLabel, whenInline, whenShort } from "../lib/format";
 import { refreshOrg, useChat, useOrg, useThread } from "../lib/hooks";
 import { chatKey, markSeen, setMark, useMarks, type Mark } from "../lib/marks";
 import type { LiveRun } from "../lib/runs";
-import { navigate, openMember, openRun, type Route } from "../lib/router";
+import { navigate, openFullChat, openMember, openRun, type Route } from "../lib/router";
 import { nextRow, snoozePresets, type Placed } from "../lib/shelves";
 import { toast } from "../lib/toasts";
-import { isLive, NEW_TASK_FOCUS, parseThreadFocus } from "../lib/threads";
+import { isLive, NEW_TASK_FOCUS, parseThreadFocus, threadFocus } from "../lib/threads";
 import { kindNames } from "../components/RunRow";
 import { Icon } from "../components/Icon";
 import { Avatar, ErrorNote, Popover, Skeleton, StatePill } from "../components/ui";
 import { OngoingChat } from "../components/conversation/OngoingChat";
 import { NewTask } from "../components/conversation/NewTask";
+import { ConversationChips } from "../components/conversation/ConversationChips";
 import { DoneButton, ThreadView } from "../components/conversation/ThreadView";
 import { openRow, unstick, useShelves } from "../components/shelves/useShelves";
 import "./Conversation.css";
 
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
-/** The conversation open in the main window: an employee's ongoing chat, one of their threads, or a task about to start. */
+/** Where a conversation shows: filling the main window, or on the employee's panel over the org chart. */
+export type ConversationVariant = "full" | "panel";
+
+/** The conversation filling the main window: an employee's ongoing chat, one of their threads, or a task about to start. */
 export function ConversationScreen({ route }: { route: Extract<Route, { page: "chat" }> }) {
   const { snap, error } = useOrg();
   if (!snap) {
@@ -36,14 +40,20 @@ export function ConversationScreen({ route }: { route: Extract<Route, { page: "c
       </div>
     );
   }
-  const rootId = parseThreadFocus(route.focus);
-  if (rootId) return <ThreadConversation key={rootId} e={e} rootId={rootId} />;
-  if (route.focus === NEW_TASK_FOCUS) return <NewTaskConversation key={e.id} e={e} />;
-  return <ChatConversation key={e.id} e={e} />;
+  return <Conversation e={e} focus={route.focus} variant="full" />;
+}
+
+/** The employee's conversation that `focus` names, the same in either variant: their ongoing chat (null), a thread
+ *  (`thread~<root run id>`) or a new task. */
+export function Conversation({ e, focus, variant }: { e: EmployeeView; focus: string | null; variant: ConversationVariant }) {
+  const rootId = parseThreadFocus(focus);
+  if (rootId) return <ThreadConversation key={rootId} e={e} rootId={rootId} variant={variant} />;
+  if (focus === NEW_TASK_FOCUS) return <NewTaskConversation key={e.id} e={e} variant={variant} />;
+  return <ChatConversation key={e.id} e={e} variant={variant} />;
 }
 
 /** The thread or task with `rootId`: its header actions, and E to mark it done. */
-function ThreadConversation({ e, rootId }: { e: EmployeeView; rootId: string }) {
+function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: string; variant: ConversationVariant }) {
   const { snap } = useOrg();
   const thread = useThread(rootId);
   const { current, visible } = useShelves();
@@ -107,25 +117,25 @@ function ThreadConversation({ e, rootId }: { e: EmployeeView; rootId: string }) 
   }, [ready]);
 
   const fallback = archived ? "done" : live.length ? (live.every((t) => t.run.state === "queued") ? "queued" : "working") : null;
+  const actions = root ? (
+    <>
+      {archived ? null : <PinButton k={rootId} mark={mark} />}
+      {archived ? null : <SnoozeButton k={rootId} mark={mark} onSnooze={snooze} />}
+      {task ? null : <button className="btn btn-ghost btn-sm" onClick={() => openRun(root.id)}>Open run <Icon name="arrowUpRight" size={12} /></button>}
+      {archived
+        ? <button className="btn btn-sm" onClick={() => void reopen()}><Icon name="undo" size={13} /> Reopen</button>
+        : <DoneButton name={name} task={task} replies={replies} disabled={!ready} onDone={done} />}
+    </>
+  ) : null;
   return (
-    <div className="convo">
-      <ConversationHeader e={e} title={title} status={<Status p={current} fallback={fallback} />}>
-        {root && !archived ? <PinButton k={rootId} mark={mark} /> : null}
-        {root && !archived ? <SnoozeButton k={rootId} mark={mark} onSnooze={snooze} /> : null}
-        {root && !task ? <button className="btn btn-ghost btn-sm" onClick={() => openRun(root.id)}>Open run <Icon name="arrowUpRight" size={12} /></button> : null}
-        {root ? (
-          archived
-            ? <button className="btn btn-sm" onClick={() => void reopen()}><Icon name="undo" size={13} /> Reopen</button>
-            : <DoneButton name={name} task={task} replies={replies} disabled={!ready} onDone={done} />
-        ) : null}
-      </ConversationHeader>
+    <ConversationFrame e={e} variant={variant} focus={threadFocus(rootId)} title={title} root={root} status={<Status p={current} fallback={fallback} />} actions={actions}>
       <ThreadView e={e} rootId={rootId} thread={thread} row={row?.thread ?? null} onSendDone={archived ? null : sendDone} />
-    </div>
+    </ConversationFrame>
   );
 }
 
 /** The employee's ongoing chat, with New conversation in its header. */
-function ChatConversation({ e }: { e: EmployeeView }) {
+function ChatConversation({ e, variant }: { e: EmployeeView; variant: ConversationVariant }) {
   const chat = useChat(e.id);
   const key = chatKey(e.id);
   const { current, visible } = useShelves();
@@ -148,43 +158,77 @@ function ChatConversation({ e }: { e: EmployeeView }) {
     go();
   };
   const fallback = live.length ? (live.every((t) => t.run.state === "queued") ? "queued" : "working") : null;
+  const actions = (
+    <>
+      <PinButton k={key} mark={mark} />
+      <SnoozeButton k={key} mark={mark} onSnooze={snooze} />
+      <button className="btn btn-ghost btn-sm" onClick={() => void newConversation()} disabled={!chat.turns?.length || live.length > 0}>
+        <Icon name="newChat" size={13} /> New conversation
+      </button>
+    </>
+  );
   return (
-    <div className="convo">
-      <ConversationHeader e={e} title="Ongoing chat" status={<Status p={current} fallback={fallback} />}>
-        <PinButton k={key} mark={mark} />
-        <SnoozeButton k={key} mark={mark} onSnooze={snooze} />
-        <button className="btn btn-ghost btn-sm" onClick={() => void newConversation()} disabled={!chat.turns?.length || live.length > 0}>
-          <Icon name="newChat" size={13} /> New conversation
-        </button>
-      </ConversationHeader>
+    <ConversationFrame e={e} variant={variant} focus={null} title="Ongoing chat" status={<Status p={current} fallback={fallback} />} actions={actions}>
       <OngoingChat e={e} chat={chat} />
-    </div>
+    </ConversationFrame>
   );
 }
 
 /** A task before its first message. */
-function NewTaskConversation({ e }: { e: EmployeeView }) {
+function NewTaskConversation({ e, variant }: { e: EmployeeView; variant: ConversationVariant }) {
   return (
-    <div className="convo">
-      <ConversationHeader e={e} title="New task" status={null} />
+    <ConversationFrame e={e} variant={variant} focus={NEW_TASK_FOCUS} title="New task" status={null}>
       <NewTask e={e} />
-    </div>
+    </ConversationFrame>
   );
 }
 
-/** The one header every conversation has: who it is with, what it is, where it stands, and what you can do with it. */
-function ConversationHeader({ e, title, status, children }: { e: EmployeeView; title: string; status: ReactNode; children?: ReactNode }) {
+/** What every conversation has around it: one header saying what it is, where it stands and what you can do with
+ *  it, and a button to the other variant. Full window, the header also says who it is with; on the panel, which
+ *  already does, the employee's other conversations sit above it as chips. */
+function ConversationFrame({ e, variant, focus, title, root = null, status, actions, children }: {
+  e: EmployeeView;
+  variant: ConversationVariant;
+  /** The conversation, as the route names it. */
+  focus: string | null;
+  title: string;
+  /** A thread's root run, once loaded, for its chip when the sidebar does not have it. */
+  root?: Run | null;
+  status: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const panel = variant === "panel";
   return (
-    <header className="convo-head">
-      <Avatar name={e.name} hue={e.hue} size={32} presence={e.presence} />
-      <div className="convo-id">
-        <h1 className="convo-title" title={title}>{title}</h1>
-        <button className="convo-sub" onClick={() => openMember(e.id, "work")} title={`Open ${firstName(e.name)}'s work`}>{e.name}, {e.title}</button>
-      </div>
-      {status}
-      <span className="grow" />
-      {children ? <div className="convo-actions">{children}</div> : null}
-    </header>
+    <div className={`convo ${panel ? "convo-panel" : ""}`}>
+      {panel ? <ConversationChips e={e} focus={focus} title={title} root={root} /> : null}
+      <header className="convo-head">
+        {panel ? <h3 className="convo-title" title={title}>{title}</h3> : (
+          <>
+            <Avatar name={e.name} hue={e.hue} size={32} presence={e.presence} />
+            <div className="convo-id">
+              <h1 className="convo-title" title={title}>{title}</h1>
+              <button className="convo-sub" onClick={() => openMember(e.id, "work")} title={`Open ${firstName(e.name)}'s work`}>{e.name}, {e.title}</button>
+            </div>
+          </>
+        )}
+        {status}
+        <span className="grow" />
+        <div className="convo-actions">
+          {actions}
+          {panel ? (
+            <button className="btn btn-ghost btn-icon btn-sm" aria-label="Open full window" title="Open full window" onClick={() => openFullChat(e.id, focus)}>
+              <Icon name="expand" size={14} />
+            </button>
+          ) : (
+            <button className="btn btn-ghost btn-icon btn-sm" aria-label="Show on the org chart" title="Show on the org chart" onClick={() => openMember(e.id, "chat", focus)}>
+              <Icon name="org" size={14} />
+            </button>
+          )}
+        </div>
+      </header>
+      {children}
+    </div>
   );
 }
 
