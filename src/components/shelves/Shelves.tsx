@@ -71,13 +71,14 @@ function ShelfSection({ shelf, rows, openAll, folded, sideCollapsed, selected, j
   );
 }
 
-/** What a row says on its right: when a snooze ends, that it waits for a free slot, or whose it is. */
+/** What a row says on its right: when a snooze ends, that it waits for a free slot, or whose it is. An ongoing chat
+ *  says "Chat" beside threads, and the employee's title on Team, where every row is one. */
 function meta(p: Placed): string {
   if (p.shelf === "snoozed" && p.mark.snoozedUntil) return timeOrDay(p.mark.snoozedUntil);
   if (p.queued) return "queued";
   switch (p.row.kind) {
     case "thread": return firstName(p.row.employee.name);
-    case "chat": return p.row.employee.title;
+    case "chat": return p.shelf === "team" ? p.row.employee.title : "Chat";
     case "proposal": return "Proposal";
   }
 }
