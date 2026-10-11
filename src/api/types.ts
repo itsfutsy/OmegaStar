@@ -284,9 +284,8 @@ export type Commands = {
   run_now: { args: { employeeId: string; instruction: string | null }; ret: Run };
   cancel_run: { args: { runId: string }; ret: null };
   send_chat: { args: { employeeId: string; text: string; attachments: NewAttachment[] }; ret: Run };
-  /** A task beside the ongoing chat, run at the same time as everything else. It starts from the ongoing chat, or with
-   *  `from` from the thread (any run in it) of a report or another task. */
-  start_task: { args: { employeeId: string; text: string; attachments: NewAttachment[]; from: string | null }; ret: Run };
+  /** A task beside the ongoing chat, run at the same time as everything else. It starts from the ongoing chat. */
+  start_task: { args: { employeeId: string; text: string; attachments: NewAttachment[] }; ret: Run };
   open_attachment: { args: { runId: string; name: string }; ret: null };
   new_chat: { args: { employeeId: string }; ret: null };
   chat: { args: { employeeId: string }; ret: Run[] };

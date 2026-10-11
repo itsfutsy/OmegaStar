@@ -80,9 +80,8 @@ impl Office {
     }
 
     /// Starts a task: a conversation of its own, so the employee works on it at the same time as
-    /// everything else. It starts from the conversation you were in: the ongoing chat, or with `from`
-    /// the thread (any run in it) of a report or another task.
-    pub fn start_task(&self, employee_id: &str, text: &str, attachments: Vec<NewAttachment>, from: Option<&str>) -> Result<Run> {
+    /// everything else. It starts from what you discussed in the ongoing chat.
+    pub fn start_task(&self, employee_id: &str, text: &str, attachments: Vec<NewAttachment>) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("message is empty"));
@@ -91,17 +90,8 @@ impl Office {
         let mut run = {
             let db = self.db();
             let e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
-            let (source, runs) = match from {
-                Some(id) => {
-                    let t = Self::thread_in(&db, id)?;
-                    let label = threads::report_label(&t.root.kind);
-                    let source = if matches!(t.root.kind, RunKind::Task { .. }) { format!("the task '{label}'") } else { format!("the thread on your report '{label}'") };
-                    (source, std::iter::once(t.root).chain(t.replies).collect::<Vec<_>>())
-                }
-                None => ("your chat".to_string(), db.chat_runs(&e.id, &e.chat_session)?),
-            };
-            let context = threads::context(&ceo_of(&db)?, &runs);
-            let from = (!context.is_empty()).then_some(source);
+            let context = threads::context(&ceo_of(&db)?, &db.chat_runs(&e.id, &e.chat_session)?);
+            let from = (!context.is_empty()).then(|| "your chat".to_string());
             let names: Vec<String> = attachments.iter().map(|a| a.name.clone()).collect();
             Run::new(&e.id, RunKind::Task { label: threads::task_label(text, &names), from, context }, text.to_string(), now())
         };

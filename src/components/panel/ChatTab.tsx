@@ -12,7 +12,7 @@ import { Icon } from "../Icon";
 import { Avatar, Skeleton } from "../ui";
 import { ChatSurface, type ChatSurfaceHandle } from "./ChatSurface";
 import { Turn } from "./ChatTurn";
-import { startTask, ThreadView } from "./ThreadView";
+import { ThreadView } from "./ThreadView";
 import "./ChatTab.css";
 
 const TEACH_PREFIX = "I want to teach you a new task: ";
@@ -88,13 +88,17 @@ function ThreadChip({ t, on, onClick }: { t: Thread; on: boolean; onClick: () =>
   );
 }
 
-/** A task before its first message: what you send starts it, beside everything else. */
+/** A task before its first message: what you send starts it, beside everything else, and opens it. */
 function NewTask({ e }: { e: EmployeeView }) {
   const name = firstName(e.name);
+  const start = async (text: string, attachments: NewAttachment[]) => {
+    const run = await call("start_task", { employeeId: e.id, text, attachments });
+    openMember(e.id, "chat", threadFocus(run.id), true);
+  };
   return (
     <ChatSurface
       e={e} busy={false} draftKey={`new-task:${e.id}`} scrollKey="" startsTask
-      placeholder={`What should ${name} work on?`} onSend={(text, attachments) => startTask(e, text, attachments, null)}
+      placeholder={`What should ${name} work on?`} onSend={start}
     >
       <div className="task-empty">
         <span className="task-empty-icon"><Icon name="branch" size={22} /></span>

@@ -4,8 +4,8 @@ import type { EmployeeView, NewAttachment, Run } from "../../api/types";
 import { dateLong, firstName, relTime, runKindLabel, whenInline } from "../../lib/format";
 import { useOrg, useThread } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
-import { openMember, openRun } from "../../lib/router";
-import { didNotFinish, isLive, threadFocus } from "../../lib/threads";
+import { openRun } from "../../lib/router";
+import { didNotFinish, isLive } from "../../lib/threads";
 import { kindIcon, kindNames } from "../RunRow";
 import { BlockedCard } from "../BlockedCard";
 import { TidyProposal } from "../TidyProposal";
@@ -19,13 +19,6 @@ import "../../screens/Inbox.css";
 
 const TEACH_PREFIX = "I want to teach you a new task: ";
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-
-/** Starts a task and opens it, so you see it start. `from`: the thread (any run in it) it starts from;
- *  without it, the ongoing chat. */
-export async function startTask(e: EmployeeView, text: string, attachments: NewAttachment[], from: string | null) {
-  const run = await call("start_task", { employeeId: e.id, text, attachments, from });
-  openMember(e.id, "chat", threadFocus(run.id), true);
-}
 
 /**
  * A thread on one of the employee's reports, or a task, read as a conversation: the report (or your first
