@@ -214,6 +214,7 @@ export type SkillRevision = SkillChange & {
 
 export type RunEvent =
   | { type: "init"; model: string; skills: string[] }
+  | { type: "user"; text: string }                 // a message you sent into the run while it worked
   | { type: "text"; text: string }
   | { type: "textDelta"; text: string }
   | { type: "toolCall"; id: string; tool: string; brief: string }

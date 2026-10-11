@@ -7,8 +7,9 @@ import { Icon, type IconName } from "./Icon";
 import { Avatar, StatePill } from "./ui";
 import "./Transcript.css";
 
-type TranscriptItem =
+export type TranscriptItem =
   | { kind: "text"; key: string; text: string }
+  | { kind: "user"; key: string; text: string }
   | { kind: "tools"; key: string; tools: ToolItem[] }
   | { kind: "skill"; key: string; skill: string; file: string; change: SkillChangeKind }
   | { kind: "delegated"; key: string; childRunId: string; employeeId: string; task: string; asked: boolean; handoff: boolean }
@@ -27,6 +28,7 @@ export function toItems(events: RunEvent[]): TranscriptItem[] {
     const key = `e${i}`;
     switch (ev.type) {
       case "text": out.push({ kind: "text", key, text: ev.text }); break;
+      case "user": out.push({ kind: "user", key, text: ev.text }); break;
       case "textDelta": break;
       case "toolCall": {
         const t: ToolItem = { id: ev.id, tool: ev.tool, brief: ev.brief, result: null };

@@ -97,12 +97,10 @@
 .task-chip-wait:not([aria-pressed="true"]) { color: var(--muted); }
 .task-chip-wait .thread-chip-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--live); }
 
-/* While a turn is in flight the composer stays open, and its send button says a task will start. */
+/* In a new task the send button says a task will start. */
 .composer-send.composer-send-task { width: auto; height: 32px; padding: 0 12px 0 10px; gap: 6px; }
-.composer-fork { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
-.composer-fork svg { flex: none; color: var(--faint); }
 
-/* A turn waiting for a free slot. */
+/* A turn waiting to start. */
 .task-wait {
   display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; color: var(--ink-2);
   border: 1px dashed color-mix(in oklab, var(--live) 45%, var(--line-strong)); background: var(--raised);

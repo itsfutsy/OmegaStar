@@ -35,11 +35,11 @@ export type ChatSurfaceHandle = {
  * The surface a conversation with an employee happens on: the scrolling transcript (`children`), a drop
  * zone for files, and the composer. The ongoing chat and every thread share it; what differs is where a
  * message goes (`onSend`) and what sits in the composer's bar (`actions`). While a turn is in flight the
- * composer stays open when `onTask` is given: what you send then starts a task beside it.
+ * composer stays open: what you send reaches the employee as they work.
  */
 export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   e: EmployeeView;
-  /** A turn is in flight: the composer waits for it. */
+  /** A turn is in flight. */
   busy: boolean;
   /** The turn in flight, for its sub-agents and the Stop button. */
   live?: LiveRun;
@@ -50,15 +50,13 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   /** Changes as content streams, so the view stays pinned to the bottom unless the reader scrolled up. */
   scrollKey: string;
   onSend: (text: string, attachments: NewAttachment[]) => Promise<void>;
-  /** Where a message goes while a turn is in flight: a new task. Without it the composer waits. */
-  onTask?: (text: string, attachments: NewAttachment[]) => Promise<void>;
   /** Sending starts a task, so the button says so. */
   startsTask?: boolean;
   onStop?: () => Promise<void>;
   /** Extra buttons in the bar, after the paperclip. */
   actions?: ReactNode;
   children: ReactNode;
-}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, onTask, startsTask = false, onStop, actions, children }, ref) {
+}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, startsTask = false, onStop, actions, children }, ref) {
   const [text, setText] = useState(() => getDraft(draftKey));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -69,10 +67,6 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   const input = useRef<HTMLTextAreaElement>(null);
   const stick = useRef(true);
   const name = firstName(e.name);
-  // Busy with a way to start a task: the composer stays open and a message becomes a task.
-  const forking = busy && !!onTask;
-  const waiting = sending || (busy && !forking);
-  const asTask = forking || startsTask;
   const hasContent = !!text.trim() || files.length > 0;
 
   useImperativeHandle(ref, () => ({
@@ -97,7 +91,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   };
 
   const addFiles = (list: File[]) => {
-    if (waiting || list.length === 0) return;
+    if (sending || list.length === 0) return;
     const tooBig = list.filter((f) => f.size > MAX_FILE_MB * 1024 * 1024);
     if (tooBig.length) toast(`${tooBig.map((f) => f.name).join(", ")} ${tooBig.length === 1 ? "is" : "are"} over ${MAX_FILE_MB} MB.`, "err");
     const room = MAX_FILES - files.length;
@@ -126,18 +120,18 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   }, [text]);
 
   useEffect(() => {
-    if (!waiting) input.current?.focus({ preventScroll: true });
-  }, [waiting]);
+    if (!sending) input.current?.focus({ preventScroll: true });
+  }, [sending]);
 
   const send = async () => {
     const body = text.trim();
-    if ((!body && !files.length) || waiting) return;
+    if ((!body && !files.length) || sending) return;
     setSending(true);
     setSendError(null);
     stick.current = true;
     try {
       const attachments = await Promise.all(files.map((f) => toAttachment(f.file)));
-      await (forking ? onTask ?? onSend : onSend)(body, attachments);
+      await onSend(body, attachments);
       // Cleared in the store too: sending may have moved you to another conversation already.
       setDraft(draftKey, "");
       setText("");
@@ -153,7 +147,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     <div
       className={`chat ${dragging ? "chat-dragging" : ""}`}
       onDragOver={(ev) => {
-        if (!ev.dataTransfer.types.includes("Files") || waiting) return;
+        if (!ev.dataTransfer.types.includes("Files") || sending) return;
         ev.preventDefault();
         setDragging(true);
       }}
@@ -174,13 +168,13 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
       <div className="composer-wrap">
         {sendError ? <ErrorNote text={sendError} /> : null}
         {live ? <SubAgents tasks={live.tasks} runActive /> : null}
-        <div className={`composer ${waiting ? "composer-busy" : ""}`}>
+        <div className={`composer ${sending ? "composer-busy" : ""}`}>
           {files.length ? (
             <div className="composer-files">
               {files.map((f) => (
                 <div key={f.id} className={`attach ${f.preview ? "attach-image" : ""}`} title={f.file.name}>
                   {f.preview ? <img src={f.preview} alt={f.file.name} /> : <><Icon name="file" size={13} /><span className="attach-name">{f.file.name}</span></>}
-                  <button className="attach-remove" aria-label={`Remove ${f.file.name}`} disabled={waiting} onClick={() => clearFiles(files.filter((x) => x !== f))}>
+                  <button className="attach-remove" aria-label={`Remove ${f.file.name}`} disabled={sending} onClick={() => clearFiles(files.filter((x) => x !== f))}>
                     <Icon name="close" size={10} strokeWidth={2} />
                   </button>
                 </div>
@@ -188,8 +182,8 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
             </div>
           ) : null}
           <textarea
-            ref={input} className="composer-input" value={text} disabled={waiting} rows={1}
-            placeholder={waiting ? `${name} is working…` : forking ? `${name} is working on this. Anything you send starts a new task.` : placeholder}
+            ref={input} className="composer-input" value={text} disabled={sending} rows={1}
+            placeholder={busy ? `Message ${name}. They'll see it as they work.` : placeholder}
             onChange={(ev) => setText(ev.target.value)}
             onPaste={(ev) => {
               const pasted = [...ev.clipboardData.files];
@@ -202,21 +196,20 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
           />
           <div className="composer-bar">
             <input ref={picker} type="file" multiple hidden onChange={(ev) => { addFiles([...(ev.target.files ?? [])]); ev.target.value = ""; }} />
-            <button className="btn btn-ghost btn-icon btn-sm" aria-label="Attach files" title="Attach files, or paste a screenshot" onClick={() => picker.current?.click()} disabled={waiting}><Icon name="paperclip" size={14} /></button>
+            <button className="btn btn-ghost btn-icon btn-sm" aria-label="Attach files" title="Attach files, or paste a screenshot" onClick={() => picker.current?.click()} disabled={sending}><Icon name="paperclip" size={14} /></button>
             {actions}
             <span className="grow" />
-            {forking && hasContent ? <span className="composer-fork"><Icon name="branch" size={12} /> Runs alongside this one</span> : null}
             {live && onStop ? (
               <ConfirmButton label="Stop" icon="stop" className="btn btn-ghost" size="btn-sm" question={`Stop ${name}?`} confirmLabel="Stop it" onConfirm={onStop} />
             ) : (
               hint ? <span className="composer-hint faint">{hint}</span> : null
             )}
-            {asTask && hasContent ? (
-              <button className="btn btn-primary btn-sm composer-send composer-send-task" title="Start as a new task (Enter). Shift+Enter adds a new line." disabled={waiting} onClick={() => void send()}>
+            {startsTask && hasContent ? (
+              <button className="btn btn-primary btn-sm composer-send composer-send-task" title="Start as a new task (Enter). Shift+Enter adds a new line." disabled={sending} onClick={() => void send()}>
                 <Icon name="branch" size={13} /> Start task
               </button>
             ) : (
-              <button className="btn btn-primary btn-icon btn-sm composer-send" aria-label="Send" title="Send (Enter). Shift+Enter adds a new line." disabled={waiting || !hasContent} onClick={() => void send()}>
+              <button className="btn btn-primary btn-icon btn-sm composer-send" aria-label="Send" title="Send (Enter). Shift+Enter adds a new line." disabled={sending || !hasContent} onClick={() => void send()}>
                 <Icon name="send" size={14} strokeWidth={1.8} />
               </button>
             )}

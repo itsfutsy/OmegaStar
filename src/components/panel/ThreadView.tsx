@@ -30,8 +30,8 @@ export async function startTask(e: EmployeeView, text: string, attachments: NewA
 /**
  * A thread on one of the employee's reports, or a task, read as a conversation: the report (or your first
  * message) first, then each reply as a turn, with a composer that answers in it. A report's thread also sits
- * in your Inbox; archiving it there or here ends it in both places. While the employee is answering, what you
- * send starts a new task from here.
+ * in your Inbox; archiving it there or here ends it in both places. What you send while the employee works
+ * reaches them as they work, or runs as the next reply.
  */
 export function ThreadView({ e, rootId, onRoot, onArchived }: { e: EmployeeView; rootId: string; onRoot: (root: Run) => void; onArchived: () => void }) {
   const { snap } = useOrg();
@@ -39,7 +39,7 @@ export function ThreadView({ e, rootId, onRoot, onArchived }: { e: EmployeeView;
   const surface = useRef<ChatSurfaceHandle>(null);
   const root = turns?.[0]?.run;
   const replies = turns?.slice(1) ?? [];
-  const live = turns?.find((t) => isLive(t.run));
+  const live = turns?.find((t) => t.run.state === "running") ?? turns?.find((t) => isLive(t.run));
   const archived = !!root?.archivedAt;
   const task = root?.kind.type === "task";
   const name = firstName(e.name);
@@ -127,7 +127,6 @@ export function ThreadView({ e, rootId, onRoot, onArchived }: { e: EmployeeView;
       <ChatSurface
         ref={surface} e={e} busy={!!live} live={live} draftKey={`thread:${rootId}`} scrollKey={liveKey}
         placeholder={`Reply to ${name} in this ${place}…`} hint={hint} onSend={send} onStop={stop}
-        onTask={(text, attachments) => startTask(e, text, attachments, rootId)}
         actions={live ? null : <button className="btn btn-ghost btn-sm" onClick={() => surface.current?.prefill(TEACH_PREFIX)}><Icon name="teach" size={13} /> Teach a new task</button>}
       >
         <div className="chat-inner">

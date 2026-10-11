@@ -109,14 +109,14 @@ function NewTask({ e }: { e: EmployeeView }) {
 
 type Item = { kind: "turn"; at: string; turn: LiveRun } | { kind: "brief"; at: string; brief: Brief };
 
-/** The long-lived conversation, with a card for each thread or task you archived since it carried on. While
- *  it is busy, what you send starts a task. */
+/** The long-lived conversation, with a card for each thread or task you archived since it carried on. What
+ *  you send while a turn works reaches it there, or runs as the next turn. */
 function OngoingChat({ e, chat }: { e: EmployeeView; chat: Conversation }) {
   const { turns, error, reload, appendRun } = chat;
   const briefs = useQuery(() => call("chat_briefs", { employeeId: e.id }), [e.id], ["run:updated", "org:changed"]);
   const surface = useRef<ChatSurfaceHandle>(null);
   const name = firstName(e.name);
-  const live = turns?.find((t) => t.run.state === "running" || t.run.state === "queued");
+  const live = turns?.find((t) => t.run.state === "running") ?? turns?.find((t) => t.run.state === "queued");
   const busy = !!live;
   const liveKey = turns ? `${turns.length}:${turns[turns.length - 1]?.events.length}:${turns[turns.length - 1]?.live.length}` : "";
   const items = useMemo<Item[]>(() => {
@@ -152,7 +152,6 @@ function OngoingChat({ e, chat }: { e: EmployeeView; chat: Conversation }) {
     <ChatSurface
       ref={surface} e={e} busy={busy} live={live} draftKey={e.id} scrollKey={`${liveKey}:${briefs.data?.length ?? 0}`}
       placeholder={`Message ${name}. Teach them something, or ask.`} onSend={send} onStop={stop}
-      onTask={(text, attachments) => startTask(e, text, attachments, null)}
       actions={busy ? null : (
         <>
           <button className="btn btn-ghost btn-sm" onClick={teach}><Icon name="teach" size={13} /> Teach a new task</button>

@@ -95,6 +95,7 @@ export function RunView({ runId }: { runId: string }) {
           <div className="rv-events">
             {items.map((it) => {
               switch (it.kind) {
+                case "user": return <section key={it.key} className="rv-prompt"><span className="rv-prompt-label">You added</span><p>{it.text}</p></section>;
                 case "init": return <div key={it.key} className="rv-init mono"><Icon name="play" size={11} /> Started on {it.model} · {it.skills.length} skills available</div>;
                 // The closing message is the report, shown once below rather than twice.
                 case "text": return result?.kind === "result" && result.text?.trim() === it.text.trim() ? null : <Markdown key={it.key} text={it.text} />;
