@@ -1,6 +1,6 @@
 // A thread is a report and the replies you exchanged on it (`Thread { root, replies }`). A task is a thread
-// too, whose root is your first message. These helpers read one the same way everywhere: the sidebar's shelves,
-// the conversation screen, and the Archive.
+// too, whose root is your first message. These helpers read one the same way everywhere: the Inbox and its
+// Archive, the panel's chips, and the conversation screen.
 import type { Run, Thread } from "../api/types";
 
 export const isLive = (r: Run): boolean => r.state === "running" || r.state === "queued";

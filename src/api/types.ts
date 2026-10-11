@@ -187,10 +187,10 @@ export type ChatHead = {
   live: boolean;               // a turn is running
   queued: boolean;             // a turn is waiting to start
 };
-/** Every conversation across the office, for the sidebar's shelves. */
+/** Every conversation across the office, for the Inbox and each employee's chips. */
 export type Conversations = {
   threads: Thread[];           // open threads of every employee, one per root, most recently active first
-  done: Thread[];              // threads archived since `doneSince`, most recently archived first
+  inbox: string[];             // root ids of the threads that lead an Inbox row: reports that reached you
   chats: ChatHead[];           // one per current employee
 };
 /** What an employee's ongoing chat is told about a thread or task you archived; the chat shows it as a card. */
@@ -307,8 +307,8 @@ export type Commands = {
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };
   run_detail: { args: { runId: string }; ret: RunDetail };
   archived: { args: Record<string, never>; ret: Thread[] };
-  /** Every open thread, the threads archived since `doneSince` (RFC 3339), and each employee's ongoing chat. */
-  conversations: { args: { doneSince: string }; ret: Conversations };
+  /** Every open thread, which of them lead an Inbox row, and each employee's ongoing chat. */
+  conversations: { args: Record<string, never>; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
   /** Briefs left for the employee's current chat conversation, oldest first. */

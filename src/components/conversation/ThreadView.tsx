@@ -1,11 +1,12 @@
 import { useRef, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, NewAttachment, Run, Thread } from "../../api/types";
-import { dateLong, firstName, relTime } from "../../lib/format";
+import { dateLong, firstName, relTime, whenShort } from "../../lib/format";
 import { useOrg, type Conversation } from "../../lib/hooks";
+import { snoozePresets } from "../../lib/status";
 import { toast } from "../../lib/toasts";
 import { didNotFinish, isLive } from "../../lib/threads";
-import { RowHistory } from "../../screens/InboxItem";
+import { RowHistory } from "./RowHistory";
 import { BlockedCard } from "../BlockedCard";
 import { TidyProposal } from "../TidyProposal";
 import { Icon } from "../Icon";
@@ -21,17 +22,19 @@ const TEACH_PREFIX = "I want to teach you a new task: ";
 /**
  * A thread on one of the employee's reports, or a task, read as a conversation: the report (or your first
  * message) first, then each reply as a turn, with a composer that answers in it. What you send while the
- * employee works reaches them as they work, or runs as the next reply. The conversation screen holds the
- * thread's runs (`thread`) for its header, and the rest of an Inbox row (`row`) when the thread leads one.
+ * employee works reaches them as they work, or runs as the next reply. Whoever shows it (the conversation
+ * screen, an Inbox row) holds the thread's runs (`thread`), and the rest of an Inbox row (`row`) when it leads one.
  */
-export function ThreadView({ e, rootId, thread, row, onSendDone }: {
+export function ThreadView({ e, rootId, thread, row, onSendDone, autoFocus = true }: {
   e: EmployeeView;
   rootId: string;
   thread: Conversation;
-  /** The thread as the sidebar has it, with the other threads filed under its Inbox row in `related`. */
+  /** The thread as the Inbox has it, with the other threads filed under its row in `related`. */
   row: Thread | null;
   /** "Send & done": the reply goes, and the thread comes back only if the answer needs you. Null when done already. */
   onSendDone: ((text: string, attachments: NewAttachment[]) => Promise<void>) | null;
+  /** The composer takes focus when the thread appears. */
+  autoFocus?: boolean;
 }) {
   const { snap } = useOrg();
   const { turns, error, reload, appendRun } = thread;
@@ -76,7 +79,7 @@ export function ThreadView({ e, rootId, thread, row, onSendDone }: {
     <div className="thread">
       <ChatSurface
         ref={surface} e={e} busy={!!live} live={live} draftKey={`thread:${rootId}`} scrollKey={liveKey}
-        placeholder={`Reply to ${name} in this ${place}…`} hint={hint} onSend={send} onSendDone={onSendDone ?? undefined} onStop={stop}
+        placeholder={`Reply to ${name} in this ${place}…`} hint={hint} onSend={send} onSendDone={onSendDone ?? undefined} onStop={stop} autoFocus={autoFocus}
         actions={live ? null : <button className="btn btn-ghost btn-sm" onClick={() => surface.current?.prefill(TEACH_PREFIX)}><Icon name="teach" size={13} /> Teach a new task</button>}
       >
         <div className="chat-inner">
@@ -127,8 +130,43 @@ function ReportTurn({ root, e, blocked, archived }: { root: Run; e: EmployeeView
   );
 }
 
+/** Whether marking a thread done can brief the employee's ongoing chat: a task, or a report you replied to. */
+export const canBrief = (task: boolean, replies: number): boolean => task || replies > 0;
+
+/** Marks the thread with `rootId` done, which archives it, and offers Undo. `brief`: the ongoing chat of `name` hears
+ *  what was decided. Resolves false, having said why, when it failed. */
+export async function markDone(rootId: string, name: string, brief: boolean): Promise<boolean> {
+  try {
+    await call("set_archived", { runId: rootId, archived: true, brief });
+  } catch (err) {
+    toast(errorMessage(err), "err");
+    return false;
+  }
+  const undo = () => void call("set_archived", { runId: rootId, archived: false }).catch((err) => toast(errorMessage(err), "err"));
+  toast(brief ? `Done. ${name} hears what was decided in their ongoing chat.` : "Done", "ok", { label: "Undo", run: undo });
+  return true;
+}
+
+/** Brings a thread you marked done back, and offers Undo. */
+export async function reopen(rootId: string) {
+  try {
+    await call("set_archived", { runId: rootId, archived: false });
+  } catch (err) {
+    toast(errorMessage(err), "err");
+    return;
+  }
+  const undo = () => void call("set_archived", { runId: rootId, archived: true, brief: false }).catch((err) => toast(errorMessage(err), "err"));
+  toast("Reopened", "ok", { label: "Undo", run: undo });
+}
+
+/** "Send & done": the reply goes with the thread marked done, and it comes back only if the answer needs you. */
+export async function sendAndDone(rootId: string, name: string, text: string, attachments: NewAttachment[]) {
+  await call("reply_to_run", { runId: rootId, text, archive: true, attachments });
+  toast(`Sent to ${name}. It comes back only if the answer needs you.`, "ok");
+}
+
 /** Done, with one choice: whether the employee's ongoing chat hears what the thread or task decided. Done is the
- *  archive: the thread leaves the sidebar after today, and comes back if the employee raises something new. */
+ *  archive: the thread leaves the Inbox and the employee's chips, and comes back if the employee raises something new. */
 export function DoneButton({ name, task, replies, disabled, onDone }: {
   /** The employee's first name. */
   name: string;
@@ -154,11 +192,11 @@ export function DoneButton({ name, task, replies, disabled, onDone }: {
             <span className="h-md">Done with this {task ? "task" : "thread"}?</span>
             <span className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
               {task
-                ? `It moves to Done today, then out of the sidebar. You can still find it in ${name}'s Work tab.`
-                : `It moves to Done today, then out of the sidebar. You can still find it under Archive in your Inbox, and in ${name}'s Work tab.`}
+                ? `It leaves your Inbox. You can still find it in ${name}'s Work tab.`
+                : `It moves to the Archive in your Inbox, and stays in ${name}'s Work tab.`}
             </span>
           </div>
-          {task || replies > 0 ? (
+          {canBrief(task, replies) ? (
             <div className="thread-brief-opt">
               <Switch checked={brief} onChange={setBrief} label={`Brief ${name}'s ongoing chat`} />
               <span className="stack" style={{ gap: 1 }}>
@@ -172,11 +210,43 @@ export function DoneButton({ name, task, replies, disabled, onDone }: {
             <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Keep</button>
             <button
               className="btn btn-primary btn-sm" disabled={busy}
-              onClick={async () => { setBusy(true); try { await onDone(brief && (task || replies > 0)); } finally { setBusy(false); setOpen(false); } }}
+              onClick={async () => { setBusy(true); try { await onDone(brief && canBrief(task, replies)); } finally { setBusy(false); setOpen(false); } }}
             >
               <Icon name="check" size={13} /> Mark done
             </button>
           </div>
+        </div>
+      </Popover>
+    </>
+  );
+}
+
+/** Snooze puts the thread away until a time, then brings it back to the Inbox as unread. While it is snoozed
+ *  (`snoozedUntil`), Wake now. */
+export function SnoozeButton({ snoozedUntil, onSnooze, onWake }: { snoozedUntil: string | null; onSnooze: (until: Date) => void; onWake: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  if (snoozedUntil) {
+    return (
+      <button className="btn btn-ghost btn-sm" onClick={onWake}>
+        <Icon name="clock" size={13} /> Wake now
+      </button>
+    );
+  }
+  const presets = open ? snoozePresets(new Date()) : [];
+  return (
+    <>
+      <button ref={ref} className="btn btn-ghost btn-sm" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <Icon name="clock" size={13} /> Snooze
+      </button>
+      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} width={232}>
+        <div className="menu" role="menu" aria-label="Snooze until" data-esc-stop>
+          {presets.map((s) => (
+            <button key={s.label} type="button" role="menuitem" className="menu-item" onClick={() => { setOpen(false); onSnooze(s.until); }}>
+              <span className="grow">{s.label}</span>
+              <span className="faint">{whenShort(s.until.toISOString()).replace(s.label === "Tomorrow" ? /^Tomorrow / : /^Today /, "")}</span>
+            </button>
+          ))}
         </div>
       </Popover>
     </>

@@ -57,8 +57,10 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   onStop?: () => Promise<void>;
   /** Extra buttons in the bar, after the paperclip. */
   actions?: ReactNode;
+  /** The composer takes focus when it appears. Off in an Inbox row, so its keys keep working until you click in. */
+  autoFocus?: boolean;
   children: ReactNode;
-}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, onSendDone, startsTask = false, onStop, actions, children }, ref) {
+}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, onSendDone, startsTask = false, onStop, actions, autoFocus = true, children }, ref) {
   const [text, setText] = useState(() => getDraft(draftKey));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -121,9 +123,11 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     el.style.height = `${Math.min(200, Math.max(44, el.scrollHeight))}px`;
   }, [text]);
 
+  const wasSending = useRef(false);
   useEffect(() => {
-    if (!sending) input.current?.focus({ preventScroll: true });
-  }, [sending]);
+    if (!sending && (autoFocus || wasSending.current)) input.current?.focus({ preventScroll: true });
+    wasSending.current = sending;
+  }, [sending, autoFocus]);
 
   const send = async (to = onSend) => {
     const body = text.trim();

@@ -7,9 +7,10 @@ import { HireSheet } from "./components/HireSheet";
 import { AddPersonSheet } from "./components/AddPersonSheet";
 import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
-import { NewTaskButton, Shelves } from "./components/shelves/Shelves";
-import { initials } from "./lib/format";
-import { openYou, useRoute } from "./lib/router";
+import { Avatar } from "./components/ui";
+import { usePruneMarks, useStatuses } from "./components/conversation/useStatuses";
+import { firstName, initials } from "./lib/format";
+import { openMember, openYou, useRoute } from "./lib/router";
 import { YOU_ID } from "./lib/org";
 import { useOrg, useProposals } from "./lib/hooks";
 import { storageGet, storageSet } from "./lib/storage";
@@ -45,6 +46,8 @@ export function Shell() {
   const [sheetKey, setSheetKey] = useState(0);
   const [palette, setPalette] = useState(false);
   const [collapsed, setCollapsed] = useState(() => storageGet(COLLAPSE_KEY) === "1");
+  const { items } = useStatuses();
+  usePruneMarks();
 
   const api = useMemo<ShellApi>(() => {
     const open = (s: Sheet) => { setSheet(s); setSheetKey((k) => k + 1); };
@@ -64,7 +67,9 @@ export function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const proposals = useProposals();
-  const inboxCount = (snap?.people ?? []).reduce((s, p) => s + p.openRequests, 0) + (proposals ?? []).filter((p) => p.state === "open").length;
+  const waiting = (snap?.people ?? []).reduce((s, p) => s + p.openRequests, 0) + (proposals ?? []).filter((p) => p.state === "open").length;
+  const unread = (items ?? []).filter((i) => i.status.inbox && i.status.unread).length;
+  const inboxCount = waiting + unread;
 
   const closeSheet = useCallback(() => setSheet(null), []);
   const toggleCollapsed = () => setCollapsed((c) => { storageSet(COLLAPSE_KEY, c ? "0" : "1"); return !c; });
@@ -80,6 +85,10 @@ export function Shell() {
     case "run": page = <RunView key={route.runId} runId={route.runId} />; break;
   }
   const memberSelected = route.page === "org" ? route.memberId : null;
+  const members = [
+    ...(snap?.employees ?? []).map((e) => ({ id: e.id, name: e.name, hue: e.hue, person: false, dot: e.presence === "working" || e.presence === "queued" ? "live" : e.presence === "attention" ? "err" : null, working: e.working })),
+    ...(snap?.people ?? []).map((p) => ({ id: p.id, name: p.name, hue: p.hue, person: true, dot: null, working: 0 })),
+  ];
 
   return (
     <ShellCtx.Provider value={api}>
@@ -99,18 +108,28 @@ export function Shell() {
             <span className="side-text">Search</span>
             <span className="kbd side-kbd">{MOD} K</span>
           </button>
-          <NewTaskButton collapsed={collapsed} />
-          <nav className="side-nav" aria-label="Conversations">
-            <Shelves collapsed={collapsed} />
+          <nav className="side-nav">
+            <NavItem href="#/org" icon="org" label="Org chart" active={route.page === "org"} collapsed={collapsed} />
+            <NavItem href="#/inbox" icon="inbox" label="Inbox" active={route.page === "inbox"} badge={inboxCount || null} collapsed={collapsed} />
+            <NavItem href="#/activity" icon="activity" label="Activity" active={route.page === "activity" || route.page === "run"} collapsed={collapsed} />
+            {members.length ? <div className="side-label">Team</div> : null}
+            <div className="side-team">
+              {members.slice(0, 12).map((m) => (
+                <button key={m.id} className={`side-item side-member ${memberSelected === m.id ? "side-item-on" : ""}`} onClick={() => openMember(m.id)} data-tip={collapsed ? m.name : undefined} aria-label={m.name}>
+                  <span className="side-member-av">
+                    <Avatar name={m.name} hue={m.hue} size={20} person={m.person} />
+                    {m.dot ? <span className={`side-dot side-dot-${m.dot}`} /> : null}
+                  </span>
+                  <span className="side-text">{m.person ? m.name : firstName(m.name)}</span>
+                  {m.working > 1 ? <span className="side-count num" title={`Working on ${m.working} things`}>{m.working}</span> : null}
+                </button>
+              ))}
+              {members.length > 12 ? <a href="#/org" className="side-item side-more"><span className="side-text">{members.length - 12} more in the org chart</span></a> : null}
+            </div>
           </nav>
           <div className="side-bottom">
-            <nav className="side-foot" aria-label="Pages">
-              <NavItem href="#/org" icon="org" label="Org chart" active={route.page === "org"} />
-              <NavItem href="#/inbox" icon="inbox" label="Inbox" active={route.page === "inbox"} badge={inboxCount || null} />
-              <NavItem href="#/activity" icon="activity" label="Activity" active={route.page === "activity" || route.page === "run"} />
-              <NavItem href="#/settings" icon="settings" label="Settings" active={route.page === "settings"} />
-            </nav>
             <UpdateCard />
+            <NavItem href="#/settings" icon="settings" label="Settings" active={route.page === "settings"} collapsed={collapsed} />
             <UsageCard />
             {company ? (
               <button className={`side-you ${memberSelected === YOU_ID ? "side-you-on" : ""}`} onClick={openYou} data-tip={collapsed ? company.ceoName : undefined} aria-label={`${company.ceoName}, ${company.title} of ${company.name}. Edit your profile`}>
@@ -141,11 +160,12 @@ export function Shell() {
   );
 }
 
-/** One of the sidebar's pages, as an icon with its name in a tooltip and an optional count. */
-function NavItem({ href, icon, label, active, badge }: { href: string; icon: IconName; label: string; active: boolean; badge?: number | null }) {
+/** One of the sidebar's pages, with an optional count; its name moves to a tooltip when the sidebar is collapsed. */
+function NavItem({ href, icon, label, active, badge, collapsed }: { href: string; icon: IconName; label: string; active: boolean; badge?: number | null; collapsed: boolean }) {
   return (
-    <a href={href} className={`side-item side-foot-item ${active ? "side-item-on" : ""}`} aria-current={active ? "page" : undefined} aria-label={label} data-tip={badge ? `${label} · ${badge}` : label}>
+    <a href={href} className={`side-item ${active ? "side-item-on" : ""}`} aria-current={active ? "page" : undefined} data-tip={collapsed ? (badge ? `${label} · ${badge}` : label) : undefined}>
       <Icon name={icon} size={16} />
+      <span className="side-text">{label}</span>
       {badge ? <span className="side-badge num" aria-label={`${badge} waiting`}>{badge}</span> : null}
     </a>
   );

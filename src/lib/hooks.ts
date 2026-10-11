@@ -80,12 +80,10 @@ const conversations = createStore<ConversationsState>({ data: null, error: null 
 let conversationsWired = false;
 let conversationsSeq = 0;
 
-/** Rereads every conversation. Done today starts at this computer's midnight, so a new day starts it afresh. */
-export function refreshConversations() {
+/** Rereads every conversation. */
+function refreshConversations() {
   const n = ++conversationsSeq;
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  call("conversations", { doneSince: midnight.toISOString() }).then(
+  call("conversations").then(
     (data) => { if (n === conversationsSeq) conversations.set({ data, error: null }); },
     (e) => { if (n === conversationsSeq) conversations.set({ data: conversations.get().data, error: errorMessage(e) }); },
   );
@@ -100,7 +98,7 @@ function wireConversations() {
   refreshConversations();
 }
 
-/** Every conversation across the office, for the sidebar's shelves; one read shared by every reader. */
+/** Every conversation across the office, for the Inbox and each employee's chips; one read shared by every reader. */
 export function useConversations(): ConversationsState {
   useEffect(wireConversations, []);
   return useStore(conversations);

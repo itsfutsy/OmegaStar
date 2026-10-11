@@ -1,13 +1,15 @@
-// What you did to a conversation on this device: pinned it, snoozed it, last looked at it. Keyed by a thread's
-// root run id, or `chat:<employee id>` for an ongoing chat. Per-device UI organisation, so it lives in localStorage.
+// What you did to a conversation on this device: snoozed it, last looked at it. Keyed by a thread's root run id,
+// or `chat:<employee id>` for an ongoing chat. Per-device UI organisation, so it lives in localStorage.
+import { useEffect, useState } from "react";
+import type { Run } from "../api/types";
 import { createStore, useStore } from "./store";
 import { storageGet, storageSet } from "./storage";
 
-export type Mark = { pinnedAt?: string; snoozedUntil?: string; seenAt?: string };
+export type Mark = { snoozedUntil?: string; seenAt?: string };
 export type Marks = Record<string, Mark>;
 
 const MARKS_KEY = "omega.threadMarks";
-// Activity before this is never new, so the first launch does not flood Needs you with history.
+// Activity before this is never new, so the first launch does not flood the Inbox with unread history.
 const SINCE_KEY = "omega.shelvesSince";
 const INBOX_SEEN_KEY = "omega.inboxSeen";
 
@@ -52,7 +54,7 @@ export function markSeen(key: string) {
   setMark(key, { seenAt: now, snoozedUntil: until && until > now ? until : undefined });
 }
 
-/** Forgets the marks of conversations that no longer exist anywhere in the sidebar. */
+/** Forgets the marks of conversations that are no longer open. */
 export function pruneMarks(keep: Set<string>) {
   const cur = store.get();
   const stale = Object.keys(cur).filter((k) => !keep.has(k));
@@ -62,11 +64,35 @@ export function pruneMarks(keep: Set<string>) {
   save(next);
 }
 
-/** When the shelves started counting activity as new: set once, from the old Inbox's "seen" if there was one. */
-export function shelvesSince(): string {
+/** When activity started counting as new: set once, from the old Inbox's "seen" if there was one. */
+export function seenSince(): string {
   const saved = storageGet(SINCE_KEY);
   if (saved) return saved;
   const since = storageGet(INBOX_SEEN_KEY) ?? new Date(Date.now() - 86_400_000).toISOString();
   storageSet(SINCE_KEY, since);
   return since;
+}
+
+/** When a conversation last moved, from its runs: what makes looking at it again count as seeing something new. */
+export function lastMoved(runs: Run[]): string {
+  let at = "";
+  for (const r of runs) {
+    const x = r.endedAt ?? r.createdAt;
+    if (x > at) at = x;
+  }
+  return at;
+}
+
+/** Marks the conversation seen when it opens and whenever it moves, while the window is in front of you. A null
+ *  `key` marks nothing. */
+export function useMarkSeen(key: string | null, moved: string) {
+  const [focused, setFocused] = useState(() => document.hasFocus() && document.visibilityState === "visible");
+  useEffect(() => {
+    const update = () => setFocused(document.hasFocus() && document.visibilityState === "visible");
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => { window.removeEventListener("focus", update); window.removeEventListener("blur", update); document.removeEventListener("visibilitychange", update); };
+  }, []);
+  useEffect(() => { if (focused && key) markSeen(key); }, [key, moved, focused]);
 }
