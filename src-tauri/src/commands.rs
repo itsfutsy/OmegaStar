@@ -3,6 +3,7 @@
 use crate::backup;
 use crate::model::*;
 use crate::office::Office;
+use crate::update;
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -428,4 +429,14 @@ pub async fn usage_limits(office: O<'_>) -> Result<UsageLimits> {
 #[tauri::command]
 pub async fn refresh_usage(office: O<'_>) -> Result<UsageLimits> {
     Ok(office.refresh_usage().await)
+}
+
+#[tauri::command]
+pub async fn check_update(app: AppHandle) -> Result<Option<String>> {
+    update::check(&app).await
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<()> {
+    update::install(&app).await
 }
