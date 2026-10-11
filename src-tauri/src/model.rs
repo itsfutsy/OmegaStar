@@ -1158,6 +1158,8 @@ pub struct SkillRevision {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum RunEvent {
     Init { model: String, skills: Vec<String> },
+    /// A message you sent into the run while it worked.
+    User { text: String },
     Text { text: String },
     TextDelta { text: String },
     ToolCall { id: String, tool: String, brief: String },

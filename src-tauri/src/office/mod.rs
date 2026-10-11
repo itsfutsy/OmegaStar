@@ -77,6 +77,8 @@ struct Active {
     verdict: bool,
     /// Opened when the run starts preparing.
     transcript: Option<Arc<Mutex<File>>>,
+    /// The run's open stdin, from its start until its turn ends: `Some` while it still takes messages.
+    input: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 struct Inner {

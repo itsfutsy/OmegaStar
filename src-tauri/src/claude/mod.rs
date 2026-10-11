@@ -200,6 +200,7 @@ pub struct Invocation {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
+    /// The first message: the prompt and any attached files.
     pub stdin: String,
     /// Files to write before spawning.
     pub files: Vec<(PathBuf, String)>,
@@ -294,7 +295,7 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     let settings_path = s.run_dir.join("settings.json");
     let prompt_path = s.run_dir.join("system-prompt.md");
     let mcp_path = s.run_dir.join("mcp.json");
-    let mut args: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
         .map(String::from)
         .to_vec();
     args.push(if s.resume { "--resume" } else { "--session-id" }.into());
@@ -340,6 +341,12 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
             (mcp_path, serde_json::to_string_pretty(&mcp).unwrap()),
         ],
     }
+}
+
+/// One message for a run's stdin. A run keeps reading these until its stdin closes, so a message sent
+/// while it works reaches it at its next step.
+pub fn user_line(text: &str) -> String {
+    format!("{}\n", json!({ "type": "user", "message": { "role": "user", "content": text } }))
 }
 
 // ---------------------------------------------------------------------------------------------
