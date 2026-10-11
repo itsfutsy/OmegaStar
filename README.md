@@ -106,9 +106,9 @@ You teach an employee by talking to them, the way you'd teach a new hire. Each l
 **You need:** Claude Code installed and signed in (`claude auth status` shows `loggedIn: true`).
 
 1. **Download and install** the app for your computer from the [latest release](https://github.com/itsfutsy/Omegastar/releases/latest):
-   - **macOS:** the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel). The first time you open it, go to System Settings > Privacy & Security and click **Open Anyway**.
+   - **macOS:** the `.dmg`, for Apple Silicon Macs only.
    - **Windows:** the `-setup.exe`. If SmartScreen appears, click **More info**, then **Run anyway**.
-   - **Linux:** the `.AppImage`, `.deb` or `.rpm` (untested).
+   - **Linux:** the `.AppImage` (untested).
 2. **Open your office.** Setup checks Claude Code and asks for your company, name and title. Turn on "Keep Omega Star running in the background" so it starts at login. Closing the window leaves it in the tray, where schedules keep running.
 3. **Hire your first employee** from a template, such as Chief of Staff. Their chat opens with a first lesson already written. Send it, and they'll interview you and write their first skill.
 
