@@ -4,7 +4,7 @@ import type { EmployeeView, OwnSkill, Run, SkillHealth, SkillRevision, StagedImp
 import { firstName, relTime, runKindLabel } from "../../lib/format";
 import { refreshOrg, useCatalog } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
-import { openMember, openRun } from "../../lib/router";
+import { openChat, openMember, openRun } from "../../lib/router";
 import { lineStats } from "../Diff";
 import { Icon } from "../Icon";
 import { Upkeep } from "../SkillHealth";
@@ -115,7 +115,7 @@ export function SkillsOverview({ e, skills, history, runs, staged, health, runBy
             <div className="tree-children">
               <div className="tree-empty">
                 Nothing yet. Teach {name} a task in Chat and it becomes a skill here.
-                <button className="btn btn-sm" onClick={() => openMember(e.id, "chat", null, true)}><Icon name="teach" size={12} /> Teach a task</button>
+                <button className="btn btn-sm" onClick={() => openChat(e.id)}><Icon name="teach" size={12} /> Teach a task</button>
               </div>
             </div>
           )}

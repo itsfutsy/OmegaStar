@@ -4,7 +4,7 @@ import type { EmployeeDraft, HireProposal, SkillInfo } from "../api/types";
 import { refreshOrg, useCatalog, useOrg } from "../lib/hooks";
 import { toast } from "../lib/toasts";
 import { setDraft } from "../lib/drafts";
-import { openMember } from "../lib/router";
+import { openChat } from "../lib/router";
 import { firstName, hueFromName } from "../lib/format";
 import { AdvancedFields, ClearancePicker, EmployeeManagerSelect } from "./EmployeeFields";
 import { Markdown } from "./Markdown";
@@ -121,7 +121,7 @@ export function HireSheet({ open, managerId, template, proposal, onClose }: {
         refreshOrg();
         onClose();
         const briefs = e.managerId === proposal.employeeId ? ` ${proposerName} will brief them.` : "";
-        toast(`${firstName(e.name)} joined ${snap?.company.name ?? "the company"}.${briefs}`, "ok", { label: "Open", run: () => openMember(e.id, "chat") });
+        toast(`${firstName(e.name)} joined ${snap?.company.name ?? "the company"}.${briefs}`, "ok", { label: "Open", run: () => openChat(e.id) });
         return;
       }
       const e = await call("hire", { draft: final, imports: toImport });
@@ -131,7 +131,7 @@ export function HireSheet({ open, managerId, template, proposal, onClose }: {
       refreshOrg();
       onClose();
       toast(`${firstName(e.name)} joined ${snap?.company.name ?? "the company"}`, "ok");
-      window.setTimeout(() => openMember(e.id, "chat"), 380);
+      window.setTimeout(() => openChat(e.id), 380);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

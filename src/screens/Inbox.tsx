@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "../api/client";
 import type { Thread } from "../api/types";
-import { dayHeading, firstName } from "../lib/format";
-import { useOrg, useProposals, useQuery, type Query } from "../lib/hooks";
+import { dayHeading } from "../lib/format";
+import { useOrg, useProposals, useQuery } from "../lib/hooks";
 import { toast } from "../lib/toasts";
-import { activityAt, lastFrom } from "../lib/threads";
+import { activityAt } from "../lib/threads";
 import { RequestCard } from "../components/RequestCard";
 import { ProposalCard } from "../components/ProposalCard";
 import { AskRow } from "../components/ColleagueAsks";
@@ -18,61 +18,54 @@ type View = "inbox" | "archive";
 
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
-/** Reports and replies from your employees, and what they are waiting on. The Shell owns `inbox` (it counts the
- *  new ones for the sidebar) and `seen`, the newest activity you had seen when you opened the page. */
-export function InboxScreen({ inbox, seen }: { inbox: Query<Thread[]>; seen: string }) {
+/** What is waiting on you outside a conversation: hire proposals, requests to people, colleagues' asks in flight,
+ *  and the Archive of reports you put away. Reports and threads themselves live in the sidebar's shelves. */
+export function InboxScreen() {
   const { snap } = useOrg();
   const [view, setView] = useState<View>("inbox");
-  // The archive loads when you open it, or to tell an empty Inbox "All caught up" from "Nothing here yet".
-  const needArchive = view === "archive" || inbox.data?.length === 0;
-  const archive = useQuery(() => (needArchive ? call("archived") : Promise.resolve(undefined)), [needArchive], ["run:updated"]);
+  const archive = useQuery(() => (view === "archive" ? call("archived") : Promise.resolve(undefined)), [view], ["run:updated"]);
   const waiting = useQuery(() => call("requests", { personId: null, employeeId: null, state: "open" }), [], ["request:updated", "org:changed"]);
   const asks = useQuery(() => call("open_asks"), [], ["run:updated"]);
   const proposals = (useProposals() ?? []).filter((p) => p.state === "open");
   const shell = useShell();
-  const [seenBefore] = useState(seen);
   const [openId, setOpenId] = useState<string | null>(null);
   const hovered = useRef<string | null>(null);
-  const list = view === "inbox" ? inbox : archive;
 
-  const move = async (t: Thread, toArchive: boolean) => {
-    const who = snap?.employees.find((e) => e.id === t.root.employeeId);
+  const restore = async (t: Thread) => {
     try {
-      await call("set_archived", { runId: t.root.id, archived: toArchive });
+      await call("set_archived", { runId: t.root.id, archived: false });
       if (openId === t.root.id) setOpenId(null);
-      const text = toArchive ? (t.replies.length && who ? `Archived. ${firstName(who.name)} hears what was decided in their chat.` : "Archived") : "Moved to Inbox";
-      toast(text, "neutral", {
+      toast("Reopened. It is back in the sidebar.", "neutral", {
         label: "Undo",
-        run: () => void call("set_archived", { runId: t.root.id, archived: !toArchive }).catch((e) => toast(errorMessage(e), "err")),
+        run: () => void call("set_archived", { runId: t.root.id, archived: true }).catch((e) => toast(errorMessage(e), "err")),
       });
     } catch (e) {
       toast(errorMessage(e), "err");
     }
   };
 
-  // E archives (or, in the Archive, restores) the thread under the pointer, else the open one.
-  const moveRef = useRef(move);
-  moveRef.current = move;
+  const restoreRef = useRef(restore);
+  restoreRef.current = restore;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || document.querySelector("[role=dialog]")) return;
-      const items = list.data ?? [];
+      if (view !== "archive" || e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || document.querySelector("[role=dialog]")) return;
+      const items = archive.data ?? [];
       if (e.key === "Escape" && openId) { setOpenId(null); return; }
       if (e.key.toLowerCase() !== "e") return;
       const t = items.find((x) => x.root.id === hovered.current) ?? items.find((x) => x.root.id === openId);
       if (!t) return;
       e.preventDefault();
-      void moveRef.current(t, view === "inbox");
+      void restoreRef.current(t);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [list.data, openId, view]);
+  }, [view, archive.data, openId]);
 
   const employees = snap?.employees ?? [];
   const people = snap?.people ?? [];
   const groups: { day: string; threads: Thread[] }[] = [];
-  for (const t of list.data ?? []) {
-    const day = dayHeading(view === "archive" ? t.root.archivedAt ?? activityAt(t) : activityAt(t));
+  for (const t of archive.data ?? []) {
+    const day = dayHeading(t.root.archivedAt ?? activityAt(t));
     const g = groups[groups.length - 1];
     if (g && g.day === day) g.threads.push(t);
     else groups.push({ day, threads: [t] });
@@ -81,7 +74,7 @@ export function InboxScreen({ inbox, seen }: { inbox: Query<Thread[]>; seen: str
   const showWaiting = view === "inbox" && !!waiting.data?.length;
   const showAsks = view === "inbox" && !!asks.data?.length;
   const showProposals = view === "inbox" && proposals.length > 0;
-  const nothing = list.data?.length === 0 && !showWaiting && !showAsks && !showProposals;
+  const nothing = view === "inbox" ? !showWaiting && !showAsks && !showProposals && !!waiting.data && !!asks.data && !!proposals : archive.data?.length === 0;
 
   return (
     <PageColumn
@@ -119,15 +112,15 @@ export function InboxScreen({ inbox, seen }: { inbox: Query<Thread[]>; seen: str
         </Section>
       ) : null}
 
-      {list.error ? <ErrorNote text={list.error} onRetry={list.reload} /> : null}
-      {!list.data && !list.error ? <div className="stack" style={{ gap: 8 }}>{[0, 1, 2].map((i) => <Skeleton key={i} h={56} r={10} />)}</div> : null}
+      {view === "archive" && archive.error ? <ErrorNote text={archive.error} onRetry={archive.reload} /> : null}
+      {view === "archive" && !archive.data && !archive.error ? <div className="stack" style={{ gap: 8 }}>{[0, 1, 2].map((i) => <Skeleton key={i} h={56} r={10} />)}</div> : null}
       {nothing ? (
         <div className="empty">
           <Icon name={view === "inbox" ? "inbox" : "archive"} size={22} />
           {view === "inbox" ? (
             <>
-              <span className="empty-title">{(archive.data?.length ?? 0) > 0 ? "All caught up" : "Nothing here yet"}</span>
-              <p>When an employee finishes a run or needs you, it lands here. Give them a schedule and it becomes a rhythm.</p>
+              <span className="empty-title">All caught up</span>
+              <p>Hire proposals and requests your employees sent to people land here. Reports and threads are in the sidebar.</p>
             </>
           ) : (
             <>
@@ -137,8 +130,8 @@ export function InboxScreen({ inbox, seen }: { inbox: Query<Thread[]>; seen: str
           )}
         </div>
       ) : null}
-      {list.data && list.data.length > 0 ? (
-        <Section title={view === "inbox" ? "Reports" : "Archived reports"} count={view === "inbox" ? list.data.length : null}>
+      {view === "archive" && archive.data && archive.data.length > 0 ? (
+        <Section title="Archived reports">
           <div className="inbox-list">
             {groups.map((g) => (
               <div key={g.day} className="inbox-group">
@@ -146,10 +139,9 @@ export function InboxScreen({ inbox, seen }: { inbox: Query<Thread[]>; seen: str
                 {g.threads.map((t) => (
                   <InboxItem
                     key={t.root.id} t={t} e={employees.find((x) => x.id === t.root.employeeId)} employees={employees} people={people}
-                    unread={view === "inbox" && activityAt(t) > seenBefore && lastFrom(t) !== "you"} archived={view === "archive"}
                     open={openId === t.root.id} onToggle={() => setOpenId((o) => (o === t.root.id ? null : t.root.id))}
                     onHover={(on) => { hovered.current = on ? t.root.id : hovered.current === t.root.id ? null : hovered.current; }}
-                    onMove={() => void move(t, view === "inbox")}
+                    onReopen={() => void restore(t)}
                   />
                 ))}
               </div>

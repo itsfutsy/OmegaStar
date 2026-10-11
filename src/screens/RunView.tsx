@@ -5,7 +5,7 @@ import { mcpServerName, mcpServerRule, toolName } from "../lib/rules";
 import { dateLong, duration, elapsedMs, firstName, runKindLabel, runStateLabel, runStateTone } from "../lib/format";
 import { refreshOrg, useNow, useOrg, useProposals, useQuery, useRunDetail } from "../lib/hooks";
 import { toast } from "../lib/toasts";
-import { navigate, openMember, openRun } from "../lib/router";
+import { navigate, openChat, openMember, openRun } from "../lib/router";
 import { threadFocus } from "../lib/threads";
 import { kindNames } from "../components/RunRow";
 import { Icon } from "../components/Icon";
@@ -82,8 +82,8 @@ export function RunView({ runId }: { runId: string }) {
             {run.startedAt ? <span className="num">{live ? "running for" : "took"} {duration(elapsedMs(run, now))}</span> : null}
             {run.kind.type === "delegated" || run.kind.type === "asked" ? <button className="runview-parent" onClick={() => (run.kind.type === "delegated" || run.kind.type === "asked") && openRun(run.kind.parentRunId)}>The run that asked <Icon name="arrowUpRight" size={12} /></button> : null}
             {run.kind.type === "answered" ? <button className="runview-parent" onClick={() => run.kind.type === "answered" && openRun(run.kind.askedRunId)}>Their run <Icon name="arrowUpRight" size={12} /></button> : null}
-            {run.kind.type === "reply" && e ? <button className="runview-parent" onClick={() => run.kind.type === "reply" && openMember(e.id, "chat", threadFocus(run.kind.toRunId))}>Open {run.kind.task ? "task" : "thread"} <Icon name="arrowUpRight" size={12} /></button> : null}
-            {run.kind.type === "task" && e ? <button className="runview-parent" onClick={() => openMember(e.id, "chat", threadFocus(run.id))}>Open task <Icon name="arrowUpRight" size={12} /></button> : null}
+            {run.kind.type === "reply" && e ? <button className="runview-parent" onClick={() => run.kind.type === "reply" && openChat(e.id, threadFocus(run.kind.toRunId))}>Open {run.kind.task ? "task" : "thread"} <Icon name="arrowUpRight" size={12} /></button> : null}
+            {run.kind.type === "task" && e ? <button className="runview-parent" onClick={() => openChat(e.id, threadFocus(run.id))}>Open task <Icon name="arrowUpRight" size={12} /></button> : null}
           </div>
       </header>
       <div className="runview-body">

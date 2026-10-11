@@ -50,13 +50,15 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   /** Changes as content streams, so the view stays pinned to the bottom unless the reader scrolled up. */
   scrollKey: string;
   onSend: (text: string, attachments: NewAttachment[]) => Promise<void>;
+  /** A second way to send, "Send & done" (also Ctrl or ⌘ + Enter): the message goes and the conversation is put away. */
+  onSendDone?: (text: string, attachments: NewAttachment[]) => Promise<void>;
   /** Sending starts a task, so the button says so. */
   startsTask?: boolean;
   onStop?: () => Promise<void>;
   /** Extra buttons in the bar, after the paperclip. */
   actions?: ReactNode;
   children: ReactNode;
-}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, startsTask = false, onStop, actions, children }, ref) {
+}>(function ChatSurface({ e, busy, live, placeholder, hint, draftKey, scrollKey, onSend, onSendDone, startsTask = false, onStop, actions, children }, ref) {
   const [text, setText] = useState(() => getDraft(draftKey));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -123,7 +125,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     if (!sending) input.current?.focus({ preventScroll: true });
   }, [sending]);
 
-  const send = async () => {
+  const send = async (to = onSend) => {
     const body = text.trim();
     if ((!body && !files.length) || sending) return;
     setSending(true);
@@ -131,7 +133,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     stick.current = true;
     try {
       const attachments = await Promise.all(files.map((f) => toAttachment(f.file)));
-      await onSend(body, attachments);
+      await to(body, attachments);
       // Cleared in the store too: sending may have moved you to another conversation already.
       setDraft(draftKey, "");
       setText("");
@@ -190,7 +192,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
               if (pasted.length) { ev.preventDefault(); addFiles(pasted); }
             }}
             onKeyDown={(ev) => {
-              if (ev.key === "Enter" && !ev.shiftKey && !ev.nativeEvent.isComposing) { ev.preventDefault(); void send(); }
+              if (ev.key === "Enter" && !ev.shiftKey && !ev.nativeEvent.isComposing) { ev.preventDefault(); void send(onSendDone && (ev.metaKey || ev.ctrlKey) ? onSendDone : onSend); }
             }}
             aria-label={placeholder}
           />
@@ -209,9 +211,16 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
                 <Icon name="branch" size={13} /> Start task
               </button>
             ) : (
-              <button className="btn btn-primary btn-icon btn-sm composer-send" aria-label="Send" title="Send (Enter). Shift+Enter adds a new line." disabled={sending || !hasContent} onClick={() => void send()}>
-                <Icon name="send" size={14} strokeWidth={1.8} />
-              </button>
+              <>
+                {onSendDone && hasContent ? (
+                  <button className="btn btn-sm" title="Send, and bring it back only if the answer needs you (Ctrl+Enter)" disabled={sending} onClick={() => void send(onSendDone)}>
+                    Send &amp; done
+                  </button>
+                ) : null}
+                <button className="btn btn-primary btn-icon btn-sm composer-send" aria-label="Send" title="Send (Enter). Shift+Enter adds a new line." disabled={sending || !hasContent} onClick={() => void send()}>
+                  <Icon name="send" size={14} strokeWidth={1.8} />
+                </button>
+              </>
             )}
           </div>
         </div>

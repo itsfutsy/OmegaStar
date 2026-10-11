@@ -18,7 +18,6 @@
 .item-title { display: flex; align-items: center; gap: 6px; font-size: var(--t-base); font-weight: 500; color: var(--ink); min-width: 0; }
 .item-title > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-open .item-title > span { white-space: normal; }
-.item-unread .item-title { font-weight: 650; }
 .item-bell { flex: none; color: var(--warn); }
 .item-failed { flex: none; color: var(--err); }
 .item-preview { font-size: var(--t-sm); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -39,7 +38,6 @@
 .item-reply .textarea { min-height: 56px; background: var(--surface); }
 .item-hint { font-size: var(--t-sm); }
 
-.report-new { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
 .report-body { position: relative; font-size: var(--t-base); }
 .report-body .md { font-size: var(--t-base); line-height: 1.65; }
 .report-grew { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-sm); color: var(--ok-text); }

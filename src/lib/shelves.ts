@@ -16,8 +16,9 @@ export type Row =
 /** What placing a row reads, worked out once per row. */
 type Facts = { done: boolean; snoozed: boolean; needsYou: boolean; busy: boolean; pinned: boolean };
 
-/** A row on its shelf, with what the sidebar shows about it. `reason` says why it needs you. */
-export type Placed = { row: Row; shelf: ShelfId; mark: Mark; busy: boolean; queued: boolean; reason: string | null };
+/** A row on its shelf, with what the sidebar shows about it. `natural` is where the rules put it, which differs
+ *  from `shelf` only for the selected row (`Sticky`). `reason` says why it needs you. */
+export type Placed = { row: Row; shelf: ShelfId; natural: ShelfId; mark: Mark; busy: boolean; queued: boolean; reason: string | null };
 export type Shelf = { id: ShelfId; label: string; rows: Placed[] };
 
 export type ShelvesInput = {
@@ -146,7 +147,7 @@ function place(row: Row, input: ShelvesInput, now: number): Placed {
     pinned: !!mark.pinnedAt,
   };
   const shelf = RULES.find((r) => r.when(row, facts))!.shelf;
-  return { row, shelf, mark, busy, queued, reason };
+  return { row, shelf, natural: shelf, mark, busy, queued, reason };
 }
 
 /** The shelves that have rows, top to bottom. The `sticky` row stays where it was selected, except into or out
@@ -184,10 +185,10 @@ export function nextRow(rows: Placed[], key: string): Placed | null {
   return rows.slice(i + 1).find(open) ?? rows.slice(0, i).reverse().find(open) ?? null;
 }
 
-/** Snooze choices from `now`: in 3 hours, tomorrow at 9:00 am, next Monday at 9:00 am. */
+/** Snooze choices from `now`: in 3 hours, tomorrow at 9:00 am, and next week, the Monday after tomorrow at 9:00 am. */
 export function snoozePresets(now: Date): { label: string; until: Date }[] {
   const at9 = (days: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, 9, 0, 0, 0);
-  const toMonday = ((8 - now.getDay()) % 7) || 7;
+  const toMonday = ((8 - now.getDay()) % 7 || 7) + (now.getDay() === 0 ? 7 : 0);
   return [
     { label: "In 3 hours", until: new Date(now.getTime() + 3 * 3_600_000) },
     { label: "Tomorrow", until: at9(1) },

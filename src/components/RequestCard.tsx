@@ -5,7 +5,7 @@ import { channelLabel } from "../lib/channels";
 import { firstName, relTime, whenInline } from "../lib/format";
 import { refreshOrg, useNow, useQuery } from "../lib/hooks";
 import { toast, type Toast } from "../lib/toasts";
-import { openMember, openRun } from "../lib/router";
+import { openChat, openMember, openRun } from "../lib/router";
 import { Icon } from "./Icon";
 import { Avatar, ErrorNote, MenuButton, type MenuItem } from "./ui";
 import "./RequestCard.css";
@@ -98,7 +98,7 @@ function watchNote(action: WatchAction, before: HumanRequest, after: HumanReques
 
 /** Who asked whom, in words: "Hazel asked Robert", "Felix gave Grace a task", "Leo told Grace". */
 function Who({ r, emp, person, employee, showPerson }: { r: HumanRequest; emp: string; person: PersonView | undefined; employee: EmployeeView | undefined; showPerson: boolean }) {
-  const name = <button className="req-name" onClick={() => employee && openMember(employee.id, "chat")}>{emp}</button>;
+  const name = <button className="req-name" onClick={() => employee && openChat(employee.id)}>{emp}</button>;
   const them = showPerson && person ? <button className="req-name" onClick={() => openMember(person.id)}>{firstName(person.name)}</button> : null;
   if (r.kind === "task") return them ? <>{name} <span className="muted">gave</span> {them} <span className="muted">a task</span></> : <>{name} <span className="muted">gave them a task</span></>;
   if (r.kind === "info") return <>{name} <span className="muted">told</span> {them ?? <span className="muted">them</span>}</>;

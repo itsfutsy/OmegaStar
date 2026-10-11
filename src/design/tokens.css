@@ -67,7 +67,7 @@
   --d-ui: 160ms;
   --d-panel: 240ms;
 
-  --side-w: 232px;
+  --side-w: 288px;
   --panel-w: clamp(460px, 100vw - 620px, 560px);
 }
 
