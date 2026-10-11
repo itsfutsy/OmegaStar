@@ -1,6 +1,6 @@
 // A thread is a report and the replies you exchanged on it (`Thread { root, replies }`). A task is a thread
-// too, whose root is your first message. These helpers read one the same way everywhere: the Inbox row, the
-// Chat tab's chips, and the sidebar badge.
+// too, whose root is your first message. These helpers read one the same way everywhere: the sidebar's shelves,
+// the conversation screen, and the Archive.
 import type { Run, Thread } from "../api/types";
 
 export const isLive = (r: Run): boolean => r.state === "running" || r.state === "queued";
@@ -48,9 +48,9 @@ export function isStreak(t: Thread): boolean {
     && t.related.every((x) => x.root.kind.type === "scheduled" && x.root.kind.scheduleId === k.scheduleId && didNotFinish(x.root));
 }
 
-/** The Chat tab's `focus` segment that selects a thread: `#/org/<employee>/chat/thread~<root run id>`. */
+/** The conversation route's `focus` segment that selects a thread: `#/chat/<employee>/thread~<root run id>`. */
 export const threadFocus = (rootId: string): string => `thread~${rootId}`;
 export const parseThreadFocus = (focus: string | null): string | null =>
   focus && focus.startsWith("thread~") ? focus.slice("thread~".length) : null;
-/** The Chat tab's `focus` segment for a task you are about to start. */
+/** The conversation route's `focus` segment for a task you are about to start. */
 export const NEW_TASK_FOCUS = "new-task";
