@@ -16,14 +16,15 @@
 .tools-compact .tool-row { height: 28px; }
 
 .skill-chip {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 9px; border-radius: 999px;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: 100%; padding: 0 10px 0 9px; border-radius: 999px;
   background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); font-size: var(--t-sm); box-shadow: var(--shadow-card);
   transition: transform var(--d-ui) var(--ease), background var(--d-ui) var(--ease); animation: chipIn 520ms var(--ease) both;
 }
 .skill-chip:hover:not(:disabled) { background: var(--raised); border-color: var(--muted); }
+.skill-chip > svg { flex: none; }
 .skill-chip > svg:first-child { color: var(--ok); }
-.skill-chip-verb { font-weight: 600; }
-.skill-chip-name { font-size: 11.5px; opacity: 0.9; }
+.skill-chip-verb { font-weight: 600; flex: none; white-space: nowrap; }
+.skill-chip-name { font-size: 11.5px; opacity: 0.9; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-chip-go { opacity: 0.7; transition: transform var(--d-ui) var(--ease); }
 .skill-chip:hover .skill-chip-go { transform: translateX(2px); }
 @keyframes chipIn { 0% { opacity: 0; transform: scale(0.92); } 60% { opacity: 1; transform: scale(1.03); } 100% { transform: none; } }
