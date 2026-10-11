@@ -287,6 +287,8 @@ export type Commands = {
    *  `from` from the thread (any run in it) of a report or another task. */
   start_task: { args: { employeeId: string; text: string; attachments: NewAttachment[]; from: string | null }; ret: Run };
   open_attachment: { args: { runId: string; name: string }; ret: null };
+  read_image: { args: { path: string }; ret: string };
+  open_image: { args: { path: string }; ret: null };
   new_chat: { args: { employeeId: string }; ret: null };
   chat: { args: { employeeId: string }; ret: Run[] };
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };

@@ -189,6 +189,8 @@ pub fn run() {
             commands::send_chat,
             commands::start_task,
             commands::open_attachment,
+            commands::read_image,
+            commands::open_image,
             commands::new_chat,
             commands::chat,
             commands::runs,
