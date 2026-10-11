@@ -103,8 +103,8 @@ pub async fn send_chat(office: O<'_>, employee_id: String, text: String, attachm
 }
 
 #[tauri::command]
-pub async fn start_task(office: O<'_>, employee_id: String, text: String, attachments: Vec<NewAttachment>, from: Option<String>) -> Result<Run> {
-    office.start_task(&employee_id, &text, attachments, from.as_deref())
+pub async fn start_task(office: O<'_>, employee_id: String, text: String, attachments: Vec<NewAttachment>) -> Result<Run> {
+    office.start_task(&employee_id, &text, attachments)
 }
 
 #[tauri::command]

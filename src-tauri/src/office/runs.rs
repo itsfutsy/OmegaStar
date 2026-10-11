@@ -57,28 +57,31 @@ impl Office {
         Ok(())
     }
 
+    /// Your message in the ongoing chat. It goes into the turn that is working, or else runs as the next
+    /// turn. A message with attachments is always a turn of its own.
     pub fn send_chat(&self, employee_id: &str, text: &str, attachments: Vec<NewAttachment>) -> Result<Run> {
         if text.trim().is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("message is empty"));
         }
         let files = Self::decode_attachments(&attachments)?;
-        let e = {
+        let (e, working) = {
             let db = self.db();
             let e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
-            if db.active_runs_of(employee_id)?.iter().any(|r| r.kind.lane() == Lane::Chat) {
-                return Err(AppError::conflict(format!("{} is still replying", e.name)));
-            }
-            e
+            // Only the newest turn takes messages, so a message never overtakes one queued before it.
+            let working = db.chat_runs(&e.id, &e.chat_session)?.pop().filter(|r| r.state == RunState::Running);
+            (e, working)
         };
+        if let Some(r) = working.filter(|r| files.is_empty() && self.steer(&r.id, text)) {
+            return Ok(r);
+        }
         let mut run = Run::new(employee_id, RunKind::Chat, text.to_string(), now());
         self.attach(&mut run, &files)?;
         self.enqueue(run, e.chat_session)
     }
 
     /// Starts a task: a conversation of its own, so the employee works on it at the same time as
-    /// everything else. It starts from the conversation you were in: the ongoing chat, or with `from`
-    /// the thread (any run in it) of a report or another task.
-    pub fn start_task(&self, employee_id: &str, text: &str, attachments: Vec<NewAttachment>, from: Option<&str>) -> Result<Run> {
+    /// everything else. It starts from what you discussed in the ongoing chat.
+    pub fn start_task(&self, employee_id: &str, text: &str, attachments: Vec<NewAttachment>) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("message is empty"));
@@ -87,17 +90,8 @@ impl Office {
         let mut run = {
             let db = self.db();
             let e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
-            let (source, runs) = match from {
-                Some(id) => {
-                    let t = Self::thread_in(&db, id)?;
-                    let label = threads::report_label(&t.root.kind);
-                    let source = if matches!(t.root.kind, RunKind::Task { .. }) { format!("the task '{label}'") } else { format!("the thread on your report '{label}'") };
-                    (source, std::iter::once(t.root).chain(t.replies).collect::<Vec<_>>())
-                }
-                None => ("your chat".to_string(), db.chat_runs(&e.id, &e.chat_session)?),
-            };
-            let context = threads::context(&ceo_of(&db)?, &runs);
-            let from = (!context.is_empty()).then_some(source);
+            let context = threads::context(&ceo_of(&db)?, &db.chat_runs(&e.id, &e.chat_session)?);
+            let from = (!context.is_empty()).then(|| "your chat".to_string());
             let names: Vec<String> = attachments.iter().map(|a| a.name.clone()).collect();
             Run::new(&e.id, RunKind::Task { label: threads::task_label(text, &names), from, context }, text.to_string(), now())
         };
@@ -280,9 +274,27 @@ impl Office {
         let mut active = lock(&self.0.active);
         for r in &claimed.0 {
             let token = uuid::Uuid::new_v4().simple().to_string();
-            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], proposed: None, verdict: false, transcript: None });
+            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], proposed: None, verdict: false, transcript: None, input: None });
         }
         Ok(claimed)
+    }
+
+    /// Sends your message into a run that is still working: the employee sees it at their next step.
+    /// `false` when the run no longer takes messages (its turn is over, or it has not started).
+    pub(super) fn steer(&self, run_id: &str, text: &str) -> bool {
+        let ev = RunEvent::User { text: text.to_string() };
+        {
+            let active = lock(&self.0.active);
+            let Some(a) = active.get(run_id) else { return false };
+            if !a.input.as_ref().is_some_and(|i| i.send(claude::user_line(text)).is_ok()) {
+                return false;
+            }
+            if let Some(f) = &a.transcript {
+                append_line(f, &claude::omega_line(&ev));
+            }
+        }
+        self.sink().run_events(run_id, &[ev]);
+        true
     }
 
     /// Appends a synthetic event to a live run's transcript and forwards it to the UI.
@@ -575,10 +587,23 @@ impl Office {
         }
         let mut child = claude::spawn(&inv).map_err(|e| AppError::internal(format!("could not start Claude Code: {e}")))?;
         let pid = child.id();
+        let mut stdin = child.stdin.take().expect("piped");
+        let (input, mut messages) = tokio::sync::mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            while let Some(line) = messages.recv().await {
+                if stdin.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+            let _ = stdin.shutdown().await; // claude -p exits once its stdin is closed and its turn is done
+        });
+        let _ = input.send(claude::user_line(&inv.stdin));
+        // Active holds the only sender, so stdin closes when the turn ends or the run is removed.
         let cancelled_early = {
             let mut active = lock(&self.0.active);
             active.get_mut(&run.id).map(|a| {
                 a.pid = pid;
+                a.input = Some(input);
                 a.cancelled
             })
         };
@@ -586,12 +611,6 @@ impl Office {
             claude::kill_tree(pid);
         }
 
-        let mut stdin = child.stdin.take().expect("piped");
-        let prompt = inv.stdin.clone();
-        tokio::spawn(async move {
-            let _ = stdin.write_all(prompt.as_bytes()).await;
-            let _ = stdin.shutdown().await; // closing stdin tells claude -p the prompt is complete
-        });
         let mut stderr = child.stderr.take().expect("piped");
         let stderr_path = run_dir.join("stderr.log");
         let stderr_task = tokio::spawn(async move {
@@ -620,6 +639,10 @@ impl Office {
                         }
                     }
                     if parsed.outcome.is_some() {
+                        // A message written before this point still runs, as one more turn of this run.
+                        if let Some(a) = lock(&self.0.active).get_mut(&run.id) {
+                            a.input = None;
+                        }
                         outcome = parsed.outcome;
                     }
                     if let Some(u) = parsed.usage {

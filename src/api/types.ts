@@ -214,6 +214,7 @@ export type SkillRevision = SkillChange & {
 
 export type RunEvent =
   | { type: "init"; model: string; skills: string[] }
+  | { type: "user"; text: string }                 // a message you sent into the run while it worked
   | { type: "text"; text: string }
   | { type: "textDelta"; text: string }
   | { type: "toolCall"; id: string; tool: string; brief: string }
@@ -283,9 +284,8 @@ export type Commands = {
   run_now: { args: { employeeId: string; instruction: string | null }; ret: Run };
   cancel_run: { args: { runId: string }; ret: null };
   send_chat: { args: { employeeId: string; text: string; attachments: NewAttachment[] }; ret: Run };
-  /** A task beside the ongoing chat, run at the same time as everything else. It starts from the ongoing chat, or with
-   *  `from` from the thread (any run in it) of a report or another task. */
-  start_task: { args: { employeeId: string; text: string; attachments: NewAttachment[]; from: string | null }; ret: Run };
+  /** A task beside the ongoing chat, run at the same time as everything else. It starts from the ongoing chat. */
+  start_task: { args: { employeeId: string; text: string; attachments: NewAttachment[] }; ret: Run };
   open_attachment: { args: { runId: string; name: string }; ret: null };
   read_image: { args: { path: string }; ret: string };
   open_image: { args: { path: string }; ret: null };

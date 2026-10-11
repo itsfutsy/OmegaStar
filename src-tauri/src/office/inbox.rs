@@ -220,9 +220,10 @@ impl Office {
         Ok(root)
     }
 
-    /// Your reply in a report's thread: a work run that resumes the thread's session, so the employee
-    /// answers with everything it saw. The reply joins the thread and the report stays in the Inbox,
-    /// unless `archive`: "send, and bring the answer back only if it needs me".
+    /// Your reply in a report's thread. It goes into the thread's run while that works, or else starts a
+    /// run that resumes the thread's session, so the employee answers with everything it saw. The reply
+    /// joins the thread and the report stays in the Inbox, unless `archive`: "send, and bring the answer
+    /// back only if it needs me".
     pub fn reply_to_run(&self, run_id: &str, text: &str, archive: bool, attachments: Vec<NewAttachment>) -> Result<Run> {
         self.reply_with(run_id, text, archive, vec![], attachments)
     }
@@ -274,31 +275,38 @@ Approval covers only what is listed, so if something else is blocked, stop and s
         if let Some(who) = asker {
             text.push_str(&format!(" When you are done, tell {who} the outcome with `ask_colleague`."));
         }
-        self.reply_with(run_id, &text, false, if always { vec![] } else { rules }, vec![])
+        self.reply_with(run_id, &text, false, rules, vec![])
     }
 
     /// `run_id` may be any run in the thread. The reply answers the thread's root and resumes the
-    /// thread's newest session (the root's, or a fresh one an earlier reply had to start).
+    /// thread's newest session (the root's, or a fresh one an earlier reply had to start). A plain reply
+    /// goes into that session's run while it works; one that carries files or rules is a run of its own.
     fn reply_with(&self, run_id: &str, text: &str, archive: bool, allow_once: Vec<String>, attachments: Vec<NewAttachment>) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("reply is empty"));
         }
         let files = Self::decode_attachments(&attachments)?;
+        let plain = files.is_empty() && allow_once.is_empty();
         let (root, mut reply, session) = {
             let db = self.db();
-            let original = db.run(run_id)?.ok_or_else(|| AppError::not_found("run not found"))?.run;
-            if !original.state.is_finished() {
-                return Err(AppError::conflict("that run is still working"));
-            }
-            let t = Self::thread_in(&db, &original.id)?;
+            let t = Self::thread_in(&db, run_id)?;
             let mut root = t.root;
             let e = db.employee(&root.employee_id)?.ok_or_else(|| AppError::not_found("that employee no longer works here"))?;
-            let latest = t.replies.last().map(|r| r.id.clone()).unwrap_or_else(|| root.id.clone());
-            let rec = db.run(&latest)?.ok_or_else(|| AppError::not_found("run not found"))?;
+            let latest = t.replies.last().cloned().unwrap_or_else(|| root.clone());
+            if plain && latest.state == RunState::Running && self.steer(&latest.id, text) {
+                root.replied_at = Some(now());
+                root.archived_at = archive.then(now);
+                db.save_run(&root)?;
+                drop(db);
+                self.sink().run_updated(&root);
+                return Ok(latest);
+            }
+            let rec = db.run(&latest.id)?.ok_or_else(|| AppError::not_found("run not found"))?;
             let label = threads::report_label(&root.kind);
             let task = matches!(root.kind, RunKind::Task { .. });
-            let (prompt, session) = if db.session_started(&rec.session)? {
+            // A turn still to come has the session, even before it starts.
+            let (prompt, session) = if !rec.run.state.is_finished() || db.session_started(&rec.session)? {
                 (text.to_string(), rec.session)
             } else {
                 // The session never started (it failed first), so there is nothing to resume.
