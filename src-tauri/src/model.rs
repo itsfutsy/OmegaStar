@@ -976,7 +976,7 @@ impl Run {
 }
 
 /// A report and the replies you exchanged on it: the root run and every Reply run chained to it,
-/// oldest first. One conversation in the sidebar. In the Inbox and the Archive a thread is a row's
+/// oldest first. One chip on the employee's panel. In the Inbox and the Archive a thread is a row's
 /// lead, with the row's other threads in `related`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -994,7 +994,7 @@ impl Thread {
     }
 }
 
-/// Where an employee's ongoing chat stands, for the sidebar: read from its current session's turns.
+/// Where an employee's ongoing chat stands, for its chip: read from its current session's turns.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatHead {
@@ -1007,15 +1007,15 @@ pub struct ChatHead {
     pub queued: bool,
 }
 
-/// Every conversation across the office, for the sidebar's shelves, in one read.
+/// Every conversation across the office, for the Inbox and each employee's chips, in one read.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversations {
     /// Open threads of every employee, one per root, most recently active first: Inbox rows (with
     /// `related`), open tasks, reports you replied to, and top-level reports still being written.
     pub threads: Vec<Thread>,
-    /// Threads archived since the cutoff, most recently archived first; an Inbox row comes as its lead.
-    pub done: Vec<Thread>,
+    /// The root ids of the threads in `threads` that lead an Inbox row: reports that reached you.
+    pub inbox: Vec<String>,
     /// One per current employee.
     pub chats: Vec<ChatHead>,
 }

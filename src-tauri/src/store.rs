@@ -605,17 +605,6 @@ impl Store {
         )
     }
 
-    /// Thread roots (every run but replies) archived at or after about `since`, newest archived first.
-    /// The bound is a second early because `archivedAt` compares as text; callers check the exact time.
-    pub fn archived_roots_since(&self, since: Ts) -> Result<Vec<Run>> {
-        let bound = (since - chrono::Duration::seconds(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        self.runs_where(
-            "WHERE json_extract(data, '$.kind.type') IS NOT 'reply' AND json_extract(data, '$.archivedAt') >= ?
-             ORDER BY json_extract(data, '$.archivedAt') DESC, rowid DESC",
-            &[&bound],
-        )
-    }
-
     /// Every run that continues a conversation (replies, colleagues' asks and answers, delegated
     /// work), oldest first: what `threads::file` follows to put a hand-off in one Inbox row.
     pub fn conversation_runs(&self) -> Result<Vec<Run>> {

@@ -129,8 +129,8 @@ impl Office {
         Ok(())
     }
 
-    /// Archives a report with its thread and the rest of its Inbox row (they leave the sidebar after today
-    /// for the Archive), or moves them all back. Archiving a thread you replied in, or a task, leaves a brief
+    /// Archives a report with its thread and the rest of its Inbox row (they leave the Inbox and the
+    /// employee's chips), or moves them all back. Archiving a thread you replied in, or a task, leaves a brief
     /// for its employee's ongoing chat, unless `brief` is `Some(false)`. `run_id` may be any run in the row.
     pub fn set_archived(&self, run_id: &str, archived: bool, brief: Option<bool>) -> Result<Run> {
         let (root, changed, briefed) = {

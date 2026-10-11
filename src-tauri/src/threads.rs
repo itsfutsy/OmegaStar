@@ -1,7 +1,7 @@
 //! Threads: a report and the replies you exchanged on it. A thread is a root run plus every Reply run
 //! whose `to_run_id` is that root. These are pure functions over runs; the Office loads the runs and
-//! the sidebar's conversations and the Archive show the same threads. A task is a thread too: its root
-//! is your first message rather than a report, and it never reaches the Inbox.
+//! the Inbox, the Archive and each employee's chips show the same threads. A task is a thread too: its root
+//! is your first message rather than a report, and it is never filed into an Inbox row.
 //!
 //! Inbox rows group threads that belong together, so you see one row per piece of work rather than
 //! one per run: a report with everything it set off in conversation, or an ask a report made with

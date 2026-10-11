@@ -172,8 +172,8 @@ pub async fn archived(office: O<'_>) -> Result<Vec<Thread>> {
 }
 
 #[tauri::command]
-pub async fn conversations(office: O<'_>, done_since: String) -> Result<Conversations> {
-    office.conversations(&done_since)
+pub async fn conversations(office: O<'_>) -> Result<Conversations> {
+    office.conversations()
 }
 
 #[tauri::command]

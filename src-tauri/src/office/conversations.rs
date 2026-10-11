@@ -1,29 +1,25 @@
-//! The sidebar's conversations: every open thread across the office, the threads archived today, and
-//! each employee's ongoing chat, composed from the Inbox's queries and the open tasks in one read.
+//! Every conversation across the office in one read: the open threads, which of them lead an Inbox row,
+//! and each employee's ongoing chat, composed from the Inbox's queries and the open tasks.
 
 use super::*;
 use std::cmp::Reverse;
 
 impl Office {
-    /// Every conversation, for the sidebar's shelves. `done_since` (RFC 3339) is where `done` starts:
-    /// local midnight in the UI.
-    pub fn conversations(&self, done_since: &str) -> Result<Conversations> {
-        let since = chrono::DateTime::parse_from_rfc3339(done_since)
-            .map_err(|_| AppError::invalid("doneSince must be an RFC 3339 time"))?
-            .with_timezone(&Utc);
-        Self::conversations_in(&self.db(), since)
+    /// Every conversation, for the Inbox, its badge and each employee's chips.
+    pub fn conversations(&self) -> Result<Conversations> {
+        Self::conversations_in(&self.db())
     }
 
     /// `conversations` over a store. An Inbox row stands for every thread filed under it, so those
     /// threads never show again on their own.
-    fn conversations_in(db: &Store, since: Ts) -> Result<Conversations> {
+    fn conversations_in(db: &Store) -> Result<Conversations> {
         let employees = db.employees()?;
         let current: HashSet<&str> = employees.iter().map(|e| e.id.as_str()).collect();
         let top = Self::top_ids(&employees);
-        let ids = |ts: &[Thread]| -> Vec<String> { ts.iter().flat_map(|t| std::iter::once(t).chain(&t.related)).map(|t| t.root.id.clone()).collect() };
 
         let mut open = Self::rows(db, false)?;
-        let mut filed: HashSet<String> = ids(&open).into_iter().collect();
+        let inbox: Vec<String> = open.iter().map(|t| t.root.id.clone()).collect();
+        let mut filed: HashSet<String> = open.iter().flat_map(|t| std::iter::once(t).chain(&t.related)).map(|t| t.root.id.clone()).collect();
         let mut grouped = threads::group(db.reply_runs(None)?);
         let mut roots: Vec<Run> = vec![];
         for e in &employees {
@@ -43,21 +39,6 @@ impl Office {
         }
         open.sort_by_key(|t| Reverse(threads::activity_at(&t.root, &t.replies)));
 
-        let mut done: Vec<(Ts, Thread)> = Self::rows(db, true)?
-            .into_iter()
-            .filter_map(|t| threads::row_archived_at(&t).filter(|at| *at >= since).map(|at| (at, t)))
-            .collect();
-        filed.extend(done.iter().flat_map(|(_, t)| ids(std::slice::from_ref(t))));
-        for root in db.archived_roots_since(since)? {
-            let Some(at) = root.archived_at.filter(|at| *at >= since) else { continue };
-            if !current.contains(root.employee_id.as_str()) || !filed.insert(root.id.clone()) {
-                continue;
-            }
-            let replies = grouped.remove(&root.id).unwrap_or_default();
-            done.push((at, Thread::new(root, replies)));
-        }
-        done.sort_by_key(|(at, _)| Reverse(*at));
-
         let chats = employees
             .iter()
             .map(|e| {
@@ -71,7 +52,7 @@ impl Office {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Conversations { threads: open, done: done.into_iter().map(|(_, t)| t).collect(), chats })
+        Ok(Conversations { threads: open, inbox, chats })
     }
 
     /// A queued or running run that will be a report of its own once it finishes, under the same root
@@ -150,33 +131,31 @@ mod tests {
         let live_quiet = run(&db, &ada, quiet, RunState::Running, 0, None);
         let live_sub = run(&db, &bo, RunKind::Manual, RunState::Queued, 0, None);
 
-        let mut today = Run::new(&ada.id, task("Ship it"), "go".into(), now());
-        today.state = RunState::Succeeded;
-        today.ended_at = Some(now());
-        today.archived_at = Some(now());
-        db.insert_run(&today, &today.id).unwrap();
-        let mut old = Run::new(&ada.id, task("Old"), "go".into(), now() - chrono::Duration::days(2));
-        old.state = RunState::Succeeded;
-        old.archived_at = Some(now() - chrono::Duration::days(1));
-        db.insert_run(&old, &old.id).unwrap();
+        let mut done = Run::new(&ada.id, task("Ship it"), "go".into(), now());
+        done.state = RunState::Succeeded;
+        done.ended_at = Some(now());
+        done.archived_at = Some(now());
+        db.insert_run(&done, &done.id).unwrap();
 
         let chat = run(&db, &ada, RunKind::Chat, RunState::Succeeded, 5, Some(&ada.chat_session));
 
-        let since = now() - chrono::Duration::hours(1);
-        let c = Office::conversations_in(&db, since).unwrap();
+        let c = Office::conversations_in(&db).unwrap();
         let ids: Vec<&str> = c.threads.iter().map(|t| t.root.id.as_str()).collect();
         for want in [&report.id, &replied.id, &open_task.id, &sub_report.id, &live.id] {
             assert_eq!(ids.iter().filter(|id| **id == want.as_str()).count(), 1, "{want} once in threads: {ids:?}");
         }
-        for unwanted in [&live_quiet.id, &live_sub.id, &today.id, &old.id, &chat.id] {
+        for unwanted in [&live_quiet.id, &live_sub.id, &done.id, &chat.id] {
             assert!(!ids.contains(&unwanted.as_str()), "{unwanted} not in threads");
         }
         let with_reply = c.threads.iter().find(|t| t.root.id == replied.id).unwrap();
         assert_eq!(with_reply.replies.len(), 1, "the inbox row keeps its reply");
         assert_eq!(c.threads.iter().find(|t| t.root.id == sub_report.id).unwrap().replies.len(), 1);
 
-        let done: Vec<&str> = c.done.iter().map(|t| t.root.id.as_str()).collect();
-        assert_eq!(done, vec![today.id.as_str()], "only today's archive is done");
+        let mut inbox: Vec<&str> = c.inbox.iter().map(String::as_str).collect();
+        inbox.sort();
+        let mut want = vec![report.id.as_str(), replied.id.as_str()];
+        want.sort();
+        assert_eq!(inbox, want, "only reports that reached you lead an Inbox row");
 
         let head = |e: &Employee| c.chats.iter().find(|h| h.employee_id == e.id).unwrap();
         assert_eq!(head(&ada).last_ended_at, chat.ended_at);
