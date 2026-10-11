@@ -1,0 +1,13 @@
+.update { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.update-title { font-size: var(--t-sm); font-weight: 600; color: var(--ink); }
+.update-sub { font-size: var(--t-sm); color: var(--muted); }
+.update-err { font-size: var(--t-sm); color: var(--err-text); overflow-wrap: anywhere; }
+.update-btn { width: 100%; margin-top: 8px; }
+.update-mini { display: none; }
+
+.shell-collapsed .update { display: none; }
+.shell-collapsed .update-mini {
+  display: inline-flex; align-items: center; justify-content: center; align-self: center; width: 36px; height: 30px; margin-bottom: 6px;
+  border-radius: 8px; background: var(--accent); color: var(--accent-ink);
+}
+.shell-collapsed .update-mini:disabled { opacity: 0.35; }

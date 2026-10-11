@@ -347,6 +347,8 @@ export type Commands = {
   open_backup_dir: { args: Record<string, never>; ret: null };
   usage_limits: { args: Record<string, never>; ret: UsageLimits };
   refresh_usage: { args: Record<string, never>; ret: UsageLimits };
+  check_update: { args: Record<string, never>; ret: string | null };
+  install_update: { args: Record<string, never>; ret: null };
 };
 export type CommandName = keyof Commands;
 

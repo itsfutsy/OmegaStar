@@ -6,6 +6,7 @@ import { Icon, LogoMark, type IconName } from "./components/Icon";
 import { CommandPalette } from "./components/CommandPalette";
 import { HireSheet } from "./components/HireSheet";
 import { AddPersonSheet } from "./components/AddPersonSheet";
+import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
 import { Avatar } from "./components/ui";
 import { firstName, initials } from "./lib/format";
@@ -135,6 +136,7 @@ export function Shell() {
             </div>
           </nav>
           <div className="side-bottom">
+            <UpdateCard />
             <NavItem href="#/settings" icon="settings" label="Settings" active={route.page === "settings"} collapsed={collapsed} />
             <UsageCard />
             {company ? (
