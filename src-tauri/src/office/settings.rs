@@ -127,12 +127,12 @@ impl Office {
         self.run_backup(now()).await
     }
 
-    /// Backs up if an automatic backup is due at `at` and the office has changed since the last one.
+    /// Backs up if an automatic backup is due at `at` and the last one is out of date or gone.
     /// Returns whether one was attempted.
     pub async fn backup_tick(&self, at: Ts) -> Result<bool> {
-        let freq = self.settings()?.backup.frequency;
+        let settings = self.settings()?.backup;
         let st = self.db().backup_status()?.unwrap_or_default();
-        if !backup::is_due(freq, &st, at) {
+        if !backup::is_due(settings.frequency, &st, at) {
             return Ok(false);
         }
         let Ok(_backing_up) = self.0.backing_up.try_lock() else { return Ok(false) };
@@ -142,7 +142,7 @@ impl Office {
             .map_err(|e| AppError::internal(format!("backup check: {e}")))?;
         // Read again: a backup by hand may have finished since.
         let mut st = self.db().backup_status()?.unwrap_or_default();
-        if st.last_error.is_none() && st.fingerprint.as_ref() == Some(&fingerprint) {
+        if backup::up_to_date(&st, &fingerprint, &settings.dir, self.data_dir()) {
             st.checked_at = Some(at);
             self.db().set_backup_status(&st)?;
             self.sink().backup_updated(&self.status_of_backups(false)?);

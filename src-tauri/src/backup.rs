@@ -3,6 +3,7 @@
 //! builds) is left out. File work only; the Office decides when.
 
 use crate::model::*;
+use crate::office::RUNNING_MARKER;
 use crate::own_skills;
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, Timelike};
 use rusqlite::{Connection, OpenFlags};
@@ -21,8 +22,8 @@ const STAMP: &str = "%Y%m%d-%H%M%S";
 pub const PARTIAL: &str = ".partial";
 /// The live database and its journals. The snapshot goes in as `office.db` instead.
 const DB_FILES: [&str; 4] = ["office.db", "office.db-wal", "office.db-shm", "office.db-journal"];
-/// Backed up, but they change on their own every session, so the fingerprint ignores them.
-const RESTLESS: [&str; 2] = ["omega.log", "omega.running"];
+/// Backed up, but it changes on its own every session, so the fingerprint ignores it.
+const LOG: &str = "omega.log";
 /// Files larger than this are left out, except run transcripts.
 pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 const LEFT_OUT_NOTE: &str = "Files over 10 MB outside runs/, node_modules, app bundles and build folders are not in this backup.";
@@ -95,6 +96,13 @@ pub fn validate_dir(dir: &str, data_dir: &Path) -> Result<PathBuf> {
         return Err(AppError::invalid("Choose a backup folder outside the office folder, so backups survive if it's lost."));
     }
     Ok(p)
+}
+
+/// Whether the last backup already holds the office as `fingerprint` says it is, and is still in the
+/// folder backups now go to: a new folder, or a deleted zip, needs a fresh backup.
+pub fn up_to_date(st: &BackupStatus, fingerprint: &str, dir: &str, data_dir: &Path) -> bool {
+    let in_place = |f: &Path| f.is_file() && validate_dir(dir, data_dir).is_ok_and(|d| f.parent() == Some(d.as_path()));
+    st.last_error.is_none() && st.fingerprint.as_deref() == Some(fingerprint) && st.last_file.as_deref().map(Path::new).is_some_and(in_place)
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -182,7 +190,8 @@ fn items(root: &Path, dir: &Path) -> Option<Vec<Item>> {
             continue;
         }
         let Some(name) = entry_name(root, &path) else { continue };
-        if dir == root && DB_FILES.contains(&name.as_str()) {
+        // The clean-exit marker is always there while Omega Star runs: restored, it would read as a crash.
+        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER) {
             continue;
         }
         let meta = e.metadata().ok();
@@ -229,9 +238,8 @@ fn walk<W: Write + std::io::Seek>(root: &Path, dir: &Path, zip: &mut ZipWriter<W
 }
 
 /// Whether anything worth backing up has changed: a hash of the size and modified time of every file
-/// a backup would hold (never their content), and of each database table's row count, highest rowid
-/// and total data length. The `meta` table, which records backups themselves, and files that change
-/// every session are ignored, so a backup or a check never changes it.
+/// a backup would hold (never their content), and of every database row. The backup status in `meta`
+/// and the log are ignored, so a backup or a check never changes it.
 pub fn fingerprint(data_dir: &Path) -> String {
     let mut h = DefaultHasher::new();
     hash_files(data_dir, data_dir, &mut h);
@@ -245,7 +253,7 @@ fn hash_files(root: &Path, dir: &Path, h: &mut DefaultHasher) {
     for item in items(root, dir).unwrap_or_default() {
         match item {
             Item::Dir { path, .. } => hash_files(root, &path, h),
-            Item::File { path, name } if !(dir == root && RESTLESS.contains(&name.as_str())) => {
+            Item::File { path, name } if !(dir == root && name == LOG) => {
                 name.hash(h);
                 let meta = fs::metadata(&path).ok();
                 meta.as_ref().map(|m| m.len()).hash(h);
@@ -263,15 +271,26 @@ fn hash_db(path: &Path, h: &mut DefaultHasher) -> rusqlite::Result<()> {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('meta') AND name NOT LIKE 'sqlite_%' ORDER BY name")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    for name in names {
+    let tables = names.into_iter().map(|name| {
+        let sql = format!("SELECT CAST(rowid AS TEXT), data FROM \"{name}\" ORDER BY rowid");
+        (name, sql)
+    });
+    let meta = ("meta".to_string(), "SELECT key, value FROM meta WHERE key <> 'backup_status' ORDER BY key".to_string());
+    for (name, sql) in tables.chain([meta]) {
         name.hash(h);
-        let row = conn.query_row(&format!("SELECT count(*), max(rowid), total(length(data)) FROM \"{name}\""), [], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, f64>(2)?.to_bits()))
-        });
-        match row {
-            Ok(row) => row.hash(h),
-            Err(e) => e.to_string().hash(h),
+        if let Err(e) = hash_rows(&conn, &sql, h) {
+            e.to_string().hash(h);
         }
+    }
+    Ok(())
+}
+
+fn hash_rows(conn: &Connection, sql: &str, h: &mut DefaultHasher) -> rusqlite::Result<()> {
+    let mut st = conn.prepare(sql)?;
+    let mut rows = st.query([])?;
+    while let Some(r) = rows.next()? {
+        r.get::<_, String>(0)?.hash(h);
+        r.get::<_, String>(1)?.hash(h);
     }
     Ok(())
 }
@@ -357,6 +376,7 @@ mod tests {
         put(&ws.join("target/debug/out"), "x");
         big(&ws.join("data.bin"));
         big(&office.join("runs/r1/transcript.jsonl"));
+        put(&office.join(RUNNING_MARKER), "");
         let out = temp_office("bulk-out");
         let snapshot = out.join("snapshot.db");
         put(&snapshot, "db");
@@ -368,7 +388,7 @@ mod tests {
         let names: Vec<&str> = zip.file_names().collect();
         assert!(names.contains(&"employees/e1/notes.md"), "{names:?}");
         assert!(names.contains(&"runs/r1/transcript.jsonl"), "transcripts are kept: {names:?}");
-        for gone in ["node_modules", "Tool.app", "target", "data.bin"] {
+        for gone in ["node_modules", "Tool.app", "target", "data.bin", RUNNING_MARKER] {
             assert!(!names.iter().any(|n| n.contains(gone)), "{gone} left out: {names:?}");
         }
 
@@ -400,11 +420,22 @@ mod tests {
         db.save_run(&run).unwrap();
         let fp4 = fingerprint(&office);
         assert_ne!(fp4, fp3, "a run was saved");
+        run.prompt = "do".into();
+        db.save_run(&run).unwrap();
+        let fp5 = fingerprint(&office);
+        assert_ne!(fp5, fp4, "an edit of the same length");
+        let company = Company { name: "Sample Co".into(), ceo_name: "Sam".into(), title: "CEO".into(), email: None, reports_to: None };
+        db.set_company(&company).unwrap();
+        let fp6 = fingerprint(&office);
+        assert_ne!(fp6, fp5, "the company profile");
+        db.set_settings(&AppSettings { paused: true, ..Default::default() }).unwrap();
+        let fp7 = fingerprint(&office);
+        assert_ne!(fp7, fp6, "a setting");
 
         put(&office.join("employees/e1/node_modules/pkg/index.js"), "a much longer file");
         put(&office.join("omega.log"), "started\nstarted again\n");
         db.set_backup_status(&BackupStatus { last_at: Some(chrono::Utc::now()), ..Default::default() }).unwrap();
-        assert_eq!(fingerprint(&office), fp4, "dependencies, the log and meta don't count");
+        assert_eq!(fingerprint(&office), fp7, "dependencies, the log and the backup status don't count");
 
         drop(db);
         let _ = fs::remove_dir_all(&office);
@@ -425,6 +456,25 @@ mod tests {
 
         drop(db);
         let _ = fs::remove_dir_all(&office);
+    }
+
+    #[test]
+    fn up_to_date_needs_the_last_zip_in_the_current_folder() {
+        let office = temp_office("current");
+        let dest = temp_office("current-dest");
+        let zip = dest.join("OmegaStar-backup-20260101-090000.zip");
+        put(&zip, "zip");
+        let dir = dest.to_string_lossy().into_owned();
+        let st = BackupStatus { fingerprint: Some("fp".into()), last_file: Some(zip.to_string_lossy().into_owned()), ..Default::default() };
+        assert!(up_to_date(&st, "fp", &dir, &office));
+        assert!(!up_to_date(&st, "other", &dir, &office), "the office changed");
+        let moved = office.parent().unwrap().join(format!("elsewhere-{}", uuid::Uuid::new_v4()));
+        assert!(!up_to_date(&st, "fp", &moved.to_string_lossy(), &office), "a new folder");
+        fs::remove_file(&zip).unwrap();
+        assert!(!up_to_date(&st, "fp", &dir, &office), "the zip is gone");
+
+        let _ = fs::remove_dir_all(&office);
+        let _ = fs::remove_dir_all(&dest);
     }
 
     #[test]

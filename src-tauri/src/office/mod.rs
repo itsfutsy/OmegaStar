@@ -57,7 +57,7 @@ const WATCH_FIRST: Duration = Duration::from_secs(45);
 const WATCH_EVERY: Duration = Duration::from_secs(60);
 const ACCOUNT_EVERY: Duration = Duration::from_secs(60);
 /// In the data dir while the app runs: a launch that finds it knows the last session did not quit cleanly.
-const RUNNING_MARKER: &str = "omega.running";
+pub(crate) const RUNNING_MARKER: &str = "omega.running";
 const DEFAULT_PROMPT: &str = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
 pub fn default_data_dir() -> PathBuf {
