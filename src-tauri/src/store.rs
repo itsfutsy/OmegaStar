@@ -179,6 +179,13 @@ impl Store {
     pub fn set_held_until(&self, t: Option<Ts>) -> Result<()> {
         self.set_meta("held_until", &t)
     }
+    /// Whether every employee hired before weekly reviews existed has been given one.
+    pub fn reviews_seeded(&self) -> Result<bool> {
+        Ok(self.meta::<bool>("reviewsSeeded")?.unwrap_or(false))
+    }
+    pub fn set_reviews_seeded(&self) -> Result<()> {
+        self.set_meta("reviewsSeeded", &true)
+    }
 
     /// Writes a consistent copy of the whole database to `path`, which must not exist.
     pub fn snapshot_to(&self, path: &Path) -> Result<()> {
@@ -734,6 +741,18 @@ impl Store {
         Ok(v)
     }
 
+    /// Open checks due by `now` whose run has not been made yet, oldest first. A check's run is the
+    /// Scheduled run of schedule_id check:<id> at slot due_at, so each due date runs once.
+    pub fn checks_to_run(&self, now: Ts) -> Result<Vec<Check>> {
+        let mut st = self.conn.prepare(
+            "SELECT data FROM checks c WHERE state = 'open' AND due_at <= ?1
+               AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.schedule_id = 'check:' || c.id AND runs.slot = c.due_at)
+             ORDER BY due_at",
+        )?;
+        let v = readable("checks", st.query_map([ms(now)], |r| from_row(r, 0))?)?;
+        Ok(v)
+    }
+
     // ---- skill revisions ----
 
     pub fn insert_revision(&self, employee_id: &str, r: &SkillRevision) -> Result<()> {
@@ -1105,7 +1124,7 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
 
         let at = |mins: i64| Utc::now() - chrono::Duration::minutes(mins);
         let scheduled = |id: &str, mins: i64, ask: CardAsk, answered: bool| {
-            let kind = RunKind::Scheduled { schedule_id: id.into(), slot: at(mins), label: "Sweep".into(), quiet: true, model: None, effort: None };
+            let kind = RunKind::Scheduled { schedule_id: id.into(), slot: at(mins), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
             let mut r = run(&ada, kind, RunState::Succeeded);
             r.created_at = at(mins);
             insert(with_card(r, ask, answered))
@@ -1124,6 +1143,48 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn a_due_check_is_run_once() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let now = Utc::now();
+        let check = |state: CheckState, due_at: Ts| {
+            let c = Check {
+                id: uuid::Uuid::new_v4().to_string(),
+                employee_id: ada.id.clone(),
+                what: "Did the fix hold".into(),
+                how: "Rerun the weekly report".into(),
+                due_at,
+                state,
+                created_at: now - chrono::Duration::days(3),
+                run_id: None,
+                closed_at: None,
+                result: None,
+            };
+            db.save_check(&c).unwrap();
+            c
+        };
+        let hour = chrono::Duration::hours(1);
+        let due = check(CheckState::Open, now - hour);
+        check(CheckState::Open, now + hour);
+        check(CheckState::Done, now - hour);
+        check(CheckState::Dropped, now - hour);
+        let to_run = |db: &Store| db.checks_to_run(now).unwrap().into_iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(to_run(&db), vec![due.id.clone()]);
+
+        let kind = RunKind::Scheduled { schedule_id: format!("{CHECK_PREFIX}{}", due.id), slot: due.due_at, label: "Check: Did the fix hold".into(), quiet: true, model: None, effort: None, review: false };
+        let first = Run::new(&ada.id, kind.clone(), "go".into(), now);
+        assert!(db.insert_run(&first, &first.id).unwrap());
+        assert!(to_run(&db).is_empty());
+        let again = Run::new(&ada.id, kind, "go".into(), now);
+        assert!(!db.insert_run(&again, &again.id).unwrap());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// One of each kind of run. `i` makes its ids unique, since `insert_run` skips a second run of the
     /// same schedule slot or follow-up.
     fn every_kind(i: usize) -> Vec<RunKind> {
@@ -1132,8 +1193,8 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
         vec![
             RunKind::Manual,
             RunKind::Chat,
-            RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false, model: None, effort: None },
-            RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true, model: None, effort: None },
+            RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false, model: None, effort: None, review: false },
+            RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true, model: None, effort: None, review: false },
             RunKind::Delegated { parent_run_id: format!("parent-{i}") },
             RunKind::Asked { parent_run_id: format!("parent-{i}"), asked_by: "e0".into(), task: false },
             RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false, chat: false },
