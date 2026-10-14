@@ -70,14 +70,7 @@ impl Office {
     }
 
     pub fn settings(&self) -> Result<AppSettings> {
-        let mut s = self.db().settings()?.unwrap_or(AppSettings {
-            max_concurrent_runs: 3,
-            claude_path: None,
-            data_dir: String::new(),
-            paused: false,
-            backup: BackupSettings::default(),
-            watch: WatchSettings::default(),
-        });
+        let mut s = self.db().settings()?.unwrap_or_default();
         s.data_dir = self.0.data_dir.to_string_lossy().into_owned();
         Ok(s)
     }

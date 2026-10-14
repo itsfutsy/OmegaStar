@@ -254,6 +254,7 @@ impl Office {
             db.save_run(&r)?;
             lost.push(r.id);
         }
+        db.lose_unreadable_running(now(), "Omega Star stopped while this run was in progress.")?;
         Ok(lost)
     }
 }
