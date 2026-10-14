@@ -96,9 +96,11 @@ impl Office {
             self.sink().run_updated(r);
         }
         if !created.is_empty() {
-            self.pump();
             self.sink().org_changed();
         }
+        // Every tick, not only one that queued work: a hold may have ended, or a dark wake turned full.
+        self.release_hold(now);
+        self.pump();
         Ok(())
     }
 

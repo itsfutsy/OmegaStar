@@ -1,7 +1,8 @@
 import { Fragment, useMemo } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView } from "../../api/types";
-import { useOrg, useProposals } from "../../lib/hooks";
+import { heldLabel } from "../../lib/format";
+import { useNow, useOrg, useProposals, useUsage } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import type { LiveRun } from "../../lib/runs";
 import { navigate, openMember } from "../../lib/router";
@@ -91,18 +92,25 @@ export function Turn({ turn, e, withReport = false }: { turn: LiveRun; e: Employ
   );
 }
 
-/** A turn that has not started: it waits for the turn ahead of it, or for a free slot. */
+/** A turn that has not started: it waits for the turn ahead of it, for a free slot, or for the usage limit to reset. */
 function Waiting() {
+  const { usage } = useUsage();
+  const now = useNow(60_000);
+  const held = usage?.heldUntil && Date.parse(usage.heldUntil) > now ? usage.heldUntil : null;
   return (
     <div className="task-wait">
       <Icon name="clock" size={14} />
       <div className="stack">
-        <span><b>Waiting to start.</b> It starts as soon as there's room.</span>
-        <span>
-          <button className="btn btn-ghost btn-sm task-wait-link" onClick={() => navigate({ page: "settings" })}>
-            Change how many run at once <Icon name="arrowUpRight" size={12} />
-          </button>
-        </span>
+        {held ? <span><b>Waiting to start.</b> {heldLabel(held, new Date(now))}.</span> : (
+          <>
+            <span><b>Waiting to start.</b> It starts as soon as there's room.</span>
+            <span>
+              <button className="btn btn-ghost btn-sm task-wait-link" onClick={() => navigate({ page: "settings" })}>
+                Change how many run at once <Icon name="arrowUpRight" size={12} />
+              </button>
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

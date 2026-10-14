@@ -1003,6 +1003,12 @@ pub struct Run {
     /// The build that ran it: app version, commit and channel, Claude Code's version and the signed-in organisation.
     #[serde(default)]
     pub build: Option<RunBuild>,
+    /// Times the run went back to the queue because the usage limit stopped it.
+    #[serde(default)]
+    pub limit_retries: u32,
+    /// The context size in tokens after its last top-level message.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
 }
 
 impl Run {
@@ -1030,6 +1036,8 @@ impl Run {
             proposed: None,
             attachments: vec![],
             build: None,
+            limit_retries: 0,
+            context_tokens: None,
         }
     }
 
@@ -1514,13 +1522,25 @@ pub struct UsageLimits {
     pub observed_at: Option<Ts>,
     /// `false` when the account has no subscription limits (API key billing).
     pub subscription: bool,
+    /// The office waits for the usage limit to reset until then: no run starts.
+    pub held_until: Option<Ts>,
+    /// Claude Code is signed out or on another account than the one set up: routines wait.
+    pub account_issue: Option<AccountIssue>,
 }
 
 impl Default for UsageLimits {
     fn default() -> Self {
         // Unknown until the first probe; assume a subscription so the UI waits rather than switching to spend.
-        UsageLimits { five_hour: None, seven_day: None, observed_at: None, subscription: true }
+        UsageLimits { five_hour: None, seven_day: None, observed_at: None, subscription: true, held_until: None, account_issue: None }
     }
+}
+
+/// Why routines are paused for the account, and the account Claude Code is signed in to instead.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountIssue {
+    pub message: String,
+    pub signed_in_as: Option<String>,
 }
 
 /// A file attached to a chat message: its name and its bytes in base64.

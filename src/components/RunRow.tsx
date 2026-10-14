@@ -1,6 +1,6 @@
 import type { EmployeeView, PersonView, Run } from "../api/types";
-import { duration, elapsedMs, firstName, relTime, runKindLabel, runStateLabel, runStateTone, whenShort } from "../lib/format";
-import { useNow } from "../lib/hooks";
+import { duration, elapsedMs, firstName, heldLabel, relTime, runKindLabel, runStateLabel, runStateTone, whenShort } from "../lib/format";
+import { useNow, useUsage } from "../lib/hooks";
 import { openRun } from "../lib/router";
 import { Icon, type IconName } from "./Icon";
 import { Avatar, StatePill } from "./ui";
@@ -45,6 +45,14 @@ export function kindIcon(run: Run): IconName {
   }
 }
 
+/** While the office waits for the usage limit, when a queued run starts. */
+function Held() {
+  const { usage } = useUsage();
+  const now = useNow(60_000);
+  if (!usage?.heldUntil || Date.parse(usage.heldUntil) <= now) return null;
+  return <span className="runrow-detail">{heldLabel(usage.heldUntil, new Date(now))}</span>;
+}
+
 export function RunRow({ run, employee, employees, people, showEmployee = false }: {
   run: Run; employee?: EmployeeView; employees: EmployeeView[]; people: PersonView[]; showEmployee?: boolean;
 }) {
@@ -68,6 +76,7 @@ export function RunRow({ run, employee, employees, people, showEmployee = false 
           <span className={showEmployee ? "muted" : ""}>{label}</span>
         </span>
         <span className="runrow-detail">{detail}</span>
+        {run.state === "queued" ? <Held /> : null}
       </span>
       <span className="runrow-meta">
         <span className="runrow-when">

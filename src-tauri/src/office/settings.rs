@@ -249,12 +249,58 @@ impl Office {
     }
 
     pub(super) fn observe_usage(&self, sample: claude::UsageSample, from_probe: bool) {
-        let next = {
+        let (next, released) = {
             let mut u = lock(&self.0.usage);
+            let held = u.held_until;
             *u = merge_usage(&u, sample, from_probe, now());
-            u.clone()
+            (u.clone(), held.is_some() && u.held_until.is_none())
         };
         self.sink().usage_updated(&next);
+        if released {
+            if let Err(e) = self.db().set_held_until(None) {
+                log!("could not clear the usage hold: {e}");
+            }
+            self.pump();
+        }
+    }
+
+    /// Holds the office until the usage limit resets at `until`: no run starts before then. Tells you
+    /// once, when the hold is new.
+    pub(super) fn hold_until(&self, until: Ts) {
+        let at = now();
+        let (next, new) = {
+            let mut u = lock(&self.0.usage);
+            let new = u.held_until.is_none_or(|t| t <= at);
+            if u.held_until.is_none_or(|t| until > t) {
+                u.held_until = Some(until);
+            }
+            (u.clone(), new)
+        };
+        if let Err(e) = self.db().set_held_until(next.held_until) {
+            log!("could not save the usage hold: {e}");
+        }
+        self.sink().usage_updated(&next);
+        if new {
+            let time = until.with_timezone(&Local).format("%-I:%M %P");
+            self.sink().notify("Waiting for the usage limit", &format!("Work starts again at {time}, when the limit resets."));
+        }
+    }
+
+    /// Ends a hold whose reset time has come. Returns whether there was one.
+    pub(super) fn release_hold(&self, now: Ts) -> bool {
+        let next = {
+            let mut u = lock(&self.0.usage);
+            if !u.held_until.is_some_and(|t| t <= now) {
+                return false;
+            }
+            u.held_until = None;
+            u.clone()
+        };
+        if let Err(e) = self.db().set_held_until(None) {
+            log!("could not clear the usage hold: {e}");
+        }
+        self.sink().usage_updated(&next);
+        true
     }
 
     // ------------------------------------------------------------------ account
@@ -267,7 +313,63 @@ impl Office {
             Some(p) => claude::auth_status(&p).await,
             None => None,
         };
+        *lock(&self.0.account) = Some((now(), account.clone()));
+        let recorded = match self.db().company() {
+            Ok(c) => c.and_then(|c| c.email),
+            Err(e) => {
+                log!("reading the account set up for the office failed: {e}");
+                return;
+            }
+        };
+        let issue = account_issue(recorded.as_deref(), account.as_ref());
+        let changed = {
+            let mut u = lock(&self.0.usage);
+            (u.account_issue != issue).then(|| {
+                u.account_issue = issue.clone();
+                u.clone()
+            })
+        };
+        if let Some(next) = changed {
+            self.sink().usage_updated(&next);
+            if let Some(i) = &issue {
+                self.sink().notify("Routines are paused", &i.message);
+            }
+        }
+        // Background work waits for the first check, so this may be what starts it.
+        self.pump();
+    }
+
+    /// Makes the account Claude Code is signed in to now the office's own, which ends an account pause.
+    pub async fn use_signed_in_account(&self) -> Result<Company> {
+        let account = match claude::locate(self.settings()?.claude_path.as_deref()) {
+            Some(p) => claude::auth_status(&p).await,
+            None => None,
+        };
+        let email = account
+            .as_ref()
+            .filter(|a| a.logged_in)
+            .and_then(|a| a.email.clone())
+            .ok_or_else(|| AppError::invalid("Claude Code is not signed in."))?;
+        let c = {
+            let db = self.db();
+            if db.company()?.is_none() {
+                return Err(AppError::invalid("finish setting up first"));
+            }
+            Self::edit_org(&db, |org| {
+                org.company.email = Some(email);
+                Ok(org.company.clone())
+            })?
+        };
         *lock(&self.0.account) = Some((now(), account));
+        let next = {
+            let mut u = lock(&self.0.usage);
+            u.account_issue = None;
+            u.clone()
+        };
+        self.sink().org_changed();
+        self.sink().usage_updated(&next);
+        self.pump();
+        Ok(c)
     }
 
     /// The last account check and when it ran; `None` when it has not run yet.
@@ -293,11 +395,17 @@ impl Office {
 /// Folds a usage observation into the cached limits. A run's `rate_limit_event` updates only the
 /// windows it reports. A `/usage` probe replaces both; its reset time is only text, so a still
 /// future exact reset time from an earlier run is kept.
+///
+/// The hold and the account issue carry over, except that a probe showing both windows under 100%
+/// ends the hold.
 fn merge_usage(old: &UsageLimits, sample: claude::UsageSample, from_probe: bool, now: Ts) -> UsageLimits {
     let subscription = sample.five_hour.is_some() || sample.seven_day.is_some();
+    let account_issue = old.account_issue.clone();
     if from_probe && !subscription {
-        return UsageLimits { five_hour: None, seven_day: None, observed_at: Some(now), subscription: false };
+        return UsageLimits { five_hour: None, seven_day: None, observed_at: Some(now), subscription: false, held_until: old.held_until, account_issue };
     }
+    let under = |w: &Option<UsageWindow>| w.as_ref().is_some_and(|w| w.percent < 100.0);
+    let held_until = if from_probe && under(&sample.five_hour) && under(&sample.seven_day) { None } else { old.held_until };
     let fold = |old: &Option<UsageWindow>, new: Option<UsageWindow>| match new {
         None if from_probe => None,
         None => old.clone(),
@@ -313,5 +421,61 @@ fn merge_usage(old: &UsageLimits, sample: claude::UsageSample, from_probe: bool,
         seven_day: fold(&old.seven_day, sample.seven_day),
         observed_at: Some(now),
         subscription: true,
+        held_until,
+        account_issue,
+    }
+}
+
+/// Why routines must wait for the account: Claude Code is signed out, or signed in to another account
+/// than `recorded`, the one set up. `None` when it is the same, or when either is unknown.
+fn account_issue(recorded: Option<&str>, now: Option<&Account>) -> Option<AccountIssue> {
+    let (recorded, now) = (recorded?, now?);
+    if !now.logged_in {
+        return Some(AccountIssue { message: "Claude Code is signed out, so routines are paused until you sign in again.".into(), signed_in_as: None });
+    }
+    let current = now.email.as_deref()?;
+    (!current.eq_ignore_ascii_case(recorded)).then(|| AccountIssue {
+        message: format!("Claude Code is signed in as {current} instead of {recorded}, so routines are paused until you switch back."),
+        signed_in_as: Some(current.to_string()),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(percent: f64) -> Option<UsageWindow> {
+        Some(UsageWindow { percent, resets_at: None, resets_text: None })
+    }
+
+    #[test]
+    fn the_hold_and_account_issue_survive_a_merge_until_a_probe_shows_room() {
+        let at = Utc::now();
+        let issue = AccountIssue { message: "Paused.".into(), signed_in_as: None };
+        let old = UsageLimits { held_until: Some(at + chrono::Duration::hours(2)), account_issue: Some(issue.clone()), ..UsageLimits::default() };
+        let from_run = merge_usage(&old, claude::UsageSample { five_hour: window(100.0), seven_day: None }, false, at);
+        assert_eq!((from_run.held_until, from_run.account_issue.as_ref()), (old.held_until, Some(&issue)));
+        let full = merge_usage(&old, claude::UsageSample { five_hour: window(100.0), seven_day: window(40.0) }, true, at);
+        assert_eq!((full.held_until, full.account_issue.as_ref()), (old.held_until, Some(&issue)));
+        let room = merge_usage(&old, claude::UsageSample { five_hour: window(12.0), seven_day: window(40.0) }, true, at);
+        assert_eq!((room.held_until, room.account_issue), (None, Some(issue)));
+    }
+
+    fn account(logged_in: bool, email: Option<&str>) -> Account {
+        Account { logged_in, email: email.map(String::from), org_name: None, plan: None }
+    }
+
+    #[test]
+    fn account_issue_covers_each_case() {
+        let ada = account(true, Some("ada@example.com"));
+        assert_eq!(account_issue(Some("ada@example.com"), None), None);
+        assert_eq!(account_issue(None, Some(&ada)), None);
+        let out = account_issue(Some("ada@example.com"), Some(&account(false, None))).unwrap();
+        assert_eq!(out.message, "Claude Code is signed out, so routines are paused until you sign in again.");
+        assert_eq!(out.signed_in_as, None);
+        let other = account_issue(Some("ada@example.com"), Some(&account(true, Some("bob@example.com")))).unwrap();
+        assert_eq!(other.message, "Claude Code is signed in as bob@example.com instead of ada@example.com, so routines are paused until you switch back.");
+        assert_eq!(other.signed_in_as.as_deref(), Some("bob@example.com"));
+        assert_eq!(account_issue(Some("Ada@Example.com"), Some(&ada)), None);
     }
 }

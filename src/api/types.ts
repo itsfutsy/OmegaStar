@@ -174,6 +174,8 @@ export type Run = {
   proposed: string | null;     // a tidy's bigger changes, waiting for your approval
   attachments: string[];       // file names you attached to a chat message
   build: RunBuild | null;      // the build that ran it, and the Claude Code organisation around it
+  limitRetries: number;        // times it went back to the queue after the usage limit
+  contextTokens: number | null; // the context size after its last top-level message
 };
 export type NewAttachment = { name: string; data: string /* base64 */ };
 
@@ -283,7 +285,11 @@ export type BackupStatus = {
 };
 
 export type UsageWindow = { percent: number; resetsAt: string | null; resetsText: string | null };   // percent 0-100
-export type UsageLimits = { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; observedAt: string | null; subscription: boolean };
+export type UsageLimits = {
+  fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; observedAt: string | null; subscription: boolean;
+  heldUntil: string | null;    // no run starts until the usage limit resets then
+  accountIssue: { message: string; signedInAs: string | null } | null;   // routines wait for the right account
+};
 
 export type ApiError = { code: string; message: string };
 
@@ -372,6 +378,7 @@ export type Commands = {
   open_backup_dir: { args: Record<string, never>; ret: null };
   usage_limits: { args: Record<string, never>; ret: UsageLimits };
   refresh_usage: { args: Record<string, never>; ret: UsageLimits };
+  use_signed_in_account: { args: Record<string, never>; ret: Company };
   check_update: { args: Record<string, never>; ret: string | null };
   install_update: { args: Record<string, never>; ret: null };
 };
