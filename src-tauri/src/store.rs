@@ -5,7 +5,9 @@ use crate::log::log;
 use crate::model::*;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Mutex;
 
 pub struct Store {
     conn: Connection,
@@ -68,10 +70,32 @@ fn to_json<T: Serialize>(v: &T) -> Result<String> {
     Ok(serde_json::to_string(v)?)
 }
 
+/// The error names the row by the start of its JSON, which begins with the row's id.
 fn from_row<T: DeserializeOwned>(row: &Row, idx: usize) -> rusqlite::Result<T> {
     let s: String = row.get(idx)?;
-    serde_json::from_str(&s)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(e)))
+    serde_json::from_str(&s).map_err(|e| {
+        let head: String = s.chars().take(60).collect();
+        rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(AppError::internal(format!("{e} in {head}"))))
+    })
+}
+
+/// The rows this build can read. A row it cannot (written by a newer build, or damaged) is left out
+/// and logged once per process, so one bad row never hides every other one.
+fn readable<T>(table: &str, rows: impl Iterator<Item = rusqlite::Result<T>>) -> Result<Vec<T>> {
+    static LOGGED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    let mut v = vec![];
+    for row in rows {
+        match row {
+            Ok(r) => v.push(r),
+            Err(err @ rusqlite::Error::FromSqlConversionFailure(..)) => {
+                if LOGGED.lock().unwrap_or_else(|e| e.into_inner()).insert(err.to_string()) {
+                    log!("left out a {table} row this build cannot read: {err}");
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(v)
 }
 
 pub struct RunRecord {
@@ -163,7 +187,7 @@ impl Store {
 
     pub fn employees(&self) -> Result<Vec<Employee>> {
         let mut st = self.conn.prepare("SELECT data FROM employees WHERE departed_at IS NULL")?;
-        let mut v: Vec<Employee> = st.query_map([], |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let mut v: Vec<Employee> = readable("employees", st.query_map([], |r| from_row(r, 0))?)?;
         v.sort_by_key(|e| e.hired_at);
         Ok(v)
     }
@@ -200,7 +224,7 @@ impl Store {
 
     pub fn people(&self) -> Result<Vec<Person>> {
         let mut st = self.conn.prepare("SELECT data FROM people WHERE removed_at IS NULL")?;
-        let mut v: Vec<Person> = st.query_map([], |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let mut v: Vec<Person> = readable("people", st.query_map([], |r| from_row(r, 0))?)?;
         v.sort_by_key(|p| p.added_at);
         Ok(v)
     }
@@ -229,13 +253,12 @@ impl Store {
 
     fn schedules_where(&self, clause: &str, p: &[&dyn rusqlite::ToSql]) -> Result<Vec<(Schedule, Ts)>> {
         let mut st = self.conn.prepare(&format!("SELECT data, last_slot FROM schedules {clause}"))?;
-        let v = st
-            .query_map(p, |r| {
-                let s: Schedule = from_row(r, 0)?;
-                let last: i64 = r.get(1)?;
-                Ok((s, Ts::from_timestamp_millis(last).unwrap_or_default()))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        let rows = st.query_map(p, |r| {
+            let s: Schedule = from_row(r, 0)?;
+            let last: i64 = r.get(1)?;
+            Ok((s, Ts::from_timestamp_millis(last).unwrap_or_default()))
+        })?;
+        let v = readable("schedules", rows)?;
         Ok(v)
     }
 
@@ -318,6 +341,19 @@ impl Store {
         Ok(())
     }
 
+    /// Marks every run still running as lost, in SQL, so it reaches rows this build cannot read; JSON
+    /// that is not valid is left as it is. `recover` calls it after saving the readable ones, so a row
+    /// from another build never holds its session's running slot.
+    pub fn lose_unreadable_running(&self, at: Ts, error: &str) -> Result<usize> {
+        let at = serde_json::to_value(at)?;
+        Ok(self.conn.execute(
+            "UPDATE runs SET state = 'lost',
+               data = CASE WHEN json_valid(data) THEN json_set(data, '$.state', 'lost', '$.endedAt', ?1, '$.error', ?2) ELSE data END
+             WHERE state = 'running'",
+            params![at.as_str(), error],
+        )?)
+    }
+
     pub fn mark_inited(&self, run_id: &str) -> Result<()> {
         self.conn.execute("UPDATE runs SET inited = 1 WHERE id = ?", [run_id])?;
         Ok(())
@@ -343,7 +379,7 @@ impl Store {
 
     fn runs_where(&self, clause: &str, p: &[&dyn rusqlite::ToSql]) -> Result<Vec<Run>> {
         let mut st = self.conn.prepare(&format!("SELECT data FROM runs {clause}"))?;
-        let v = st.query_map(p, |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let v = readable("runs", st.query_map(p, |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -354,9 +390,7 @@ impl Store {
     /// The same runs with their sessions.
     pub fn records_in_state(&self, state: RunState) -> Result<Vec<RunRecord>> {
         let mut st = self.conn.prepare("SELECT data, session FROM runs WHERE state = ? ORDER BY created_at, rowid")?;
-        let v = st
-            .query_map([state.as_str()], |r| Ok(RunRecord { run: from_row(r, 0)?, session: r.get(1)? }))?
-            .collect::<rusqlite::Result<_>>()?;
+        let v = readable("runs", st.query_map([state.as_str()], |r| Ok(RunRecord { run: from_row(r, 0)?, session: r.get(1)? }))?)?;
         Ok(v)
     }
 
@@ -397,6 +431,7 @@ impl Store {
         )
     }
 
+    /// Raw SQL on purpose: a queued row this build cannot read is a newer build's run, which that build will start.
     pub fn schedule_has_queued_run(&self, schedule_id: &str) -> Result<bool> {
         Ok(self
             .conn
@@ -424,16 +459,20 @@ impl Store {
     /// A fast pre-filter for `threads::reaches_you` with `quiet_chain` false and `top` meaning one of
     /// `roots`, so the Inbox does not load every quiet run ever made. The Office still applies
     /// `reaches_you` to what comes back, and `the_inbox_query_matches_reaches_you` keeps the two equal.
+    /// `json_valid` goes first, and again in the OR branch SQLite may run on its own: a JSON function on a
+    /// row that is not JSON fails the whole query.
     fn reports(&self, roots: &[String], flagged: &[String], limit: Option<u32>, archived: &str, order: &str) -> Result<Vec<Run>> {
         let (roots, flagged) = (serde_json::to_string(roots)?, serde_json::to_string(flagged)?);
         self.runs_where(
             &format!(
-                "WHERE lane = 'work'
+                "WHERE json_valid(data)
+                 AND lane = 'work'
                  AND json_extract(data, '$.kind.type') IS NOT 'reply'
                  AND json_extract(data, '$.kind.type') IS NOT 'replyCheck'
                  AND json_extract(data, '$.kind.type') IS NOT 'task'
                  AND ((employee_id IN (SELECT value FROM json_each(?)) AND parent_run_id IS NULL)
                       OR (employee_id IN (SELECT value FROM json_each(?))
+                          AND json_valid(data)
                           AND (COALESCE(json_array_length(data, '$.needsYou'), 0) > 0
                                OR (COALESCE(json_array_length(data, '$.denials'), 0) > 0 AND json_extract(data, '$.kind.type') IS NOT 'tidy')
                                OR (parent_run_id IS NOT NULL AND state IN ('failed', 'lost')))))
@@ -454,9 +493,10 @@ impl Store {
     /// still going and has not collected the answer yet. Oldest first.
     pub fn open_asks(&self) -> Result<Vec<Run>> {
         self.runs_where(
-            "WHERE json_extract(data, '$.kind.type') = 'asked'
+            "WHERE json_valid(data)
+               AND json_extract(data, '$.kind.type') = 'asked'
                AND (state IN ('queued', 'running')
-                    OR (json_extract(data, '$.deliveredAt') IS NULL
+                    OR (json_valid(data) AND json_extract(data, '$.deliveredAt') IS NULL
                         AND parent_run_id IN (SELECT id FROM runs WHERE state IN ('queued', 'running'))))
              ORDER BY created_at, rowid",
             &[],
@@ -493,7 +533,7 @@ impl Store {
 
     fn requests_where(&self, clause: &str, p: &[&dyn rusqlite::ToSql]) -> Result<Vec<HumanRequest>> {
         let mut st = self.conn.prepare(&format!("SELECT data FROM requests {clause} ORDER BY created_at, rowid"))?;
-        let v = st.query_map(p, |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let v = readable("requests", st.query_map(p, |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -526,9 +566,7 @@ impl Store {
             "SELECT data FROM requests WHERE (?1 IS NULL OR person_id = ?1) AND (?2 IS NULL OR employee_id = ?2)
              AND (?3 IS NULL OR state = ?3) ORDER BY created_at DESC, rowid DESC",
         )?;
-        let v = st
-            .query_map(params![f.person_id, f.employee_id, f.state.map(|s| s.as_str())], |r| from_row(r, 0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let v = readable("requests", st.query_map(params![f.person_id, f.employee_id, f.state.map(|s| s.as_str())], |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -556,9 +594,7 @@ impl Store {
             "SELECT data FROM proposals WHERE (?1 IS NULL OR employee_id = ?1) AND (?2 IS NULL OR state = ?2)
              ORDER BY created_at DESC, rowid DESC",
         )?;
-        let v = st
-            .query_map(params![employee_id, state.map(|s| s.as_str())], |r| from_row(r, 0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let v = readable("proposals", st.query_map(params![employee_id, state.map(|s| s.as_str())], |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -591,7 +627,7 @@ impl Store {
     /// Every Reply run, of one employee or of everyone, oldest first. Threads are built from them.
     pub fn reply_runs(&self, employee_id: Option<&str>) -> Result<Vec<Run>> {
         self.runs_where(
-            "WHERE (?1 IS NULL OR employee_id = ?1) AND json_extract(data, '$.kind.type') = 'reply' ORDER BY created_at, rowid",
+            "WHERE json_valid(data) AND (?1 IS NULL OR employee_id = ?1) AND json_extract(data, '$.kind.type') = 'reply' ORDER BY created_at, rowid",
             &[&employee_id],
         )
     }
@@ -599,7 +635,7 @@ impl Store {
     /// An employee's tasks you have not archived, oldest first.
     pub fn open_tasks(&self, employee_id: &str) -> Result<Vec<Run>> {
         self.runs_where(
-            "WHERE employee_id = ? AND json_extract(data, '$.kind.type') = 'task' AND json_extract(data, '$.archivedAt') IS NULL
+            "WHERE employee_id = ? AND json_valid(data) AND json_extract(data, '$.kind.type') = 'task' AND json_extract(data, '$.archivedAt') IS NULL
              ORDER BY created_at, rowid",
             &[&employee_id],
         )
@@ -609,7 +645,7 @@ impl Store {
     /// work), oldest first: what `threads::file` follows to put a hand-off in one Inbox row.
     pub fn conversation_runs(&self) -> Result<Vec<Run>> {
         self.runs_where(
-            "WHERE json_extract(data, '$.kind.type') IN ('reply', 'answered', 'asked', 'delegated') ORDER BY created_at, rowid",
+            "WHERE json_valid(data) AND json_extract(data, '$.kind.type') IN ('reply', 'answered', 'asked', 'delegated') ORDER BY created_at, rowid",
             &[],
         )
     }
@@ -655,9 +691,7 @@ impl Store {
         let mut st = self.conn.prepare(
             "SELECT data FROM briefs WHERE employee_id = ?1 AND session = ?2 AND (?3 = 0 OR consumed_at IS NULL) ORDER BY created_at, rowid",
         )?;
-        let v = st
-            .query_map(params![employee_id, session, unconsumed_only as i64], |r| from_row(r, 0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let v = readable("briefs", st.query_map(params![employee_id, session, unconsumed_only as i64], |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -699,7 +733,7 @@ impl Store {
             "SELECT data FROM checks WHERE employee_id = ?1 AND (?2 IS NULL OR state = ?2)
              ORDER BY (state = 'open') DESC, CASE WHEN state = 'open' THEN due_at END ASC, created_at DESC",
         )?;
-        let v = st.query_map(params![employee_id, state.map(|s| s.as_str())], |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let v = readable("checks", st.query_map(params![employee_id, state.map(|s| s.as_str())], |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -717,7 +751,7 @@ impl Store {
         let mut st = self
             .conn
             .prepare("SELECT data FROM skill_revisions WHERE employee_id = ? ORDER BY at DESC, rowid DESC")?;
-        let v = st.query_map([employee_id], |r| from_row(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        let v = readable("skill_revisions", st.query_map([employee_id], |r| from_row(r, 0))?)?;
         Ok(v)
     }
 
@@ -741,5 +775,283 @@ impl Store {
                 Ok((r.get(0)?, from_row(r, 1)?))
             })
             .optional()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threads;
+    use chrono::Utc;
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("omegastar-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An employee reporting to `manager_id`, or to you.
+    fn employee(name: &str, manager_id: Option<&str>) -> Employee {
+        let id = uuid::Uuid::new_v4().to_string();
+        Employee {
+            id: id.clone(),
+            slug: name.to_lowercase(),
+            name: name.into(),
+            title: "Tester".into(),
+            description: String::new(),
+            objective: String::new(),
+            manager_id: manager_id.map(String::from),
+            skills: SkillGrant { builtins: false, keys: vec![] },
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: None,
+            effort: None,
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![format!("/office/employees/{id}")],
+            hue: 0,
+            chat_session: format!("chat-{name}"),
+            hired_at: Utc::now(),
+        }
+    }
+
+    /// A run in `state`, ended now if it is finished.
+    fn run(e: &Employee, kind: RunKind, state: RunState) -> Run {
+        let mut r = Run::new(&e.id, kind, "go".into(), Utc::now());
+        r.state = state;
+        if state.is_finished() {
+            r.ended_at = Some(r.created_at);
+        }
+        r
+    }
+
+    /// Inserts a work-lane row of `e` as it is, readable or not.
+    fn raw(db: &Store, e: &Employee, id: &str, state: &str, session: &str, data: &str) {
+        db.conn
+            .execute(
+                "INSERT INTO runs(id, employee_id, lane, state, session, created_at, data) VALUES (?1, ?2, 'work', ?3, ?4, ?5, ?6)",
+                params![id, e.id, state, session, ms(Utc::now()), data],
+            )
+            .unwrap();
+    }
+
+    /// A run's JSON with a kind this build does not know.
+    fn future_kind(e: &Employee, state: RunState) -> (String, String) {
+        let mut v = serde_json::to_value(run(e, RunKind::Manual, state)).unwrap();
+        v["kind"] = serde_json::json!({ "type": "someFutureKind", "detail": "from a newer build" });
+        (v["id"].as_str().unwrap().to_string(), v.to_string())
+    }
+
+    fn ids(runs: &[Run]) -> BTreeSet<String> {
+        runs.iter().map(|r| r.id.clone()).collect()
+    }
+
+    #[test]
+    fn an_unreadable_row_is_left_out() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let queued = run(&ada, RunKind::Manual, RunState::Queued);
+        let done = run(&ada, RunKind::Manual, RunState::Succeeded);
+        assert!(db.insert_run(&queued, &queued.id).unwrap());
+        assert!(db.insert_run(&done, &done.id).unwrap());
+        for state in [RunState::Queued, RunState::Succeeded] {
+            let (id, data) = future_kind(&ada, state);
+            raw(&db, &ada, &id, state.as_str(), &id, &data);
+            let id = uuid::Uuid::new_v4().to_string();
+            raw(&db, &ada, &id, state.as_str(), &id, "not json");
+        }
+
+        let both = ids(&[queued.clone(), done.clone()]);
+        assert_eq!(ids(&db.recent_runs(None, 100).unwrap()), both);
+        let records: Vec<Run> = db.records_in_state(RunState::Queued).unwrap().into_iter().map(|r| r.run).collect();
+        assert_eq!(ids(&records), ids(&[queued.clone()]));
+        assert_eq!(ids(&db.runs_in_state(RunState::Queued).unwrap()), ids(&[queued]));
+        assert_eq!(ids(&db.runs_in_state(RunState::Succeeded).unwrap()), ids(&[done.clone()]));
+        assert_eq!(ids(&db.finished_root_runs(&[ada.id.clone()], &[ada.id.clone()]).unwrap()), ids(&[done]));
+        // The Inbox's other queries read the JSON in SQL too.
+        assert!(db.reply_runs(None).unwrap().is_empty());
+        assert!(db.open_tasks(&ada.id).unwrap().is_empty());
+        assert!(db.conversation_runs().unwrap().is_empty());
+        assert!(db.open_asks().unwrap().is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_running_rows_are_lost() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let (future, data) = future_kind(&ada, RunState::Running);
+        raw(&db, &ada, &future, "running", "s1", &data);
+        raw(&db, &ada, "corrupt", "running", "s2", "not json");
+
+        let at = Utc::now();
+        assert_eq!(db.lose_unreadable_running(at, "Stopped.").unwrap(), 2);
+        let state = |id: &str| -> String { db.conn.query_row("SELECT state FROM runs WHERE id = ?", [id], |r| r.get(0)).unwrap() };
+        assert_eq!(state(&future), "lost");
+        assert_eq!(state("corrupt"), "lost");
+        let (json_state, ended, error): (String, String, String) = db
+            .conn
+            .query_row(
+                "SELECT json_extract(data, '$.state'), json_extract(data, '$.endedAt'), json_extract(data, '$.error') FROM runs WHERE id = ?",
+                [&future],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(json_state, "lost");
+        assert_eq!(ended.parse::<Ts>().unwrap(), at);
+        assert_eq!(error, "Stopped.");
+        let corrupt: String = db.conn.query_row("SELECT data FROM runs WHERE id = 'corrupt'", [], |r| r.get(0)).unwrap();
+        assert_eq!(corrupt, "not json");
+
+        for session in ["s1", "s2"] {
+            let next = run(&ada, RunKind::Manual, RunState::Running);
+            assert!(db.insert_run(&next, session).unwrap(), "a new run takes {session}");
+        }
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_old_office_still_opens() {
+        let dir = temp_dir();
+        let path = dir.join("office.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            r#"
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE employees(id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, departed_at INTEGER, data TEXT NOT NULL);
+CREATE TABLE people(id TEXT PRIMARY KEY, removed_at INTEGER, data TEXT NOT NULL);
+CREATE TABLE schedules(id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, last_slot INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE runs(
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  lane TEXT NOT NULL,
+  state TEXT NOT NULL,
+  schedule_id TEXT,
+  slot INTEGER,
+  parent_run_id TEXT,
+  request_id TEXT,
+  session TEXT NOT NULL,
+  inited INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  UNIQUE(schedule_id, slot)
+);
+CREATE UNIQUE INDEX runs_one_running_per_lane ON runs(employee_id, lane) WHERE state = 'running';
+INSERT INTO meta(key, value) VALUES ('settings', '{"maxConcurrentRuns":2,"claudePath":null,"dataDir":"/office","paused":false}');
+INSERT INTO employees(id, slug, data) VALUES ('e1', 'ada', '{"id":"e1","slug":"ada","name":"Ada","title":"Analyst","description":"","objective":"Keep the numbers right.","managerId":null,"skills":{"builtins":true,"keys":[]},"clearance":"supervised","allowRules":[],"model":null,"effort":null,"workspaces":["/office/employees/e1/workspace"],"hue":200,"chatSession":"chat-e1","hiredAt":"2026-09-20T09:00:00Z"}');
+INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data) VALUES ('r1', 'e1', 'work', 'succeeded', 'r1', 1, 1759050000000, '{"id":"r1","employeeId":"e1","kind":{"type":"manual"},"prompt":"Check the numbers.","state":"succeeded","createdAt":"2026-09-28T09:00:00Z","startedAt":"2026-09-28T09:00:01Z","endedAt":"2026-09-28T09:05:00Z","turns":4,"durationMs":299000,"costUsd":0.12,"summary":"All good.","error":null,"needsYou":[]}');
+"#,
+        )
+        .unwrap();
+        drop(old);
+
+        let db = Store::open(&path).unwrap();
+        let mut st = db.conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap();
+        let tables: BTreeSet<String> = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        drop(st);
+        for t in ["checks", "proposals", "skill_revisions", "requests"] {
+            assert!(tables.contains(t), "{t} created");
+        }
+        let lane_index: Option<String> =
+            db.conn.query_row("SELECT name FROM sqlite_master WHERE name = 'runs_one_running_per_lane'", [], |r| r.get(0)).optional().unwrap();
+        assert_eq!(lane_index, None);
+
+        let r = db.run("r1").unwrap().unwrap().run;
+        assert!(r.allow_once.is_empty() && r.denials.is_empty() && r.skill_changes.is_empty() && r.attachments.is_empty());
+        assert_eq!(r.proposed, None);
+        let e = db.employee("e1").unwrap().unwrap();
+        assert!(e.browser);
+        assert!(!e.auto_tidy);
+        let s = db.settings().unwrap().unwrap();
+        assert_eq!(s.max_concurrent_runs, 2);
+        assert_eq!(s.backup, BackupSettings::default());
+        assert_eq!(s.watch, WatchSettings::default());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One of each kind of run. `i` makes its ids unique, since `insert_run` skips a second run of the
+    /// same schedule slot or follow-up.
+    fn every_kind(i: usize) -> Vec<RunKind> {
+        let slot = Utc::now();
+        let person = || "p1".to_string();
+        vec![
+            RunKind::Manual,
+            RunKind::Chat,
+            RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false },
+            RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true },
+            RunKind::Delegated { parent_run_id: format!("parent-{i}") },
+            RunKind::Asked { parent_run_id: format!("parent-{i}"), asked_by: "e0".into(), task: false },
+            RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false },
+            RunKind::FollowUp { request_id: format!("request-{i}"), person_id: person() },
+            RunKind::Organize { imported: vec![], settled: false },
+            RunKind::Reply { to_run_id: format!("root-{i}"), label: "Manual run".into(), task: false },
+            RunKind::Task { label: "Draft it".into(), from: None, context: String::new() },
+            RunKind::HireDecided { proposal_id: format!("proposal-{i}"), approved: true },
+            RunKind::Tidy { reason: TidyReason::Auto, signature: vec![], plan: None },
+            RunKind::ReplyCheck { request_id: format!("request-{i}"), person_id: person() },
+            RunKind::Nudge { request_id: format!("request-{i}"), person_id: person() },
+            RunKind::Unanswered { request_id: format!("request-{i}"), person_id: person() },
+        ]
+    }
+
+    #[test]
+    fn the_inbox_query_matches_reaches_you() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        let bo = employee("Bo", Some(&ada.id));
+        db.save_employee(&ada).unwrap();
+        db.save_employee(&bo).unwrap();
+        let states = [RunState::Queued, RunState::Running, RunState::Succeeded, RunState::Failed, RunState::Cancelled, RunState::Lost];
+        let denial = Denial { tool: "Bash".into(), brief: "rm -rf build".into(), suggested_rule: "Bash(rm:*)".into() };
+
+        let mut all = vec![];
+        let mut i = 0;
+        for e in [&ada, &bo] {
+            for state in states {
+                for flag in [false, true] {
+                    for blocked in [false, true] {
+                        i += 1;
+                        for kind in every_kind(i) {
+                            let mut r = run(e, kind, state);
+                            if flag {
+                                r.needs_you = vec!["Look at this.".into()];
+                            }
+                            if blocked {
+                                r.denials = vec![denial.clone()];
+                            }
+                            assert!(db.insert_run(&r, &r.id).unwrap(), "inserted {:?}", r.kind);
+                            all.push(r);
+                        }
+                    }
+                }
+            }
+        }
+
+        let got = ids(&db.finished_root_runs(&[ada.id.clone()], &[ada.id.clone(), bo.id.clone()]).unwrap());
+        let want: BTreeSet<String> =
+            all.iter().filter(|r| threads::reaches_you(r, false, r.employee_id == ada.id)).map(|r| r.id.clone()).collect();
+        let differ: Vec<String> = all
+            .iter()
+            .filter(|r| got.contains(&r.id) != want.contains(&r.id))
+            .map(|r| format!("{:?} {:?} needs_you {} denials {} top {}", r.kind, r.state, r.needs_you.len(), r.denials.len(), r.employee_id == ada.id))
+            .collect();
+        assert!(differ.is_empty(), "the query and reaches_you differ on {differ:#?}");
+        assert!(!want.is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

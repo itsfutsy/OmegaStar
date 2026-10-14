@@ -1,4 +1,9 @@
 //! Domain types shared with the frontend (camelCase JSON).
+//!
+//! Stored types are read back by older and newer builds: every field added after a release needs
+//! #[serde(default)], and new data goes into the JSON, never a new column. An older build that saves a
+//! row drops the fields it does not know, so a build of an unreleased branch runs on its own copy of
+//! the office (OMEGASTAR_DATA_DIR).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
@@ -896,7 +901,9 @@ pub struct Run {
     pub duration_ms: Option<u64>,
     pub summary: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
     pub denials: Vec<Denial>,
+    #[serde(default)]
     pub skill_changes: Vec<SkillChange>,
     /// What the employee flagged for you with `notify` during the run.
     #[serde(default)]
@@ -1255,7 +1262,7 @@ pub struct SetupStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub max_concurrent_runs: u32,
     pub claude_path: Option<String>,
@@ -1263,11 +1270,22 @@ pub struct AppSettings {
     pub data_dir: String,
     pub paused: bool,
     /// Absent from settings saved before backups existed.
-    #[serde(default)]
     pub backup: BackupSettings,
     /// Absent from settings saved before requests were watched.
-    #[serde(default)]
     pub watch: WatchSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            max_concurrent_runs: 3,
+            claude_path: None,
+            data_dir: String::new(),
+            paused: false,
+            backup: BackupSettings::default(),
+            watch: WatchSettings::default(),
+        }
+    }
 }
 
 /// How Omega Star watches requests to people for replies.
