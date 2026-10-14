@@ -1,15 +1,18 @@
 //! Threads and Inbox rows, replies, archiving and approving blocked tools.
 
 use super::*;
+use crate::cards;
 
 /// How many archived reports the Archive reads, most recently archived first.
 const ARCHIVE_ROWS: u32 = 200;
 
-/// Who wrote a reply: you, or Omega Star from something you did in the app (an approval).
+/// Who wrote a reply: you, or Omega Star from something you did in the app (an approval, or your answer
+/// on a card).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum ReplyBy {
     Ceo,
     App,
+    Card,
 }
 
 impl Office {
@@ -60,7 +63,9 @@ impl Office {
         }
         let rows = threads::file(&starts, db.conversation_runs()?, |id| run_of(db, id), &top);
         let cache = std::cell::RefCell::new(HashMap::new());
-        let rows = threads::merge_streaks(rows, |r| Self::streak_of(db, &cache, r));
+        let rows = threads::merge_rows(rows, |row| {
+            threads::chore_key(row).or_else(|| row.members.first().and_then(|(t, _)| Self::streak_of(db, &cache, &t.root)))
+        });
         let mut out: Vec<Thread> = rows.into_iter().filter_map(|r| threads::present(r, archive)).collect();
         if archive {
             out.sort_by_key(|t| std::cmp::Reverse(threads::row_archived_at(t)));
@@ -85,7 +90,9 @@ impl Office {
                 starts.extend(db.failures_of_schedule(schedule_id)?.into_iter().filter(same));
             }
         }
-        let rows = threads::merge_streaks(threads::file(&starts, conversation, lookup, &top), |r| Self::streak_of(db, &cache, r));
+        let rows = threads::merge_rows(threads::file(&starts, conversation, lookup, &top), |row| {
+            row.members.first().and_then(|(t, _)| Self::streak_of(db, &cache, &t.root))
+        });
         Ok(rows.into_iter().next().map(|r| r.members.into_iter().map(|(t, _)| t).collect()).unwrap_or_default())
     }
 
@@ -138,8 +145,12 @@ impl Office {
             if !t.root.state.is_finished() {
                 return Err(AppError::conflict("it is still working, so it cannot be archived yet"));
             }
+            let row = Self::row_of(&db, &t.root)?;
+            if archived && threads::card_open(&row) {
+                return Err(AppError::conflict("Answer the card first, or dismiss it."));
+            }
             let mut changed = vec![];
-            for m in Self::row_of(&db, &t.root)? {
+            for m in row {
                 // A run still going joins the row when it finishes, and shows only if it needs you.
                 let mut root = m.root;
                 if !root.state.is_finished() || root.archived_at.is_some() == archived {
@@ -162,8 +173,89 @@ impl Office {
     /// run that resumes the thread's session, so the employee answers with everything it saw. The reply
     /// joins the thread and the report stays in the Inbox, unless `archive`: "send, and bring the answer
     /// back only if it needs me".
+    /// A reply you type answers the thread's open cards too, so their buttons go and the row can be archived.
     pub fn reply_to_run(&self, run_id: &str, text: &str, archive: bool, attachments: Vec<NewAttachment>) -> Result<Run> {
+        if !text.trim().is_empty() || !attachments.is_empty() {
+            let typed = {
+                let db = self.db();
+                db.tx(|| answer_typed(&db, run_id, text, now()))?
+            };
+            for r in &typed {
+                self.sink().run_updated(r);
+            }
+        }
         self.reply_with(run_id, text, archive, vec![], attachments, ReplyBy::Ceo)
+    }
+
+    /// Your answer on a card. It goes to the run as a fixed message through `reply_with` and archives its row;
+    /// Done on a chore goes to every run waiting on it, and those still working hear it straight away. Returns
+    /// the reply runs it started.
+    pub fn answer_card(&self, run_id: &str, reply: CardReply) -> Result<Vec<Run>> {
+        let at = now();
+        let (ask, text, targets) = {
+            let db = self.db();
+            let run = db.run(run_id)?.ok_or_else(|| AppError::not_found("run not found"))?.run;
+            let card = run.card.clone().ok_or_else(|| AppError::invalid("That run has no card."))?;
+            if !card.is_open() {
+                return Err(AppError::conflict("That card was already answered."));
+            }
+            if !run.state.is_finished() {
+                return Err(AppError::conflict("It is still working, so answer the card when it finishes."));
+            }
+            let text = cards::answer_text(&card.ask, &reply, &ceo_of(&db)?)?;
+            let how = if reply == CardReply::Dismiss { AnswerHow::Dismissed } else { AnswerHow::Tapped };
+            let mut targets = vec![run];
+            if let (CardAsk::Chore { subject }, CardReply::Done) = (&card.ask, &reply) {
+                targets.extend(db.open_chore_runs(subject)?.into_iter().filter(|r| r.id != run_id));
+            }
+            db.tx(|| {
+                for t in &mut targets {
+                    if let Some(c) = t.card.as_mut() {
+                        c.answer = Some(CardAnswer { at, how, text: text.clone().unwrap_or_default() });
+                    }
+                    db.save_run(t)?;
+                }
+                Ok(())
+            })?;
+            (card.ask, text, targets)
+        };
+        let mut replies = vec![];
+        for t in &targets {
+            self.sink().run_updated(t);
+            if let Some(text) = &text {
+                let sent = match (&ask, &t.card) {
+                    (CardAsk::Chore { .. }, _) | (_, None) => text.clone(),
+                    (_, Some(c)) => format!("Your card: \"{}\"\n{text}", claude::clip(&c.message, 300)),
+                };
+                match self.reply_with(&t.id, &sent, false, vec![], vec![], ReplyBy::Card) {
+                    Ok(r) => replies.push(r),
+                    Err(e) => {
+                        log!("sending your answer on the card of run {} failed: {e}", t.id);
+                        continue;
+                    }
+                }
+            }
+            match self.set_archived(&t.id, true) {
+                Err(e) if e.code != crate::error::ErrorCode::Conflict => log!("archiving run {} after its card failed: {e}", t.id),
+                _ => {}
+            }
+        }
+        // Runs still working on the same chore hear it now, in the turn they are in.
+        if let (CardAsk::Chore { subject }, Some(text)) = (&ask, &text) {
+            let live: Vec<String> = lock(&self.0.active)
+                .iter()
+                .filter(|(_, a)| a.card.as_ref().is_some_and(|c| c.is_open() && matches!(&c.ask, CardAsk::Chore { subject: s } if s == subject)))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in live {
+                if self.tell(&id, text) {
+                    if let Some(c) = lock(&self.0.active).get_mut(&id).and_then(|a| a.card.as_mut()) {
+                        c.answer = Some(CardAnswer { at, how: AnswerHow::Tapped, text: text.clone() });
+                    }
+                }
+            }
+        }
+        Ok(replies)
     }
 
     /// A blocked run's way forward: you allow what it was denied, and it resumes to retry. `always`
@@ -251,7 +343,8 @@ Approval covers only what is listed, so if something else is blocked, stop and s
                 };
                 (format!("{before}\n\n{ceo}'s reply:\n\n{text}"), String::new())
             };
-            let mut reply = Run::new(&e.id, RunKind::Reply { to_run_id: root.id.clone(), label, task }, prompt, now());
+            let card = by == ReplyBy::Card;
+            let mut reply = Run::new(&e.id, RunKind::Reply { to_run_id: root.id.clone(), label, task, card }, prompt, now());
             reply.allow_once = allow_once;
             // The never-started wrapper quotes your reply in full, so it still counts as your words.
             reply.omega_wrote = by != ReplyBy::Ceo;
@@ -265,6 +358,23 @@ Approval covers only what is listed, so if something else is blocked, stop and s
         self.sink().run_updated(&root);
         self.enqueue(reply, session)
     }
+}
+
+/// Marks every open card on a finished run of `run_id`'s thread answered by your typed reply (`text`,
+/// clipped), and returns those runs, saved. Call inside a transaction.
+fn answer_typed(db: &Store, run_id: &str, text: &str, at: Ts) -> Result<Vec<Run>> {
+    let t = Office::thread_in(db, run_id)?;
+    let mut out = vec![];
+    for mut r in std::iter::once(t.root).chain(t.replies) {
+        if !r.state.is_finished() {
+            continue;
+        }
+        let Some(c) = r.card.as_mut().filter(|c| c.is_open()) else { continue };
+        c.answer = Some(CardAnswer { at, how: AnswerHow::Typed, text: claude::clip(text, 300) });
+        db.save_run(&r)?;
+        out.push(r);
+    }
+    Ok(out)
 }
 
 /// A run by id while walking threads. A store error is logged and the run treated as missing, since
@@ -289,6 +399,84 @@ mod tests {
         fn run_updated(&self, _run: &Run) {}
         fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
         fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    fn tester() -> Employee {
+        Employee {
+            id: uuid::Uuid::new_v4().to_string(),
+            slug: "cy".into(),
+            name: "Cy".into(),
+            title: "Tester".into(),
+            description: String::new(),
+            objective: String::new(),
+            manager_id: None,
+            skills: SkillGrant { builtins: false, keys: vec![] },
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: None,
+            effort: None,
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![],
+            hue: 0,
+            chat_session: "chat-cy".into(),
+            hired_at: now(),
+        }
+    }
+
+    /// A finished report of `e` asking a decision with a card.
+    fn carded(e: &Employee) -> Run {
+        let mut r = Run::new(&e.id, RunKind::Manual, "go".into(), now());
+        r.state = RunState::Succeeded;
+        r.ended_at = Some(now());
+        r.needs_you = vec!["Boost the post?".into()];
+        r.card = Some(Card { message: "Boost the post?".into(), ask: CardAsk::Choices { choices: vec!["Not now".into(), "Go".into()], recommended: 0 }, answer: None });
+        r
+    }
+
+    #[test]
+    fn a_reply_you_type_answers_the_threads_open_cards() {
+        let dir = std::env::temp_dir().join(format!("omegastar-typed-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let e = tester();
+        db.save_employee(&e).unwrap();
+        let report = carded(&e);
+        assert!(db.insert_run(&report, &report.id).unwrap());
+        let mut working = carded(&e);
+        working.kind = RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false, card: false };
+        working.state = RunState::Running;
+        assert!(db.insert_run(&working, &report.id).unwrap());
+
+        let long = format!("Not now. {}", "x".repeat(400));
+        let typed = db.tx(|| answer_typed(&db, &working.id, &long, now())).unwrap();
+        assert_eq!(typed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec![report.id.as_str()]);
+        let answer = db.run(&report.id).unwrap().unwrap().run.card.unwrap().answer.unwrap();
+        assert_eq!(answer.how, AnswerHow::Typed);
+        assert_eq!(answer.text, claude::clip(&long, 300));
+        assert!(db.run(&working.id).unwrap().unwrap().run.card.unwrap().is_open(), "a run still working keeps its card");
+        assert!(db.tx(|| answer_typed(&db, &report.id, "Again.", now())).unwrap().is_empty());
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn an_open_card_keeps_its_row_in_the_inbox() {
+        let dir = std::env::temp_dir().join(format!("omegastar-card-row-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let e = tester();
+        let report = carded(&e);
+        {
+            let db = Store::open(&dir.join("office.db")).unwrap();
+            db.save_employee(&e).unwrap();
+            assert!(db.insert_run(&report, &report.id).unwrap());
+        }
+        let office = Office::open(dir.clone(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap();
+        assert_eq!(office.set_archived(&report.id, true).unwrap_err().message, "Answer the card first, or dismiss it.");
+        assert!(office.set_archived(&report.id, false).is_ok(), "moving it back is never blocked");
+        assert_eq!(office.answer_card(&report.id, CardReply::Choice { index: 5 }).unwrap_err().message, "That answer does not fit this card.");
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Every row of every table, each column as text, with `archivedAt` left out of run data.
@@ -354,7 +542,7 @@ mod tests {
         report.ended_at = Some(now());
         report.summary = Some("All good.".into());
         report.replied_at = Some(now());
-        let mut reply = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false }, "Thanks.".into(), now());
+        let mut reply = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false, card: false }, "Thanks.".into(), now());
         reply.state = RunState::Succeeded;
         reply.ended_at = Some(now());
         reply.summary = Some("Noted.".into());

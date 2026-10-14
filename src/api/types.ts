@@ -139,7 +139,7 @@ export type RunKind =
   | { type: "nudge"; requestId: string; personId: string }
   | { type: "unanswered"; requestId: string; personId: string }
   | { type: "organize"; imported: ImportedSkill[]; settled: boolean }
-  | { type: "reply"; toRunId: string; label: string; task: boolean }    // your reply to a report or in a task; label = what it was
+  | { type: "reply"; toRunId: string; label: string; task: boolean; card: boolean }    // your reply to a report or in a task; label = what it was; card: Omega Star wrote it from your answer on a card
   | { type: "task"; label: string; from: string | null; context: string }   // a task you started beside the chat; from = the conversation it started in
   | { type: "hireDecided"; proposalId: string; approved: boolean }   // you approved or declined their hire proposal
   | { type: "tidy"; reason: TidyReason; signature: string[]; plan: string | null };   // they tidy their own skills and notes
@@ -160,6 +160,18 @@ export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelle
 export type Denial = { tool: string; brief: string; suggestedRule: string };
 export type SkillChangeKind = "added" | "modified" | "removed";
 export type SkillChange = { skill: string; file: string; change: SkillChangeKind };
+/** What a run asks you with the answer built in. One per run; its message is also in needsYou. */
+export type CardItem = { id: string; text: string; recommended: boolean };
+export type CardAsk =
+  | { type: "choices"; choices: string[]; recommended: number }   // recommended: the index of the one they recommend
+  | { type: "items"; verb: string; items: CardItem[] }            // verb: what a tick means, e.g. "Post"
+  | { type: "chore"; subject: string };                           // "chrome" or "sign-in:<site>"
+export type AnswerHow = "tapped" | "typed" | "dismissed" | "replaced";
+export type CardAnswer = { at: string; how: AnswerHow; text: string };   // text: the fixed answer sent, empty when nothing was
+export type Card = { message: string; ask: CardAsk; answer: CardAnswer | null };
+/** Your answer on a card. */
+export type ItemPick = { id: string; tick: boolean; note?: string | null };
+export type CardReply = { type: "choice"; index: number } | { type: "items"; picks: ItemPick[] } | { type: "done" } | { type: "dismiss" };
 export type Run = {
   id: string; employeeId: string; kind: RunKind; prompt: string;
   omegaWrote: boolean;         // Omega Star wrote the prompt (an approval, a returned report), not you
@@ -169,6 +181,7 @@ export type Run = {
   summary: string | null; error: string | null; denials: Denial[];
   skillChanges: SkillChange[];
   needsYou: string[];          // what the employee flagged with notify during the run
+  card: Card | null;           // what the run asked you with a card, and your answer
   archivedAt: string | null;   // archived reports leave the Inbox for the Archive
   repliedAt: string | null;    // when you last replied to this report
   deliveredAt: string | null;  // asked and delegated runs: when the answer or report reached whoever handed it over
@@ -329,6 +342,8 @@ export type Commands = {
    *  (a denial's suggestedRule, or `mcp__<server>__*` for an MCP tool). `always` saves them to the employee;
    *  otherwise they apply to the retry only. Archives the blocked report. Returns the retry run. */
   approve_blocked: { args: { runId: string; rules: string[]; always: boolean }; ret: Run };
+  /** Your answer on a run's card: it goes to the run, and for a chore's Done to every run waiting on it. Returns the replies it started. */
+  answer_card: { args: { runId: string; answer: CardReply }; ret: Run[] };
   /** Colleague asks still in flight (queued, running, or answered and not yet collected), oldest first. */
   open_asks: { args: Record<string, never>; ret: Run[] };
   employee_skills: { args: { employeeId: string }; ret: OwnSkill[] };

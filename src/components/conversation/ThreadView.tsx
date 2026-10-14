@@ -6,6 +6,7 @@ import { useOrg, type Conversation } from "../../lib/hooks";
 import { snoozePresets } from "../../lib/status";
 import { toast } from "../../lib/toasts";
 import { didNotFinish, isLive } from "../../lib/threads";
+import { answerCard, CardView } from "./CardView";
 import { RowHistory } from "./RowHistory";
 import { BlockedCard } from "../BlockedCard";
 import { TidyProposal } from "../TidyProposal";
@@ -93,6 +94,7 @@ export function ThreadView({ e, rootId, thread, row, onSendDone, autoFocus = tru
                   {t.run.needsYou.map((m, j) => <li key={j}><Icon name="bell" size={12} /><span>{m}</span></li>)}
                 </ul>
               ) : null}
+              {t.run.card ? <CardView run={t.run} e={e} onAnswer={async (reply) => { await answerCard(t.run, reply, name); }} /> : null}
               {i === shown.length - 1 && t.run.denials.length > 0 && t.run.endedAt && !archived ? <BlockedCard run={t.run} employee={e} /> : null}
             </div>
           ))}
@@ -120,6 +122,7 @@ function ReportTurn({ root, e, blocked, archived }: { root: Run; e: EmployeeView
               {root.needsYou.map((m, i) => <li key={i}><Icon name="bell" size={12} /><span>{m}</span></li>)}
             </ul>
           ) : null}
+          {root.card ? <CardView run={root} e={e} onAnswer={async (reply) => { await answerCard(root, reply, firstName(e.name)); }} /> : null}
           {root.summary ? <Markdown text={root.summary} /> : <p className="muted">{failed ? root.error ?? "This run didn't finish." : "No report."}</p>}
           {root.skillChanges.length ? <SkillsGrew run={root} /> : null}
           {blocked && root.denials.length > 0 ? <BlockedCard run={root} employee={e} /> : null}

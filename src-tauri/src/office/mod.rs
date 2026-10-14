@@ -79,6 +79,8 @@ struct Active {
     cancelled: bool,
     /// Flags raised with `notify`, copied onto the run when it ends.
     needs_you: Vec<String>,
+    /// The card it raised with `notify`, copied onto the run when it ends.
+    card: Option<Card>,
     /// For a Tidy run: the bigger changes it proposed with `propose_changes`.
     proposed: Option<String>,
     /// For a reply check or nudge: it recorded its finding with `check_result`.

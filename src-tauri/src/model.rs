@@ -753,6 +753,9 @@ pub enum RunKind {
         label: String,
         #[serde(default)]
         task: bool,
+        /// The reply answers a card, written by Omega Star from your tap.
+        #[serde(default)]
+        card: bool,
     },
     /// A task you started beside the ongoing chat: a conversation of its own, so it runs at the same
     /// time as the employee's other work. `label` names it. It starts from the conversation you were in:
@@ -965,6 +968,83 @@ pub struct RunBuild {
     pub org: Option<String>,
 }
 
+/// Something a run asks you with the answer built in: a decision, a list to approve, or a chore only you
+/// can do (`notify` with choices, items or chore). One per run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Card {
+    pub message: String,
+    pub ask: CardAsk,
+    #[serde(default)]
+    pub answer: Option<CardAnswer>,
+}
+
+impl Card {
+    pub fn is_open(&self) -> bool {
+        self.answer.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CardAsk {
+    /// Up to four buttons; `recommended` is the index of the one the employee recommends.
+    Choices { choices: Vec<String>, recommended: usize },
+    /// A list you tick one by one; `verb` is what a tick means, e.g. "Post".
+    Items { verb: String, items: Vec<CardItem> },
+    /// `chrome` or `sign-in:<site>`: every run waiting on the same subject carries on when you press Done.
+    Chore { subject: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardItem {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardAnswer {
+    pub at: Ts,
+    pub how: AnswerHow,
+    /// The fixed answer sent to the employee, e.g. "Chose: Not now."; empty when nothing was sent.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AnswerHow {
+    /// You pressed one of its buttons.
+    Tapped,
+    /// You replied in the thread instead.
+    Typed,
+    Dismissed,
+    /// A newer card from the same routine or thread took its place.
+    Replaced,
+}
+
+/// Your answer to a card, from the Inbox.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CardReply {
+    Choice { index: usize },
+    Items { picks: Vec<ItemPick> },
+    Done,
+    Dismiss,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemPick {
+    pub id: String,
+    pub tick: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
@@ -991,6 +1071,9 @@ pub struct Run {
     /// What the employee flagged for you with `notify` during the run.
     #[serde(default)]
     pub needs_you: Vec<String>,
+    /// What the run asked you with a card, and your answer. Its message is also in `needs_you`.
+    #[serde(default)]
+    pub card: Option<Card>,
     /// When you archived this report: it leaves the Inbox for the Archive.
     #[serde(default)]
     pub archived_at: Option<Ts>,
@@ -1041,6 +1124,7 @@ impl Run {
             denials: vec![],
             skill_changes: vec![],
             needs_you: vec![],
+            card: None,
             archived_at: None,
             replied_at: None,
             delivered_at: None,
@@ -1564,6 +1648,27 @@ mod tests {
         run.as_object_mut().unwrap().remove("build");
         let run: Run = serde_json::from_value(run).unwrap();
         assert_eq!(run.build, None);
+    }
+
+    #[test]
+    fn a_run_saved_before_cards_loads() {
+        let mut run = serde_json::to_value(Run::new("e1", RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: true }, "Chose: Not now.".into(), Utc::now())).unwrap();
+        run.as_object_mut().unwrap().remove("card");
+        run["kind"].as_object_mut().unwrap().remove("card");
+        let run: Run = serde_json::from_value(run).unwrap();
+        assert_eq!(run.card, None);
+        assert_eq!(run.kind, RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: false });
+    }
+
+    #[test]
+    fn a_card_reads_its_own_shapes() {
+        let card = Card { message: "Boost it?".into(), ask: CardAsk::Choices { choices: vec!["Not now".into(), "Try it".into()], recommended: 0 }, answer: None };
+        let v = serde_json::to_value(&card).unwrap();
+        assert_eq!(v, json!({ "message": "Boost it?", "ask": { "type": "choices", "choices": ["Not now", "Try it"], "recommended": 0 }, "answer": null }));
+        assert_eq!(serde_json::from_value::<Card>(v).unwrap(), card);
+        let reply: CardReply = serde_json::from_value(json!({ "type": "items", "picks": [{ "id": "d1", "tick": true }] })).unwrap();
+        assert_eq!(reply, CardReply::Items { picks: vec![ItemPick { id: "d1".into(), tick: true, note: None }] });
+        assert_eq!(serde_json::from_value::<CardReply>(json!({ "type": "done" })).unwrap(), CardReply::Done);
     }
 
     #[test]

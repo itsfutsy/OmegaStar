@@ -1,4 +1,5 @@
 mod backup;
+mod cards;
 mod catalog;
 mod claude;
 mod commands;
@@ -242,6 +243,7 @@ pub fn run() {
             commands::set_archived,
             commands::reply_to_run,
             commands::approve_blocked,
+            commands::answer_card,
             commands::open_asks,
             commands::employee_skills,
             commands::skill_health,

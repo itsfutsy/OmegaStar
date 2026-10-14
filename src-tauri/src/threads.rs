@@ -5,7 +5,8 @@
 //!
 //! Inbox rows group threads that belong together, so you see one row per piece of work rather than
 //! one per run: a report with everything it set off in conversation, or an ask a report made with
-//! everything that came back from it (`file`), and a schedule's failures in a row (`merge_streaks`).
+//! everything that came back from it (`file`), and a schedule's failures in a row or everyone waiting on
+//! the same chore (`merge_rows`).
 
 use crate::claude::{clip, one_line};
 use crate::model::*;
@@ -180,14 +181,14 @@ pub fn file(starts: &[Run], conversation: Vec<Run>, lookup: impl Fn(&str) -> Opt
     rows
 }
 
-/// Merges rows that are one schedule's failures in a row. `streak` names the streak a row's first run
-/// belongs to (a scheduled run that failed), or None; rows naming the same streak become one, in the
-/// place of the first.
-pub fn merge_streaks(rows: Vec<Row>, streak: impl Fn(&Run) -> Option<String>) -> Vec<Row> {
+/// Merges rows that belong together: one schedule's failures in a row, or everyone waiting on the same
+/// chore. `key` names what a row belongs to, or None; rows with the same key become one, in the place of
+/// the first.
+pub fn merge_rows(rows: Vec<Row>, key: impl Fn(&Row) -> Option<String>) -> Vec<Row> {
     let mut out: Vec<Row> = vec![];
     let mut at: HashMap<String, usize> = HashMap::new();
     for row in rows {
-        let key = row.members.first().and_then(|(t, _)| streak(&t.root));
+        let key = key(&row);
         match key.as_ref().and_then(|k| at.get(k)) {
             Some(&i) => {
                 out[i].members.extend(row.members);
@@ -202,6 +203,24 @@ pub fn merge_streaks(rows: Vec<Row>, streak: impl Fn(&Run) -> Option<String>) ->
         }
     }
     out
+}
+
+/// The run in a thread whose card waits on your answer, newest first.
+pub fn open_card(t: &Thread) -> Option<&Run> {
+    t.replies.iter().rev().chain(std::iter::once(&t.root)).find(|r| r.card.as_ref().is_some_and(Card::is_open))
+}
+
+/// Any of these threads has a card waiting on your answer.
+pub fn card_open(threads: &[Thread]) -> bool {
+    threads.iter().any(|t| open_card(t).is_some())
+}
+
+/// `chore:<subject>` for a row with a chore waiting on you, so everyone waiting on the same chore shares a row.
+pub fn chore_key(row: &Row) -> Option<String> {
+    row.members.iter().flat_map(|(t, _)| std::iter::once(&t.root).chain(&t.replies)).find_map(|r| match &r.card {
+        Some(c @ Card { ask: CardAsk::Chore { subject }, .. }) if c.is_open() => Some(format!("chore:{subject}")),
+        _ => None,
+    })
 }
 
 /// A row as you see it: the thread it is about, with its other threads in `related`, oldest first.
@@ -338,6 +357,68 @@ pub fn task_label(text: &str, files: &[String]) -> String {
 mod tests {
     use super::*;
 
+    fn chore(employee: &str, subject: &str, answered: bool) -> Run {
+        let mut r = Run::new(employee, RunKind::Manual, "go".into(), chrono::Utc::now());
+        r.state = RunState::Failed;
+        r.card = Some(Card {
+            message: "Waiting on you.".into(),
+            ask: CardAsk::Chore { subject: subject.into() },
+            answer: answered.then(|| CardAnswer { at: chrono::Utc::now(), how: AnswerHow::Tapped, text: "Done.".into() }),
+        });
+        r
+    }
+
+    fn row(r: Run) -> Row {
+        Row { members: vec![(Thread::new(r, vec![]), true)] }
+    }
+
+    #[test]
+    fn a_thread_with_an_unanswered_card_is_open() {
+        let plain = Thread::new(Run::new("e1", RunKind::Manual, "go".into(), chrono::Utc::now()), vec![]);
+        let waiting = Thread::new(chore("e1", "chrome", false), vec![]);
+        let answered = Thread::new(chore("e1", "chrome", true), vec![]);
+        assert!(!card_open(&[plain.clone(), answered.clone()]));
+        assert!(card_open(&[plain.clone(), waiting.clone()]));
+        assert_eq!(open_card(&waiting).map(|r| &r.id), Some(&waiting.root.id));
+        let mut reply = chore("e1", "chrome", false);
+        reply.kind = RunKind::Reply { to_run_id: plain.root.id.clone(), label: "Manual run".into(), task: false, card: false };
+        let with_reply = Thread::new(plain.root.clone(), vec![reply.clone()]);
+        assert_eq!(open_card(&with_reply).map(|r| &r.id), Some(&reply.id));
+    }
+
+    #[test]
+    fn everyone_waiting_on_one_chore_shares_a_row() {
+        let rows = vec![
+            row(chore("e1", "chrome", false)),
+            row(chore("e2", "sign-in:wise", false)),
+            row(chore("e2", "chrome", false)),
+            row(chore("e3", "chrome", true)),
+        ];
+        let merged = merge_rows(rows, chore_key);
+        let sizes: Vec<usize> = merged.iter().map(|r| r.members.len()).collect();
+        assert_eq!(sizes, vec![2, 1, 1]);
+        let employees: Vec<&str> = merged[0].members.iter().map(|(t, _)| t.root.employee_id.as_str()).collect();
+        assert_eq!(employees, vec!["e1", "e2"]);
+        assert_eq!(chore_key(&merged[1]).as_deref(), Some("chore:sign-in:wise"));
+        assert_eq!(chore_key(&merged[2]), None, "an answered chore waits on nobody");
+    }
+
+    #[test]
+    fn a_schedules_failures_still_merge() {
+        let failed = |schedule: &str| {
+            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: chrono::Utc::now(), label: "Sweep".into(), quiet: true, model: None, effort: None };
+            let mut r = Run::new("e1", kind, "go".into(), chrono::Utc::now());
+            r.state = RunState::Failed;
+            r
+        };
+        let streak = |row: &Row| match &row.members.first()?.0.root.kind {
+            RunKind::Scheduled { schedule_id, .. } => Some(schedule_id.clone()),
+            _ => None,
+        };
+        let merged = merge_rows(vec![row(failed("s1")), row(failed("s2")), row(failed("s1"))], streak);
+        assert_eq!(merged.iter().map(|r| r.members.len()).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
     #[test]
     fn context_never_quotes_omega_stars_words_as_yours() {
         let at = chrono::Utc::now();
@@ -347,7 +428,7 @@ mod tests {
         let mut answered = Run::new("e1", came, "Bo answered your question. Their answer: 40 boxes.".into(), at);
         answered.omega_wrote = true;
         answered.summary = Some("Bo counted 40 boxes.".into());
-        let reply = RunKind::Reply { to_run_id: "r2".into(), label: "Manual run".into(), task: false };
+        let reply = RunKind::Reply { to_run_id: "r2".into(), label: "Manual run".into(), task: false, card: false };
         let mut tap = Run::new("e1", reply, "Pat approved what was blocked.".into(), at);
         tap.omega_wrote = true;
         assert_eq!(

@@ -7,7 +7,7 @@ import { chatKey, lastMoved, setMark, useMarkSeen } from "../lib/marks";
 import { openChat, openFullChat, openMember, openRun, type Route } from "../lib/router";
 import { threadStatus, type Status } from "../lib/status";
 import { toast } from "../lib/toasts";
-import { isLive, NEW_TASK_FOCUS, parseThreadFocus, threadFocus } from "../lib/threads";
+import { isLive, NEW_TASK_FOCUS, openCard, parseThreadFocus, rowCardOpen, threadFocus } from "../lib/threads";
 import { kindNames } from "../components/RunRow";
 import { Icon } from "../components/Icon";
 import { Avatar, ErrorNote, Skeleton, StatePill } from "../components/ui";
@@ -85,16 +85,18 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
   const doneRef = useRef(done);
   doneRef.current = done;
   const ready = !!root?.endedAt && !archived && !runs.some(isLive);
+  // A card waiting on you is answered on the card, so neither Done nor E closes the thread.
+  const carded = (root ? !!openCard({ root, replies: runs.slice(1), related: [] }) : false) || (row ? rowCardOpen(row.thread) : false);
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target) || document.querySelector(".popover")) return;
-      if (ev.key.toLowerCase() !== "e" || !ready) return;
+      if (ev.key.toLowerCase() !== "e" || !ready || carded) return;
       ev.preventDefault();
       void doneRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ready]);
+  }, [ready, carded]);
 
   const actions = root ? (
     <>
@@ -102,7 +104,7 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
       {task ? null : <button className="btn btn-ghost btn-sm" onClick={() => openRun(root.id)}>Open run <Icon name="arrowUpRight" size={12} /></button>}
       {archived
         ? <button className="btn btn-sm" onClick={() => void reopen(rootId)}><Icon name="undo" size={13} /> Reopen</button>
-        : <DoneButton name={name} task={task} disabled={!ready} onDone={done} />}
+        : carded ? null : <DoneButton name={name} task={task} disabled={!ready} onDone={done} />}
     </>
   ) : null;
   return (
