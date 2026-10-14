@@ -233,6 +233,9 @@ impl Office {
                 let Some(c) = a.card.as_mut().filter(|c| is_chore(c)) else { continue };
                 if a.input.as_ref().is_some_and(|i| i.send(claude::user_line(text)).is_ok()) {
                     c.answer = Some(answer.clone());
+                    // Done, so it no longer needs you for it: the run ends unflagged unless something else does.
+                    let message = c.message.clone();
+                    a.needs_you.retain(|m| *m != message);
                 }
             }
             // A run that finished while the answers above went out was in neither pass.
@@ -249,11 +252,15 @@ impl Office {
     }
 
     /// Sends each answered card's `text` to its run and archives its row, carrying on past a run that fails.
+    /// A run back in the queue after the usage limit only keeps its answered card: its retry carries on anyway.
     /// Returns the reply runs it started.
     fn send_card_answers(&self, targets: &[Run], ask: &CardAsk, text: Option<&str>) -> Vec<Run> {
         let mut replies = vec![];
         for t in targets {
             self.sink().run_updated(t);
+            if t.state == RunState::Queued {
+                continue;
+            }
             if let Some(text) = text {
                 let sent = match (ask, &t.card) {
                     (CardAsk::Chore { .. }, _) | (_, None) => text.to_string(),
@@ -566,6 +573,88 @@ mod tests {
         let unreadable = vec![NewAttachment { name: "notes.txt".into(), data: "not base64!".into() }];
         assert_eq!(office.reply_to_run(&report.id, "Not now.", false, unreadable).unwrap_err().message, "notes.txt could not be read");
         assert!(office.db().run(&report.id).unwrap().unwrap().run.card.unwrap().is_open(), "a reply that did not go leaves the card open");
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A finished run of `e` waiting on the Chrome chore, in `state`.
+    fn chrome_wait(e: &Employee, state: RunState) -> Run {
+        let mut r = Run::new(&e.id, RunKind::Manual, "go".into(), now());
+        r.state = state;
+        r.ended_at = Some(now()).filter(|_| state.is_finished());
+        r.needs_you = vec!["Open Chrome.".into()];
+        r.card = Some(Card { message: "Open Chrome.".into(), ask: CardAsk::Chore { subject: cards::CHROME.into() }, answer: None });
+        r
+    }
+
+    /// An office on `dir` whose work is held for the usage limit, so nothing it queues starts.
+    async fn held_office(dir: &Path, e: &Employee, runs: &[&Run]) -> Office {
+        {
+            let db = Store::open(&dir.join("office.db")).unwrap();
+            db.save_employee(e).unwrap();
+            db.set_held_until(Some(now() + chrono::Duration::hours(1))).unwrap();
+            for r in runs {
+                assert!(db.insert_run(r, &r.id).unwrap());
+            }
+        }
+        Office::open(dir.to_path_buf(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn chrome_dropping_in_a_chat_raises_no_card() {
+        let dir = std::env::temp_dir().join(format!("omegastar-chrome-chat-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let e = tester();
+        let mut chat = Run::new(&e.id, RunKind::Chat, "hi".into(), now());
+        chat.state = RunState::Succeeded;
+        chat.ended_at = Some(now());
+        let office = held_office(&dir, &e, &[&chat]).await;
+        office.chrome_down(&chat, &e);
+        let stored = office.db().run(&chat.id).unwrap().unwrap().run;
+        assert!(stored.card.is_none() && stored.needs_you.is_empty(), "the chat says it itself");
+        assert!(office.db().open_chore_runs(cards::CHROME).unwrap().is_empty());
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn done_reaches_a_run_held_for_the_usage_limit_without_a_reply() {
+        let dir = std::env::temp_dir().join(format!("omegastar-chore-held-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let e = tester();
+        let done = chrome_wait(&e, RunState::Succeeded);
+        let held = chrome_wait(&e, RunState::Queued);
+        let office = held_office(&dir, &e, &[&done, &held]).await;
+        let replies = office.answer_card(&done.id, CardReply::Done).unwrap();
+        assert_eq!(replies.len(), 1, "only the finished run gets a reply");
+        assert!(matches!(&replies[0].kind, RunKind::Reply { to_run_id, .. } if *to_run_id == done.id));
+        let held = office.db().run(&held.id).unwrap().unwrap().run;
+        assert_eq!(held.state, RunState::Queued);
+        assert!(held.card.is_some_and(|c| !c.is_open()), "its retry carries the answered card");
+        assert!(held.archived_at.is_none());
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn done_on_a_working_run_clears_its_chore_headline() {
+        let dir = std::env::temp_dir().join(format!("omegastar-chore-live-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let e = tester();
+        let done = chrome_wait(&e, RunState::Succeeded);
+        let office = held_office(&dir, &e, &[&done]).await;
+        let (input, _heard) = tokio::sync::mpsc::unbounded_channel();
+        let live = chrome_wait(&e, RunState::Running);
+        lock(&office.0.active).insert(
+            live.id.clone(),
+            Active { token: "t".into(), pid: None, cancelled: false, needs_you: vec!["Open Chrome.".into(), "Totals look off.".into()], card: live.card.clone(), proposed: None, verdict: false, transcript: None, input: Some(input) },
+        );
+        office.answer_card(&done.id, CardReply::Done).unwrap();
+        let active = lock(&office.0.active);
+        let a = &active[&live.id];
+        assert!(a.card.as_ref().is_some_and(|c| !c.is_open()));
+        assert_eq!(a.needs_you, vec!["Totals look off.".to_string()], "only the answered chore leaves");
+        drop(active);
         drop(office);
         let _ = fs::remove_dir_all(&dir);
     }

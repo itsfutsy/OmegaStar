@@ -325,8 +325,12 @@ impl Office {
     }
 
     /// Chrome dropped in a run: you get the one Chrome chore card (or the run joins the open one), and the run
-    /// hears that you were asked, so it carries on without Chrome instead of asking you itself.
-    fn chrome_down(&self, run: &Run, e: &Employee) {
+    /// hears that you were asked, so it carries on without Chrome instead of asking you itself. Not in a chat:
+    /// you are in it, and a card there never reaches you, so the run tells you itself.
+    pub(super) fn chrome_down(&self, run: &Run, e: &Employee) {
+        if run.kind.lane() == Lane::Chat {
+            return;
+        }
         let message = format!("Chrome isn't connected. {} is waiting. Open Chrome, check the Claude extension is on and signed in, then press Done.", e.name);
         if let Err(err) = self.raise_chore(&run.id, cards::CHROME, &message) {
             log!("run {}: asking you to reconnect Chrome failed: {err}", run.id);

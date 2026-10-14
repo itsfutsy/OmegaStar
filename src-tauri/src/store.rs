@@ -613,14 +613,15 @@ impl Store {
         )
     }
 
-    /// Finished runs waiting on a chore you have not done yet, oldest first.
+    /// Work runs waiting on a chore you have not done yet, oldest first: finished ones, and ones the usage
+    /// limit sent back to the queue with the card they raised.
     pub fn open_chore_runs(&self, subject: &str) -> Result<Vec<Run>> {
         self.runs_where(
             "WHERE json_valid(data)
                AND json_extract(data, '$.card.ask.type') = 'chore'
                AND json_extract(data, '$.card.ask.subject') = ?
                AND json_extract(data, '$.card.answer') IS NULL
-               AND state NOT IN ('queued', 'running')
+               AND state != 'running' AND lane = 'work'
              ORDER BY created_at, rowid",
             &[&subject],
         )
@@ -1292,10 +1293,12 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
         };
         let waiting = insert(with_card(run(&ada, RunKind::Manual, RunState::Failed), chrome(), false));
         insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), chrome(), true));
-        insert(with_card(run(&ada, RunKind::Manual, RunState::Queued), chrome(), false));
+        let held = insert(with_card(run(&ada, RunKind::Manual, RunState::Queued), chrome(), false));
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Running), chrome(), false));
+        insert(with_card(run(&ada, RunKind::Chat, RunState::Succeeded), chrome(), false));
         insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), CardAsk::Chore { subject: "sign-in:wise".into() }, false));
         insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), choices(), false));
-        assert_eq!(ids(&db.open_chore_runs("chrome").unwrap()), ids(&[waiting]));
+        assert_eq!(ids(&db.open_chore_runs("chrome").unwrap()), ids(&[waiting, held]), "a run held for the usage limit still waits; a chat turn never does");
 
         let at = |mins: i64| Utc::now() - chrono::Duration::minutes(mins);
         let scheduled = |id: &str, mins: i64, ask: CardAsk, answered: bool| {
