@@ -339,18 +339,18 @@ pub fn recorded_path(employee_dir: &Path, skill: &str, file: &str) -> Result<Pat
 }
 
 /// Writes (`Some`) or deletes (`None`) a recorded file. Deleting a notes or guarded file never removes
-/// the folder it sits in.
+/// the folder it sits in. A link in a notes or guarded file's place is replaced, never written through:
+/// a run could have aimed it at any file.
 pub fn write_recorded(path: &Path, skill: &str, text: Option<&str>) -> Result<()> {
     if skill != NOTES && !guarded(skill) {
         return write_file(path, text);
     }
-    match text {
-        Some(t) => fs::write(path, t)?,
-        None => {
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-        }
+    let link = is_link(path);
+    if link || (text.is_none() && path.exists()) {
+        fs::remove_file(path)?;
+    }
+    if let Some(t) = text {
+        fs::write(path, t)?;
     }
     Ok(())
 }
@@ -363,7 +363,8 @@ pub fn guarded_snapshot(employee_dir: &Path) -> Snapshot {
     let files = [(COMPANY, COMPANY_FILE, employee_dir.parent()), (OWN, OWN_FILE, Some(employee_dir))];
     for (skill, file, dir) in files {
         let Some(path) = dir.map(|d| d.join(file)) else { continue };
-        let is_file = fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false);
+        // A link reads as missing, so its target is never quoted and a put-back replaces it with the file.
+        let is_file = fs::symlink_metadata(&path).is_ok_and(|m| m.is_file());
         if let (true, Ok(text)) = (is_file, fs::read_to_string(&path)) {
             snap.insert((skill.to_string(), file.to_string()), text);
         }
@@ -720,6 +721,28 @@ mod tests {
         let large = "- A line about the company.\n".repeat(SNAPSHOT_MAX_BYTES as usize / 10);
         fs::write(company_page_path(&root), &large).unwrap();
         assert_eq!(guarded_snapshot(&employee)[&(COMPANY.to_string(), COMPANY_FILE.to_string())], large, "a large page is not taken for a missing one");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_guarded_file_turned_into_a_link_is_put_back_without_touching_its_target() {
+        let root = temp_dir();
+        let employee = root.join("e1");
+        fs::create_dir_all(&employee).unwrap();
+        let target = root.join("zshrc");
+        fs::write(&target, "export SECRET=1\n").unwrap();
+        let own = employee.join(OWN_FILE);
+        std::os::unix::fs::symlink(&target, &own).unwrap();
+        assert!(guarded_snapshot(&employee).get(&(OWN.to_string(), OWN_FILE.to_string())).is_none(), "the target is not read");
+        write_recorded(&own, OWN, Some("The weekly signups.\n")).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "export SECRET=1\n", "the target is untouched");
+        assert!(!is_link(&own));
+        assert_eq!(fs::read_to_string(&own).unwrap(), "The weekly signups.\n");
+        fs::remove_file(&own).unwrap();
+        std::os::unix::fs::symlink(root.join("gone"), &own).unwrap();
+        write_recorded(&own, OWN, None).unwrap();
+        assert!(!is_link(&own), "a dangling link is removed too");
         let _ = fs::remove_dir_all(&root);
     }
 }
