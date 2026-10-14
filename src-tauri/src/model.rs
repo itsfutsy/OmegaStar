@@ -886,6 +886,52 @@ pub struct SkillChange {
     pub change: ChangeKind,
 }
 
+/// How this copy of Omega Star was built: a published release, a test build, or a developer's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildChannel {
+    Release,
+    Dogfood,
+    Dev,
+}
+
+impl BuildChannel {
+    pub fn current() -> BuildChannel {
+        match env!("OMEGA_CHANNEL") {
+            "release" => BuildChannel::Release,
+            "dogfood" => BuildChannel::Dogfood,
+            _ => BuildChannel::Dev,
+        }
+    }
+}
+
+/// This copy of Omega Star: its version, the commit it was built from, and its channel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Build {
+    pub version: String,
+    pub commit: String,
+    pub channel: BuildChannel,
+}
+
+impl Build {
+    pub fn new(version: String) -> Build {
+        Build { version, commit: env!("OMEGA_COMMIT").into(), channel: BuildChannel::current() }
+    }
+}
+
+/// The build a run started on, and the Claude Code and organisation around it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunBuild {
+    #[serde(flatten)]
+    pub app: Build,
+    #[serde(default)]
+    pub claude: Option<String>,
+    #[serde(default)]
+    pub org: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
@@ -928,6 +974,9 @@ pub struct Run {
     /// Files you attached to a chat message, by name. They live in the employee's `attachments/<run id>/`.
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// The build that ran it: app version, commit and channel, Claude Code's version and the signed-in organisation.
+    #[serde(default)]
+    pub build: Option<RunBuild>,
 }
 
 impl Run {
@@ -954,6 +1003,7 @@ impl Run {
             allow_once: vec![],
             proposed: None,
             attachments: vec![],
+            build: None,
         }
     }
 
@@ -1259,6 +1309,7 @@ pub struct SetupStatus {
     pub account: Option<Account>,
     pub company: Option<Company>,
     pub background: bool,
+    pub build: Build,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1449,3 +1500,36 @@ pub struct NewAttachment {
 
 pub const MAX_ATTACHMENTS: usize = 10;
 pub const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn build() -> Build {
+        Build { version: "1.2.3".into(), commit: "abc1234567".into(), channel: BuildChannel::Dogfood }
+    }
+
+    #[test]
+    fn a_run_saved_before_builds_were_stamped_loads() {
+        let mut run = serde_json::to_value(Run::new("e1", RunKind::Manual, "Do the thing".into(), Utc::now())).unwrap();
+        run.as_object_mut().unwrap().remove("build");
+        let run: Run = serde_json::from_value(run).unwrap();
+        assert_eq!(run.build, None);
+    }
+
+    #[test]
+    fn a_run_build_round_trips_flat() {
+        let b = RunBuild { app: build(), claude: Some("2.1.0".into()), org: Some("Example Org".into()) };
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v, json!({ "version": "1.2.3", "commit": "abc1234567", "channel": "dogfood", "claude": "2.1.0", "org": "Example Org" }));
+        assert_eq!(serde_json::from_value::<RunBuild>(v).unwrap(), b);
+        let bare: RunBuild = serde_json::from_value(json!({ "version": "1.2.3", "commit": "abc1234567", "channel": "dogfood" })).unwrap();
+        assert_eq!(bare, RunBuild { app: build(), claude: None, org: None });
+    }
+
+    #[test]
+    fn a_build_channel_is_lower_case() {
+        assert_eq!(serde_json::to_value(BuildChannel::Dogfood).unwrap(), json!("dogfood"));
+    }
+}

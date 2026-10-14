@@ -22,6 +22,7 @@ impl Office {
             account,
             company: self.company()?,
             background,
+            build: self.0.build.clone(),
         })
     }
 
@@ -237,6 +238,30 @@ impl Office {
             u.clone()
         };
         self.sink().usage_updated(&next);
+    }
+
+    // ------------------------------------------------------------------ account
+
+    /// Asks Claude Code which account it is signed in to and caches the answer, `None` when it
+    /// could not tell. The only `claude auth status` cache in the app.
+    pub(super) async fn refresh_account(&self) {
+        let program = self.settings().ok().and_then(|s| claude::locate(s.claude_path.as_deref()));
+        let account = match program {
+            Some(p) => claude::auth_status(&p).await,
+            None => None,
+        };
+        *lock(&self.0.account) = Some((now(), account));
+    }
+
+    /// The last account check and when it ran; `None` when it has not run yet.
+    pub(super) fn account_cached(&self) -> Option<(Ts, Option<Account>)> {
+        lock(&self.0.account).clone()
+    }
+
+    /// The stamp for a run starting now. Records the organisation, never the email.
+    pub(super) fn run_build(&self) -> RunBuild {
+        let org = self.account_cached().and_then(|(_, a)| a).and_then(|a| a.org_name);
+        RunBuild { app: self.0.build.clone(), claude: None, org }
     }
 
     pub fn skill_catalog(&self) -> Vec<SkillInfo> {

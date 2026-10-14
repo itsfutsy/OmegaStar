@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { call, errorMessage } from "../api/client";
-import type { AppSettings, BackupFrequency, BackupSettings, BackupStatus, BusinessHours, CheckFrequency, IsoWeekday, WatchSettings } from "../api/types";
+import type { AppSettings, BackupFrequency, BackupSettings, BackupStatus, BuildChannel, BusinessHours, CheckFrequency, IsoWeekday, SetupStatus, WatchSettings } from "../api/types";
 import { refreshOrg, rescanSkills, useQuery, useSkillScan, type SkillScan } from "../lib/hooks";
 import { toast } from "../lib/toasts";
 import { clockHM, relTime, whenShort } from "../lib/format";
@@ -139,10 +139,29 @@ export function SettingsScreen() {
             </SettingsGroup>
 
             <BackupsCard settings={s} save={save} onOpenData={() => void openData()} />
+
+            <SettingsGroup title="About">
+              <Row title="Omega Star" desc={aboutDesc(st)}>
+                <span className="pill">{CHANNELS[st.build.channel]}</span>
+              </Row>
+            </SettingsGroup>
           </>
         )}
     </PageColumn>
   );
+}
+
+const CHANNELS: Record<BuildChannel, string> = { release: "Release", dogfood: "Test build", dev: "Developer build" };
+
+/** This build, then the Claude Code version and organisation the same status found, when known. */
+function aboutDesc(st: SetupStatus): string {
+  const app = `Version ${st.build.version}, built from ${st.build.commit}.`;
+  const version = st.claude.version;
+  const org = st.account?.orgName ?? null;
+  if (version && org) return `${app} Claude Code ${version}, signed in to ${org}.`;
+  if (version) return `${app} Claude Code ${version}.`;
+  if (org) return `${app} Signed in to ${org}.`;
+  return app;
 }
 
 const FREQUENCIES: { value: BackupFrequency; label: string }[] = [
