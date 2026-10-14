@@ -1392,6 +1392,12 @@ pub struct BackupStatus {
     /// Set when the last attempt failed; cleared by the next success.
     pub last_error: Option<String>,
     pub next_at: Option<Ts>,
+    /// backup::fingerprint() of the office at the last successful backup.
+    pub fingerprint: Option<String>,
+    /// The last time an automatic backup was due but nothing had changed.
+    pub checked_at: Option<Ts>,
+    /// Large files and build folders the last successful backup left out.
+    pub left_out: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

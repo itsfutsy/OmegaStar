@@ -133,7 +133,8 @@ impl Office {
         self.run_backup(now()).await
     }
 
-    /// Backs up if an automatic backup is due at `at`. Returns whether one was attempted.
+    /// Backs up if an automatic backup is due at `at` and the office has changed since the last one.
+    /// Returns whether one was attempted.
     pub async fn backup_tick(&self, at: Ts) -> Result<bool> {
         let freq = self.settings()?.backup.frequency;
         let st = self.db().backup_status()?.unwrap_or_default();
@@ -141,6 +142,18 @@ impl Office {
             return Ok(false);
         }
         let Ok(_backing_up) = self.0.backing_up.try_lock() else { return Ok(false) };
+        let dir = self.data_dir().to_path_buf();
+        let fingerprint = tokio::task::spawn_blocking(move || backup::fingerprint(&dir))
+            .await
+            .map_err(|e| AppError::internal(format!("backup check: {e}")))?;
+        // Read again: a backup by hand may have finished since.
+        let mut st = self.db().backup_status()?.unwrap_or_default();
+        if st.last_error.is_none() && st.fingerprint.as_ref() == Some(&fingerprint) {
+            st.checked_at = Some(at);
+            self.db().set_backup_status(&st)?;
+            self.sink().backup_updated(&self.status_of_backups(false)?);
+            return Ok(false);
+        }
         if let Err(e) = self.run_backup(at).await {
             log!("backup failed: {e}");
         }
@@ -154,11 +167,13 @@ impl Office {
         let mut st = self.db().backup_status()?.unwrap_or_default();
         st.last_attempt_at = Some(at);
         match &result {
-            Ok((file, sum)) => {
+            Ok((file, sum, fingerprint)) => {
                 st.last_at = Some(at);
                 st.last_file = Some(file.clone());
                 st.last_bytes = Some(sum.bytes);
                 st.skipped = sum.skipped;
+                st.left_out = sum.left_out;
+                st.fingerprint = Some(fingerprint.clone());
                 st.last_error = None;
             }
             Err(e) => st.last_error = Some(e.message.clone()),
@@ -175,8 +190,9 @@ impl Office {
         }
     }
 
-    /// Writes the zip beside older backups, then prunes. Returns the zip's path.
-    async fn write_backup(&self, at: Ts) -> Result<(String, backup::Summary)> {
+    /// Writes the zip beside older backups, then prunes. Returns the zip's path, and the office's
+    /// fingerprint, taken before the snapshot so a change during the backup is caught next time.
+    async fn write_backup(&self, at: Ts) -> Result<(String, backup::Summary, String)> {
         let settings = self.settings()?.backup;
         let dir = backup::validate_dir(&settings.dir, self.data_dir())?;
         fs::create_dir_all(&dir).map_err(|e| AppError::invalid(format!("Could not create the backup folder {}: {e}", dir.display())))?;
@@ -194,7 +210,8 @@ impl Office {
         });
         let office = self.clone();
         let target = file.clone();
-        let task = tokio::task::spawn_blocking(move || -> Result<backup::Summary> {
+        let task = tokio::task::spawn_blocking(move || -> Result<(backup::Summary, String)> {
+            let fingerprint = backup::fingerprint(office.data_dir());
             let snapshot = std::env::temp_dir().join(format!("omegastar-snapshot-{}.db", uuid::Uuid::new_v4()));
             let partial = PathBuf::from(format!("{}{}", target.display(), backup::PARTIAL));
             let written = office.db().snapshot_to(&snapshot).and_then(|_| backup::write_archive(office.data_dir(), &snapshot, &partial, manifest));
@@ -203,13 +220,13 @@ impl Office {
             if done.is_err() {
                 let _ = fs::remove_file(&partial);
             }
-            done
+            done.map(|sum| (sum, fingerprint))
         });
-        let sum = task.await.map_err(|e| AppError::internal(format!("backup task: {e}")))??;
+        let (sum, fingerprint) = task.await.map_err(|e| AppError::internal(format!("backup task: {e}")))??;
         if let Err(e) = backup::prune(&dir, settings.keep) {
             log!("could not prune old backups: {e}");
         }
-        Ok((file.to_string_lossy().into_owned(), sum))
+        Ok((file.to_string_lossy().into_owned(), sum, fingerprint))
     }
 
     // ------------------------------------------------------------------ usage limits

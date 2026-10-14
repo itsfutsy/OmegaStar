@@ -271,6 +271,9 @@ export type BackupStatus = {
   lastAttemptAt: string | null;
   lastError: string | null;       // the last attempt failed
   nextAt: string | null;          // null when automatic backups are off
+  fingerprint: string | null;     // the office at the last successful backup
+  checkedAt: string | null;       // the last time a backup was due but nothing had changed
+  leftOut: number;                // large files and build folders the last backup left out
 };
 
 export type UsageWindow = { percent: number; resetsAt: string | null; resetsText: string | null };   // percent 0-100
