@@ -291,6 +291,16 @@ pub async fn save_skill_file(office: O<'_>, employee_id: String, skill: String, 
 }
 
 #[tauri::command]
+pub async fn company_page(office: O<'_>) -> Result<CompanyPage> {
+    office.company_page()
+}
+
+#[tauri::command]
+pub async fn save_company_page(office: O<'_>, text: String) -> Result<CompanyPage> {
+    office.save_company_page(&text)
+}
+
+#[tauri::command]
 pub async fn skill_history(office: O<'_>, employee_id: String) -> Result<Vec<SkillRevision>> {
     office.skill_history(&employee_id)
 }

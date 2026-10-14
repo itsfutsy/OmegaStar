@@ -253,6 +253,8 @@ pub fn run() {
             commands::drop_check,
             commands::read_skill_file,
             commands::save_skill_file,
+            commands::company_page,
+            commands::save_company_page,
             commands::skill_history,
             commands::revert_revision,
             commands::promote_skill,

@@ -133,6 +133,7 @@ impl Office {
     /// queued work. Does not start the scheduler loop (see `spawn_scheduler`).
     pub async fn open(data_dir: PathBuf, sink: Arc<dyn EventSink>, build: Build) -> Result<Office> {
         fs::create_dir_all(data_dir.join("employees"))?;
+        own_skills::seed_company_page(&data_dir.join("employees"))?;
         fs::create_dir_all(data_dir.join("runs"))?;
         let data_dir = long_path(&data_dir);
         let marker = data_dir.join(RUNNING_MARKER);

@@ -4,7 +4,7 @@ import type { EmployeeView } from "../../api/types";
 import { useQuery } from "../../lib/hooks";
 import { openMember } from "../../lib/router";
 import { ErrorNote, Skeleton } from "../ui";
-import { FileView, NOTES, NOTES_FOLDER, RevisionView } from "./SkillFile";
+import { FileView, pseudoFolder, RevisionView } from "./SkillFile";
 import { SkillsOverview } from "./SkillsOverview";
 import "./SkillsTab.css";
 
@@ -50,7 +50,7 @@ export function SkillsTab({ e, focus }: { e: EmployeeView; focus: string | null 
 
   const runById = new Map((runs.data ?? []).map((r) => [r.id, r]));
   if (view.kind === "file") {
-    const s = view.skill === NOTES ? NOTES_FOLDER : skills.data.find((x) => x.name === view.skill);
+    const s = pseudoFolder(view.skill) ?? skills.data.find((x) => x.name === view.skill);
     return <FileView e={e} skill={s} file={view.file} history={history.data} onBack={() => go(null)} onOpenRev={(id) => go(`rev~${id}`)} onChanged={reload} />;
   }
   if (view.kind === "rev") {

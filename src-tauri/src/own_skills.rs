@@ -247,8 +247,62 @@ pub fn notes_snapshot(workspace: &Path) -> Snapshot {
     snap
 }
 
-/// Where a recorded file lives: a skill file under `skills/`, or a notes file under `workspace/`.
+/// The company page and what an employee owns are recorded under these names. Only a conversation
+/// with the person they all work for changes either, so Undo never overwrites a newer change to them.
+pub const COMPANY: &str = "@company";
+pub const COMPANY_FILE: &str = "CLAUDE.md";
+pub const OWN: &str = "@own";
+pub const OWN_FILE: &str = "what-you-own.md";
+
+pub fn guarded(skill: &str) -> bool {
+    skill == COMPANY || skill == OWN
+}
+
+/// The company page: a CLAUDE.md above every employee's folder, so Claude Code loads it in every run.
+pub fn company_page_path(employees_dir: &Path) -> PathBuf {
+    employees_dir.join(COMPANY_FILE)
+}
+
+const COMPANY_PAGE: &str = "# Company page
+
+Every employee reads this page at the start of every run, so keep it short: one line per fact, and point to where details live instead of copying them. Never write a password, key or account number here. It changes only in a conversation with the person you all work for.
+
+## What we sell
+
+## Who to ask
+
+## How things work here
+
+## Public copy rules
+
+## Right now
+
+Dated lines, newest first.
+
+## Decisions
+
+Dated lines, newest first: what was decided, and why, in one line.
+";
+
+/// Writes the empty company page once. An existing page is never touched.
+pub fn seed_company_page(employees_dir: &Path) -> Result<()> {
+    let path = company_page_path(employees_dir);
+    if !path.exists() {
+        fs::write(path, COMPANY_PAGE)?;
+    }
+    Ok(())
+}
+
+/// Where a recorded file lives: a skill file under `skills/`, a notes file under `workspace/`, the
+/// company page above the employee's folder, or what they own in it.
 pub fn recorded_path(employee_dir: &Path, skill: &str, file: &str) -> Result<PathBuf> {
+    if guarded(skill) {
+        let (want, dir) = if skill == COMPANY { (COMPANY_FILE, employee_dir.parent()) } else { (OWN_FILE, Some(employee_dir)) };
+        return match dir {
+            Some(dir) if file == want => Ok(dir.join(file)),
+            _ => Err(AppError::invalid(format!("invalid file '{skill}/{file}'"))),
+        };
+    }
     if skill == NOTES {
         if file.contains(['/', '\\']) || !safe_segment(file) {
             return Err(AppError::invalid(format!("invalid notes file '{file}'")));
@@ -258,9 +312,10 @@ pub fn recorded_path(employee_dir: &Path, skill: &str, file: &str) -> Result<Pat
     resolve(&skills_dir(employee_dir), skill, file)
 }
 
-/// Writes (`Some`) or deletes (`None`) a recorded file. Deleting a notes file never removes `workspace/`.
+/// Writes (`Some`) or deletes (`None`) a recorded file. Deleting a notes or guarded file never removes
+/// the folder it sits in.
 pub fn write_recorded(path: &Path, skill: &str, text: Option<&str>) -> Result<()> {
-    if skill != NOTES {
+    if skill != NOTES && !guarded(skill) {
         return write_file(path, text);
     }
     match text {
@@ -556,4 +611,38 @@ pub fn promote(skills_dir: &Path, skill: &str, config_dir: &Path, catalog: &[Ski
     copy_dir(src.parent().unwrap(), &dest)?;
     let (name, description) = catalog::read_skill(&dest).unwrap_or((skill.to_string(), String::new()));
     Ok(SkillInfo { id: format!("user:{name}"), name, description, source: SkillSource::User, skills: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("omegastar-own-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn company_page_is_seeded_once() {
+        let dir = temp_dir();
+        seed_company_page(&dir).unwrap();
+        assert_eq!(fs::read_to_string(company_page_path(&dir)).unwrap(), COMPANY_PAGE);
+        let mine = "# Company page\n\n## What we sell\n\nGarden tools.\n";
+        fs::write(company_page_path(&dir), mine).unwrap();
+        seed_company_page(&dir).unwrap();
+        assert_eq!(fs::read(company_page_path(&dir)).unwrap(), mine.as_bytes(), "an existing page is left byte for byte");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guarded_files_have_one_place_each() {
+        let employee = Path::new("/office/employees/e1");
+        assert_eq!(recorded_path(employee, COMPANY, COMPANY_FILE).unwrap(), Path::new("/office/employees/CLAUDE.md"));
+        assert_eq!(recorded_path(employee, OWN, OWN_FILE).unwrap(), Path::new("/office/employees/e1/what-you-own.md"));
+        for (skill, file) in [(COMPANY, "x.md"), (COMPANY, "../CLAUDE.md"), (OWN, "../what-you-own.md"), (OWN, COMPANY_FILE), (NOTES, "../state.md")] {
+            assert!(recorded_path(employee, skill, file).is_err(), "{skill}/{file}");
+        }
+        assert!(guarded(COMPANY) && guarded(OWN) && !guarded(NOTES) && !guarded("ada"));
+    }
 }

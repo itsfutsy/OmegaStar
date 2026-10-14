@@ -1230,6 +1230,14 @@ pub struct SkillHealth {
     pub findings: Vec<HealthFinding>,
 }
 
+/// The page every employee reads at the start of every run, with what is worth a look on it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyPage {
+    pub text: String,
+    pub findings: Vec<HealthFinding>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckState {
