@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView } from "../../api/types";
+import { firstName } from "../../lib/format";
 import { useOrg, useProposals } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import type { LiveRun } from "../../lib/runs";
@@ -38,6 +39,10 @@ export function Turn({ turn, e, withReport = false }: { turn: LiveRun; e: Employ
   const failed = turn.run.state === "failed" || turn.run.state === "lost" || turn.run.state === "cancelled";
   const report = turn.run.summary?.trim();
   const showReport = withReport && !running && !!report && !items.some((i) => i.kind === "text" && i.text.trim() === report);
+  // A colleague's report or answer that came back: Omega Star wrote the prompt, so it is not shown as yours.
+  const came = turn.run.kind.type === "answered" ? turn.run.kind : null;
+  const fromName = came ? snap?.employees.find((x) => x.id === came.from)?.name : undefined;
+  const who = fromName ? firstName(fromName) : "A colleague";
   return (
     <div className="turn">
       {turn.run.attachments.length ? (
@@ -49,7 +54,12 @@ export function Turn({ turn, e, withReport = false }: { turn: LiveRun; e: Employ
           ))}
         </div>
       ) : null}
-      {turn.run.prompt ? <div className="msg-ceo">{turn.run.prompt}</div> : null}
+      {came ? (
+        <details className="msg-came">
+          <summary><Icon name="reply" size={13} /> {came.task ? `${who}'s report came back` : `${who} answered`}</summary>
+          <Markdown text={turn.run.prompt} />
+        </details>
+      ) : turn.run.prompt ? <div className="msg-ceo">{turn.run.prompt}</div> : null}
       {parts.map((part, i) => {
         const last = i === parts.length - 1;
         return (

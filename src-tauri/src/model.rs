@@ -727,9 +727,16 @@ pub enum RunKind {
         #[serde(default)]
         task: bool,
     },
-    /// Brings a colleague's answer (the finished Asked run `asked_run_id`, by employee `from`) to an
-    /// asker whose own run ended before it arrived.
-    Answered { asked_run_id: String, from: String, task: bool },
+    /// Brings a colleague's answer or a report (the finished Asked or Delegated run `asked_run_id`, by
+    /// employee `from`) to whoever handed it over, once their own run had ended before it arrived.
+    Answered {
+        asked_run_id: String,
+        from: String,
+        task: bool,
+        /// It is a turn in the asker's chat with you: their run was a chat turn when they handed the work over.
+        #[serde(default)]
+        chat: bool,
+    },
     FollowUp { request_id: String, person_id: String },
     /// Sorts skills you imported from Claude Code into the employee's family.
     Organize {
@@ -841,7 +848,7 @@ impl Lane {
 impl RunKind {
     pub fn lane(&self) -> Lane {
         match self {
-            RunKind::Chat => Lane::Chat,
+            RunKind::Chat | RunKind::Answered { chat: true, .. } => Lane::Chat,
             _ => Lane::Work,
         }
     }
@@ -849,7 +856,7 @@ impl RunKind {
     /// Your conversations with the employee (the ongoing chat, tasks, replies in a thread) run beside
     /// everything else. The rest is background work, which an employee does one piece at a time.
     pub fn is_conversation(&self) -> bool {
-        matches!(self, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. })
+        matches!(self, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. } | RunKind::Answered { chat: true, .. })
     }
 
     /// A due check runs as a Scheduled run whose schedule_id is check:<check id>; no schedules row has that id.
@@ -965,6 +972,10 @@ pub struct Run {
     pub employee_id: String,
     pub kind: RunKind,
     pub prompt: String,
+    /// Omega Star wrote this prompt from something you did or something that came back (an approval, a
+    /// returned report, a card answer); it is not your own words, except where it quotes them.
+    #[serde(default)]
+    pub omega_wrote: bool,
     pub state: RunState,
     pub created_at: Ts,
     pub started_at: Option<Ts>,
@@ -986,8 +997,8 @@ pub struct Run {
     /// When you last replied to this report from the Inbox.
     #[serde(default)]
     pub replied_at: Option<Ts>,
-    /// For a colleague's Asked run: when its answer reached the asker, through `await_reports` or an
-    /// Answered run. Set once, so an answer is delivered exactly once.
+    /// For an Asked or Delegated run: when its answer or report reached whoever handed it over, through
+    /// await_reports or an Answered run. Set once, so it is delivered exactly once.
     #[serde(default)]
     pub delivered_at: Option<Ts>,
     /// Permission rules you granted for this run only ("Allow once & retry"). They go into the run's
@@ -1012,6 +1023,7 @@ impl Run {
             employee_id: employee_id.to_string(),
             kind,
             prompt,
+            omega_wrote: false,
             state: RunState::Queued,
             created_at: now,
             started_at: None,

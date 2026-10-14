@@ -5,6 +5,13 @@ use super::*;
 /// How many archived reports the Archive reads, most recently archived first.
 const ARCHIVE_ROWS: u32 = 200;
 
+/// Who wrote a reply: you, or Omega Star from something you did in the app (an approval).
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ReplyBy {
+    Ceo,
+    App,
+}
+
 impl Office {
     /// Colleague asks still in flight, for the Inbox's "With colleagues" list.
     pub fn open_asks(&self) -> Result<Vec<Run>> {
@@ -193,14 +200,14 @@ impl Office {
     /// joins the thread and the report stays in the Inbox, unless `archive`: "send, and bring the answer
     /// back only if it needs me".
     pub fn reply_to_run(&self, run_id: &str, text: &str, archive: bool, attachments: Vec<NewAttachment>) -> Result<Run> {
-        self.reply_with(run_id, text, archive, vec![], attachments)
+        self.reply_with(run_id, text, archive, vec![], attachments, ReplyBy::Ceo)
     }
 
     /// A blocked run's way forward: you allow what it was denied, and it resumes to retry. `always`
     /// saves the rules to the employee; otherwise they apply to the retry run only. The rules must
     /// come from what the run was denied: its own suggested rule, or every tool of the same MCP server.
     pub fn approve_blocked(&self, run_id: &str, rules: Vec<String>, always: bool) -> Result<Run> {
-        let (original, employee, ceo, asker) = {
+        let (original, employee, ceo) = {
             let db = self.db();
             let original = db.run(run_id)?.ok_or_else(|| AppError::not_found("run not found"))?.run;
             if original.denials.is_empty() {
@@ -211,11 +218,7 @@ impl Office {
             }
             let employee = db.employee(&original.employee_id)?.ok_or_else(|| AppError::not_found("that employee no longer works here"))?;
             let ceo = ceo_of(&db)?;
-            let asker = match &original.kind {
-                RunKind::Asked { asked_by, .. } => db.employee(asked_by)?.map(|a| a.name),
-                _ => None,
-            };
-            (original, employee, ceo, asker)
+            (original, employee, ceo)
         };
         let mut rules: Vec<String> = rules.into_iter().map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
         rules.dedup();
@@ -235,27 +238,25 @@ impl Office {
         }
         let blocked = original.denials.iter().map(|d| format!("- {}: {}", d.tool, d.brief)).collect::<Vec<_>>().join("\n");
         let scope = if always { "from now on" } else { "for this retry" };
-        let mut text = format!(
+        let text = format!(
             "{ceo} approved what was blocked:\n{blocked}\n\nYou may now use {} {scope}. Retry it and finish the task. \
 Approval covers only what is listed, so if something else is blocked, stop and say what.",
             rules.join(", ")
         );
-        if let Some(who) = asker {
-            text.push_str(&format!(" When you are done, tell {who} the outcome with `ask_colleague`."));
-        }
-        self.reply_with(run_id, &text, false, rules, vec![])
+        self.reply_with(run_id, &text, false, rules, vec![], ReplyBy::App)
     }
 
     /// `run_id` may be any run in the thread. The reply answers the thread's root and resumes the
     /// thread's newest session (the root's, or a fresh one an earlier reply had to start). A plain reply
-    /// goes into that session's run while it works; one that carries files or rules is a run of its own.
-    fn reply_with(&self, run_id: &str, text: &str, archive: bool, allow_once: Vec<String>, attachments: Vec<NewAttachment>) -> Result<Run> {
+    /// goes into that session's run while it works; one that carries files or rules, or that Omega Star
+    /// wrote (`by`), is a run of its own.
+    fn reply_with(&self, run_id: &str, text: &str, archive: bool, allow_once: Vec<String>, attachments: Vec<NewAttachment>, by: ReplyBy) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("reply is empty"));
         }
         let files = Self::decode_attachments(&attachments)?;
-        let plain = files.is_empty() && allow_once.is_empty();
+        let plain = files.is_empty() && allow_once.is_empty() && by == ReplyBy::Ceo;
         let (root, mut reply, session) = {
             let db = self.db();
             let t = Self::thread_in(&db, run_id)?;
@@ -289,6 +290,8 @@ Approval covers only what is listed, so if something else is blocked, stop and s
             };
             let mut reply = Run::new(&e.id, RunKind::Reply { to_run_id: root.id.clone(), label, task }, prompt, now());
             reply.allow_once = allow_once;
+            // The never-started wrapper quotes your reply in full, so it still counts as your words.
+            reply.omega_wrote = by != ReplyBy::Ceo;
             let session = if session.is_empty() { reply.id.clone() } else { session };
             root.replied_at = Some(now());
             root.archived_at = archive.then(now);
