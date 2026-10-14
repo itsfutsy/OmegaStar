@@ -148,14 +148,24 @@ export function elapsedMs(run: Pick<Run, "startedAt" | "endedAt" | "durationMs">
   return (run.endedAt ? Date.parse(run.endedAt) : now) - Date.parse(run.startedAt);
 }
 
+/** How a recorded change's name reads: notes, the company page and what an employee owns are recorded like skills but are not skills. */
+export function recordedName(skill: string): string {
+  switch (skill) {
+    case "@workspace": return "notes";
+    case "@company": return "the company page";
+    case "@own": return "what they own";
+    default: return skill;
+  }
+}
+
 /** What a run did to the employee's skills, by skill rather than by file: "Refined hazel-inbox-watch". A tidy's notes are "notes". */
 export function skillsChanged(changes: SkillChange[]): { label: string; title: string } {
   const names = [...new Set(changes.map((c) => c.skill))];
-  const skills = names.filter((n) => n !== "@workspace");
+  const skills = names.filter((n) => recordedName(n) === n);
   const parts = skills.length <= 2 ? skills : [`${skills.length} skills`];
-  if (skills.length < names.length) parts.push("notes");
+  parts.push(...names.filter((n) => recordedName(n) !== n).map(recordedName));
   const verb = changes.every((c) => c.change === "added") ? "Created" : changes.every((c) => c.change === "removed") ? "Removed" : "Changed";
-  return { label: `${verb} ${parts.join(" and ")}`, title: names.map((n) => (n === "@workspace" ? "notes" : n)).join(", ") };
+  return { label: `${verb} ${parts.join(" and ")}`, title: names.map(recordedName).join(", ") };
 }
 
 export function hueFromName(name: string): number {

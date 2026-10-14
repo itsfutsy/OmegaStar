@@ -215,6 +215,8 @@ export type HealthKind =
   | "tooLong" | "datedLines" | "descriptionsHeavy" | "description" | "junk" | "nameMismatch";
 export type HealthFinding = { kind: HealthKind; skill: string | null; file: string | null; detail: string };
 export type SkillHealth = { skills: number; descriptionChars: number; findings: HealthFinding[] };
+/** The page every employee reads at the start of every run. */
+export type CompanyPage = { text: string; findings: HealthFinding[] };
 /** Something an employee said they would look at again; open ones come back when they are due. */
 export type CheckState = "open" | "done" | "dropped";
 export type Check = {
@@ -343,6 +345,9 @@ export type Commands = {
   tidy_runs: { args: { employeeId: string }; ret: Run[] };
   read_skill_file: { args: { employeeId: string; skill: string; file: string }; ret: string };
   save_skill_file: { args: { employeeId: string; skill: string; file: string; text: string }; ret: SkillRevision | null };
+  company_page: { args: Record<string, never>; ret: CompanyPage };
+  /** Your own edit: saved as is, with no revision. */
+  save_company_page: { args: { text: string }; ret: CompanyPage };
   skill_history: { args: { employeeId: string }; ret: SkillRevision[] };
   revert_revision: { args: { revisionId: string }; ret: SkillRevision };
   promote_skill: { args: { employeeId: string; skill: string }; ret: SkillInfo };

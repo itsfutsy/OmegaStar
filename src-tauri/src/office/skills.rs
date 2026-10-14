@@ -33,28 +33,7 @@ impl Office {
     }
 
     fn record_edit(&self, employee_id: &str, skill: &str, file: &str, text: Option<&str>) -> Result<Option<SkillRevision>> {
-        if skill == own_skills::CRAFT_NAME {
-            return Err(AppError::invalid("omega-skill-craft is managed by Omega Star"));
-        }
-        let path = own_skills::recorded_path(&self.employee_dir(employee_id), skill, file)?;
-        let before = fs::read_to_string(&path).ok();
-        if before.as_deref() == text {
-            return Ok(None);
-        }
-        let change = match (&before, text) {
-            (None, _) => ChangeKind::Added,
-            (Some(_), None) => ChangeKind::Removed,
-            _ => ChangeKind::Modified,
-        };
-        own_skills::write_recorded(&path, skill, text)?;
-        let fc = own_skills::FileChange {
-            change: SkillChange { skill: skill.into(), file: file.replace('\\', "/"), change },
-            before,
-            after: text.map(String::from),
-        };
-        let rev = own_skills::revision(fc, None, now());
-        self.db().insert_revision(employee_id, &rev)?;
-        Ok(Some(rev))
+        record(&self.db(), &self.employee_dir(employee_id), employee_id, skill, file, text)
     }
 
     pub fn save_skill_file(&self, employee_id: &str, skill: &str, file: &str, text: &str) -> Result<Option<SkillRevision>> {
@@ -68,6 +47,9 @@ impl Office {
 
     pub fn revert_revision(&self, revision_id: &str) -> Result<SkillRevision> {
         let (employee_id, rev) = self.db().revision(revision_id)?.ok_or_else(|| AppError::not_found("revision not found"))?;
+        if !safe_to_undo(&self.employee_dir(&employee_id), &rev)? {
+            return Err(AppError::conflict("This changed again since then, so undoing it would lose the newer change. Edit it instead."));
+        }
         self.record_edit(&employee_id, &rev.change.skill, &rev.change.file, rev.before.as_deref())?
             .ok_or_else(|| AppError::conflict("the file already matches that revision"))
     }
@@ -76,6 +58,18 @@ impl Office {
         let e = self.employee(employee_id)?;
         let catalog = self.skill_catalog();
         own_skills::promote(&self.skills_dir(&e.id), skill, &catalog::config_dir(), &catalog)
+    }
+
+    /// The page every employee reads at the start of every run; empty until it exists.
+    pub fn company_page(&self) -> Result<CompanyPage> {
+        let text = fs::read_to_string(own_skills::company_page_path(&self.0.data_dir.join("employees"))).unwrap_or_default();
+        Ok(CompanyPage { findings: health::page(&text), text })
+    }
+
+    /// You edit the company page yourself. A plain write with no revision: you are its author.
+    pub fn save_company_page(&self, text: &str) -> Result<CompanyPage> {
+        fs::write(own_skills::company_page_path(&self.0.data_dir.join("employees")), text)?;
+        self.company_page()
     }
 
     // ------------------------------------------------------------------ importing and organizing
@@ -186,12 +180,7 @@ impl Office {
             return Err(AppError::conflict("wait for the run to finish before reverting it"));
         }
         let revs: Vec<SkillRevision> = self.db().revisions(&run.employee_id)?.into_iter().filter(|r| r.run_id.as_deref() == Some(run_id)).collect();
-        let mut n = 0;
-        for r in &revs {
-            if self.record_edit(&run.employee_id, &r.change.skill, &r.change.file, r.before.as_deref())?.is_some() {
-                n += 1;
-            }
-        }
+        let n = undo(&self.db(), &self.employee_dir(&run.employee_id), &run.employee_id, &revs)?;
         let skills_dir = self.skills_dir(&run.employee_id);
         // A folder the run created can still hold files no revision tracks (binaries, big files).
         let created: HashSet<&str> =
@@ -466,4 +455,112 @@ fn mentions(text: &str, name: &str) -> bool {
         let after = text[i + name.len()..].chars().next();
         !before.is_some_and(word) && !after.is_some_and(word)
     })
+}
+
+/// Writes `text` to a recorded file (`None` deletes it) and records the change. `None` when the file
+/// already holds it.
+fn record(db: &Store, employee_dir: &Path, employee_id: &str, skill: &str, file: &str, text: Option<&str>) -> Result<Option<SkillRevision>> {
+    if skill == own_skills::CRAFT_NAME {
+        return Err(AppError::invalid("omega-skill-craft is managed by Omega Star"));
+    }
+    let path = own_skills::recorded_path(employee_dir, skill, file)?;
+    let before = fs::read_to_string(&path).ok();
+    if before.as_deref() == text {
+        return Ok(None);
+    }
+    let change = match (&before, text) {
+        (None, _) => ChangeKind::Added,
+        (Some(_), None) => ChangeKind::Removed,
+        _ => ChangeKind::Modified,
+    };
+    own_skills::write_recorded(&path, skill, text)?;
+    let fc = own_skills::FileChange {
+        change: SkillChange { skill: skill.into(), file: file.replace('\\', "/"), change },
+        before,
+        after: text.map(String::from),
+    };
+    let rev = own_skills::revision(fc, None, now());
+    db.insert_revision(employee_id, &rev)?;
+    Ok(Some(rev))
+}
+
+/// The file holds `after` (a missing file holds `None`).
+fn unchanged_since(path: &Path, after: Option<&str>) -> bool {
+    fs::read_to_string(path).ok().as_deref() == after
+}
+
+/// Undo writes back the whole earlier file, so a guarded file (the company page, what an employee
+/// owns) is put back only while it still holds what the change wrote, or is already back.
+fn safe_to_undo(employee_dir: &Path, r: &SkillRevision) -> Result<bool> {
+    if !own_skills::guarded(&r.change.skill) {
+        return Ok(true);
+    }
+    let path = own_skills::recorded_path(employee_dir, &r.change.skill, &r.change.file)?;
+    Ok(unchanged_since(&path, r.after.as_deref()) || unchanged_since(&path, r.before.as_deref()))
+}
+
+/// Puts back what the revisions changed, skipping a guarded file that changed again since. Returns
+/// how many files changed.
+fn undo(db: &Store, employee_dir: &Path, employee_id: &str, revs: &[SkillRevision]) -> Result<u32> {
+    let mut n = 0;
+    for r in revs {
+        if safe_to_undo(employee_dir, r)? && record(db, employee_dir, employee_id, &r.change.skill, &r.change.file, r.before.as_deref())?.is_some() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_since_compares_the_whole_file() {
+        let dir = std::env::temp_dir().join(format!("omegastar-undo-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("CLAUDE.md");
+        assert!(unchanged_since(&path, None), "a missing file is None");
+        fs::write(&path, "one").unwrap();
+        assert!(unchanged_since(&path, Some("one")));
+        assert!(!unchanged_since(&path, Some("one more")));
+        assert!(!unchanged_since(&path, None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_keeps_a_newer_change_to_the_company_page() {
+        let root = std::env::temp_dir().join(format!("omegastar-undo-{}", uuid::Uuid::new_v4()));
+        let employee_dir = root.join("employees").join("e1");
+        fs::create_dir_all(own_skills::skills_dir(&employee_dir).join("ada")).unwrap();
+        let db = Store::open(&root.join("office.db")).unwrap();
+        let page = own_skills::recorded_path(&employee_dir, own_skills::COMPANY, own_skills::COMPANY_FILE).unwrap();
+        let skill = own_skills::recorded_path(&employee_dir, "ada", "SKILL.md").unwrap();
+        fs::write(&page, "# Company page\n").unwrap();
+        fs::write(&skill, "# Ada\n").unwrap();
+
+        // A run changes a skill and the page, then the page changes again in a later conversation.
+        let mut run_revs = vec![];
+        for (key, path, after) in [(("ada", "SKILL.md"), &skill, "# Ada\n\nA new step.\n"), ((own_skills::COMPANY, own_skills::COMPANY_FILE), &page, "# Company page\n\n- Run line.\n")] {
+            let before = fs::read_to_string(path).ok();
+            fs::write(path, after).unwrap();
+            let fc = own_skills::FileChange {
+                change: SkillChange { skill: key.0.into(), file: key.1.into(), change: ChangeKind::Modified },
+                before,
+                after: Some(after.into()),
+            };
+            let rev = own_skills::revision(fc, Some("run-1".into()), now());
+            db.insert_revision("e1", &rev).unwrap();
+            run_revs.push(rev);
+        }
+        record(&db, &employee_dir, "e1", own_skills::COMPANY, own_skills::COMPANY_FILE, Some("# Company page\n\n- Run line.\n- Newer line.\n")).unwrap();
+
+        let revs: Vec<SkillRevision> = db.revisions("e1").unwrap().into_iter().filter(|r| r.run_id.as_deref() == Some("run-1")).collect();
+        assert_eq!(undo(&db, &employee_dir, "e1", &revs).unwrap(), 1, "only the skill file is put back");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), "# Ada\n");
+        assert_eq!(fs::read_to_string(&page).unwrap(), "# Company page\n\n- Run line.\n- Newer line.\n");
+        let page_rev = run_revs.iter().find(|r| r.change.skill == own_skills::COMPANY).unwrap();
+        assert!(!safe_to_undo(&employee_dir, page_rev).unwrap(), "revert_revision refuses it too");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

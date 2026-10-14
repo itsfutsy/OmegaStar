@@ -2,13 +2,14 @@ import { useMemo, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { Employee, EmployeeView } from "../../api/types";
 import { firstName } from "../../lib/format";
-import { refreshOrg, useCatalog, useDraft, useOrg } from "../../lib/hooks";
+import { refreshOrg, useCatalog, useDraft, useOrg, useQuery } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import { AdvancedFields, ClearancePicker, EmployeeManagerSelect } from "../EmployeeFields";
 import { up } from "../../lib/org";
 import { SkillPicker } from "../SkillPicker";
 import { Icon } from "../Icon";
-import { ConfirmButton, ErrorNote, Section } from "../ui";
+import { Markdown } from "../Markdown";
+import { ConfirmButton, ErrorNote, Section, Skeleton } from "../ui";
 
 function toEmployee(v: EmployeeView): Employee {
   const { presence: _p, activeRunId: _a, nextFire: _n, lastRun: _l, ...e } = v;
@@ -73,6 +74,7 @@ export function ProfileTab({ e, onGone }: { e: EmployeeView; onGone: () => void 
             <textarea className="textarea" rows={2} value={d.objective} onChange={(ev) => set("objective", ev.target.value)} />
           </label>
         </Section>
+        <Owns e={e} name={name} />
         <Section title={`Tools ${name} can use`} action={<span className="section-note">From your Claude Code skills</span>} className="tab-form">
           <SkillPicker catalog={catalog.data} keys={d.skills.keys} builtins={d.skills.builtins} onChange={(s) => set("skills", s)} />
         </Section>
@@ -118,5 +120,61 @@ export function ProfileTab({ e, onGone }: { e: EmployeeView; onGone: () => void 
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** What the employee owns: a file in their folder that every run reads, recorded so Undo works. */
+function Owns({ e, name }: { e: EmployeeView; name: string }) {
+  const q = useQuery(
+    () => call("read_skill_file", { employeeId: e.id, skill: "@own", file: "what-you-own.md" }).catch((x: unknown) => {
+      if (typeof x === "object" && x !== null && "code" in x && x.code === "notFound") return null;
+      throw x;
+    }),
+    [e.id],
+    ["run:updated"],
+  );
+  const [text, setText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (text === null) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const rev = await call("save_skill_file", { employeeId: e.id, skill: "@own", file: "what-you-own.md", text });
+      q.set(text);
+      setText(null);
+      toast(rev ? "Saved. You can undo it under Changes in the Skills tab." : "No changes to save.", rev ? "ok" : "neutral");
+    } catch (x) {
+      setErr(errorMessage(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const edit = text === null && q.data !== undefined ? <button className="btn btn-sm" onClick={() => { setText(q.data ?? ""); setErr(null); }}><Icon name="edit" size={12} /> Edit</button> : null;
+  return (
+    <Section title={`What ${name} owns`} action={edit}>
+      <span className="field-help">The number {name} answers for, their limits, and what they decide alone. Only a conversation with you changes it.</span>
+      {q.error ? <ErrorNote text={q.error} onRetry={q.reload} /> : null}
+      {q.data === undefined && !q.error ? <Skeleton h={72} r={12} /> : null}
+      {text !== null ? (
+        <>
+          <textarea className="textarea mono" rows={8} value={text} onChange={(ev) => setText(ev.target.value)} spellCheck={false} autoFocus
+            onKeyDown={(ev) => { if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") { ev.preventDefault(); void save(); } }} />
+          <div className="row" style={{ gap: 8 }}>
+            {err ? <ErrorNote text={err} /> : null}
+            <span className="grow" />
+            <button className="btn btn-ghost" onClick={() => setText(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
+          </div>
+        </>
+      ) : q.data?.trim() ? (
+        <div className="fileview-doc"><Markdown text={q.data} /></div>
+      ) : q.data !== undefined ? (
+        <span className="faint" style={{ fontSize: "var(--t-sm)" }}>Not set yet. {name} proposes it in their first weekly review.</span>
+      ) : null}
+    </Section>
   );
 }

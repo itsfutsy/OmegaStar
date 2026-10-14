@@ -28,6 +28,8 @@ const DATED_LINES: usize = 3;
 const REPEATED_LINES: usize = 5;
 /// Edits to one file within a day before it counts as churn.
 const CHURN_EDITS: usize = 3;
+/// Every run of every employee reads the company page.
+const PAGE_CHARS: usize = 6_000;
 /// Files larger than this are binaries or data, not notes.
 const TEXT_MAX_BYTES: u64 = 256 * 1024;
 
@@ -261,6 +263,23 @@ pub fn overdue_checks(open: &[Check], now: Ts) -> Vec<HealthFinding> {
         .collect()
 }
 
+/// What is worth a look on the company page. Kept out of `check`, which is per employee and decides
+/// when they tidy: nobody tidies the company page alone.
+pub fn page(text: &str) -> Vec<HealthFinding> {
+    let mut f = vec![];
+    let file = Some("company page".to_string());
+    let loose = loose_notes(text);
+    if !loose.is_empty() {
+        f.push(HealthFinding { kind: HealthKind::LooseNotes, skill: None, file: file.clone(), detail: format!("{} line(s) may be unfinished notes ({}).", loose.len(), sample(&loose)) });
+    }
+    let n = text.chars().count();
+    if n > PAGE_CHARS {
+        let detail = format!("The company page is {} characters, and every run of every employee reads it. Keep one line per fact and move detail to the skill that owns it.", k(n));
+        f.push(HealthFinding { kind: HealthKind::TooLong, skill: None, file, detail });
+    }
+    f
+}
+
 pub fn check(skills_dir: &Path, notes_dir: &Path, slug: &str, edits: &[(String, String, Ts)], now: Ts) -> SkillHealth {
     let fam = load(skills_dir);
     let notes = load_notes(notes_dir);
@@ -439,5 +458,19 @@ mod tests {
         let at = loose_note(line).unwrap();
         assert_eq!(line.chars().skip(at).take(4).collect::<String>(), "TODO", "the code span keeps positions");
         assert!(excerpt(line, at).contains("TODO: confirm the rate."), "{}", excerpt(line, at));
+    }
+
+    #[test]
+    fn company_page_findings() {
+        let short = "# Company page\n\n## Who to ask\n\n- Invoices: the finance lead.\n";
+        assert!(page(short).is_empty());
+        let long = format!("# Company page\n\n{}", "- One line about how things work here.\n".repeat(180));
+        let found = page(&long);
+        assert_eq!(found.iter().map(|f| f.kind).collect::<Vec<_>>(), vec![HealthKind::TooLong]);
+        assert!(found[0].detail.starts_with("The company page is 7.0k characters"), "{}", found[0].detail);
+        assert_eq!(found[0].file.as_deref(), Some("company page"));
+        assert_eq!(found[0].skill, None);
+        let loose = page("## Right now\n\n- 2026-10-01 New supplier. TODO confirm the terms.\n");
+        assert_eq!(loose.iter().map(|f| f.kind).collect::<Vec<_>>(), vec![HealthKind::LooseNotes]);
     }
 }
