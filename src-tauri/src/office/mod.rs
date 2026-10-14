@@ -55,6 +55,9 @@ const USAGE_EVERY: Duration = Duration::from_secs(300);
 const BACKUP_EVERY: Duration = Duration::from_secs(60);
 const WATCH_FIRST: Duration = Duration::from_secs(45);
 const WATCH_EVERY: Duration = Duration::from_secs(60);
+const ACCOUNT_EVERY: Duration = Duration::from_secs(60);
+/// In the data dir while the app runs: a launch that finds it knows the last session did not quit cleanly.
+const RUNNING_MARKER: &str = "omega.running";
 const DEFAULT_PROMPT: &str = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
 pub fn default_data_dir() -> PathBuf {
@@ -98,6 +101,11 @@ struct Inner {
     backing_up: tokio::sync::Mutex<()>,
     /// Held while the reply monitor makes a pass, so passes never overlap.
     watching: tokio::sync::Mutex<()>,
+    build: Build,
+    /// The last session did not quit cleanly.
+    crashed: bool,
+    /// The last `claude auth status` and when it was checked; `None` until the first check.
+    account: Mutex<Option<(Ts, Option<Account>)>>,
 }
 
 #[derive(Clone)]
@@ -114,10 +122,21 @@ fn now() -> Ts {
 impl Office {
     /// Opens the data dir, recovers from a previous crash, starts the MCP endpoint, and dispatches
     /// queued work. Does not start the scheduler loop (see `spawn_scheduler`).
-    pub async fn open(data_dir: PathBuf, sink: Arc<dyn EventSink>) -> Result<Office> {
+    pub async fn open(data_dir: PathBuf, sink: Arc<dyn EventSink>, build: Build) -> Result<Office> {
         fs::create_dir_all(data_dir.join("employees"))?;
         fs::create_dir_all(data_dir.join("runs"))?;
         let data_dir = long_path(&data_dir);
+        let marker = data_dir.join(RUNNING_MARKER);
+        let crashed = match fs::read_to_string(&marker) {
+            Ok(contents) => {
+                log!("the last session did not quit cleanly (a crash, a force quit or a power loss): {}", contents.trim());
+                true
+            }
+            Err(_) => false,
+        };
+        if let Err(e) = fs::write(&marker, json!({ "pid": std::process::id(), "startedAt": now(), "build": build }).to_string()) {
+            log!("could not write {RUNNING_MARKER}: {e}");
+        }
         let store = Store::open(&data_dir.join("office.db"))?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
@@ -133,6 +152,9 @@ impl Office {
             probing: tokio::sync::Mutex::new(()),
             backing_up: tokio::sync::Mutex::new(()),
             watching: tokio::sync::Mutex::new(()),
+            build,
+            crashed,
+            account: Mutex::new(None),
         }));
         for run_id in office.recover()? {
             // The run never reached its end, where its sends are normally found.
@@ -170,6 +192,19 @@ impl Office {
                 if let Ok(_probing) = office.0.probing.try_lock() {
                     office.probe_usage().await;
                 }
+            }
+        });
+    }
+
+    /// Checks which account Claude Code is signed in to now and every minute.
+    pub fn spawn_account_monitor(&self) {
+        let office = self.clone();
+        self.0.rt.spawn(async move {
+            let mut every = tokio::time::interval(ACCOUNT_EVERY);
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                every.tick().await;
+                office.refresh_account().await;
             }
         });
     }
@@ -250,7 +285,7 @@ impl Office {
         for mut r in db.runs_in_state(RunState::Running)? {
             r.state = RunState::Lost;
             r.ended_at = Some(now());
-            r.error = Some("Omega Star stopped while this run was in progress.".into());
+            r.error = Some(if self.0.crashed { "Omega Star closed unexpectedly while this run was in progress." } else { "Omega Star stopped while this run was in progress." }.into());
             db.save_run(&r)?;
             lost.push(r.id);
         }

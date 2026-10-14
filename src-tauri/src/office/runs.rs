@@ -191,6 +191,7 @@ impl Office {
         for pid in pids {
             claude::kill_tree(pid);
         }
+        let _ = fs::remove_file(self.0.data_dir.join(RUNNING_MARKER));
     }
 
     /// Starts every queued run that is free to go, within the global work cap. A conversation takes
@@ -225,6 +226,7 @@ impl Office {
 
     /// The queued runs to start now, and the reply checks and nudges no longer needed, cancelled.
     fn claim_runnable(&self) -> Result<(Vec<Run>, Vec<Run>)> {
+        let stamp = self.run_build();
         let db = self.db();
         // One unit: a run marked running here must be returned, or it would never start.
         let claimed = db.tx(|| {
@@ -258,6 +260,7 @@ impl Office {
                 }
                 r.state = RunState::Running;
                 r.started_at = Some(now());
+                r.build = Some(stamp.clone());
                 db.save_run(&r)?;
                 sessions.insert(session);
                 if background {

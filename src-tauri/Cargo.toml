@@ -45,3 +45,7 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 junction = "2.1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSException", "NSString"] }

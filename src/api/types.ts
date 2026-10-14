@@ -173,6 +173,7 @@ export type Run = {
   allowOnce: string[];         // rules you granted this run only ("Allow once & retry")
   proposed: string | null;     // a tidy's bigger changes, waiting for your approval
   attachments: string[];       // file names you attached to a chat message
+  build: RunBuild | null;      // the build that ran it, and the Claude Code organisation around it
 };
 export type NewAttachment = { name: string; data: string /* base64 */ };
 
@@ -247,11 +248,16 @@ export type TaskOutcome = "done" | "failed" | "stopped";
 export type RunDetail = { run: Run; events: RunEvent[]; children: Run[] };
 
 export type Account = { loggedIn: boolean; email: string | null; orgName: string | null; plan: string | null };
+/** How this copy of Omega Star was built: a published release, a test build, or a developer's own. */
+export type BuildChannel = "release" | "dogfood" | "dev";
+export type Build = { version: string; commit: string; channel: BuildChannel };
+export type RunBuild = Build & { claude: string | null; org: string | null };
 export type SetupStatus = {
   claude: { found: boolean; path: string | null; version: string | null };
   account: Account | null;
   company: Company | null;
   background: boolean;
+  build: Build;
 };
 export type AppSettings = { maxConcurrentRuns: number; claudePath: string | null; dataDir: string; paused: boolean; backup: BackupSettings; watch: WatchSettings };
 
