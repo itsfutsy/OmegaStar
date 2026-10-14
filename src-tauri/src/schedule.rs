@@ -1,12 +1,9 @@
 //! Cron evaluation. Pure: the clock and the time zone are parameters.
 
-use crate::model::{CronPreview, Misfire, Ts};
-use chrono::{Duration, TimeZone, Utc};
+use crate::model::{CronPreview, Ts};
+use chrono::{TimeZone, Utc};
 use croner::Cron;
 use std::str::FromStr;
-
-/// Slots older than this are dropped under `Misfire::Skip`.
-const SKIP_WINDOW: Duration = Duration::minutes(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
@@ -14,8 +11,6 @@ pub enum Due {
     Nothing,
     /// Fire this slot (the latest one if several were missed).
     Fire(Ts),
-    /// The latest slot is too old to run under `Skip`; record it as seen without firing.
-    Missed(Ts),
 }
 
 pub fn parse(cron: &str) -> Result<Cron, String> {
@@ -23,19 +18,14 @@ pub fn parse(cron: &str) -> Result<Cron, String> {
 }
 
 /// Decides whether a schedule is due at `now`, given the last slot it fired (or was created) at.
-pub fn due_slot<Tz: TimeZone>(cron: &Cron, misfire: Misfire, last_slot: Ts, now: Ts, tz: &Tz) -> Due {
+/// Slots missed while the app was closed or asleep become one run of the latest.
+pub fn due_slot<Tz: TimeZone>(cron: &Cron, last_slot: Ts, now: Ts, tz: &Tz) -> Due {
     let local_now = now.with_timezone(tz);
     let Ok(latest) = cron.find_previous_occurrence(&local_now, true) else {
         return Due::Nothing;
     };
     let latest = latest.with_timezone(&Utc);
-    if latest <= last_slot {
-        Due::Nothing
-    } else if misfire == Misfire::Skip && now - latest > SKIP_WINDOW {
-        Due::Missed(latest)
-    } else {
-        Due::Fire(latest)
-    }
+    if latest <= last_slot { Due::Nothing } else { Due::Fire(latest) }
 }
 
 fn next_fires<Tz: TimeZone>(cron: &Cron, after: Ts, tz: &Tz, n: usize) -> Vec<Ts> {
@@ -77,4 +67,18 @@ fn twelve_hour(s: &str) -> String {
     }
     out.push_str(&s[last..]);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missed_slots_catch_up_once_with_the_latest() {
+        let cron = parse("*/30 * * * *").unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 3, 2, 12, 10, 0).unwrap();
+        let latest = Utc.with_ymd_and_hms(2026, 3, 2, 12, 0, 0).unwrap();
+        assert_eq!(due_slot(&cron, now - chrono::Duration::hours(3), now, &Utc), Due::Fire(latest));
+        assert_eq!(due_slot(&cron, latest, now, &Utc), Due::Nothing, "the six missed slots fire once");
+    }
 }

@@ -10,7 +10,7 @@ import { Icon } from "../Icon";
 import { ConfirmButton, ErrorNote, Section, Skeleton, Switch } from "../ui";
 import "./Schedules.css";
 
-const blankSchedule = (e: EmployeeView): ScheduleDraft => ({ employeeId: e.id, label: "", cron: "0 9 * * 1-5", instruction: "", enabled: true, misfire: "catchUp", quiet: false });
+const blankSchedule = (e: EmployeeView): ScheduleDraft => ({ employeeId: e.id, label: "", cron: "0 9 * * 1-5", instruction: "", enabled: true, quiet: false, model: null, effort: null });
 
 /** The employee's schedules, at the top of the Work tab: when they run on their own. */
 export function Schedules({ e, onEdit }: { e: EmployeeView; onEdit: (d: ScheduleDraft) => void }) {
@@ -56,6 +56,7 @@ export function Schedules({ e, onEdit }: { e: EmployeeView; onEdit: (d: Schedule
                 <span className="sched-when">
                   {describeCron(s.cron) ?? <span className="mono">{s.cron}</span>}
                   {s.quiet ? <> · reports only when needed</> : null}
+                  {s.model || s.effort ? <> · runs on {[s.model, s.effort && `${s.effort} effort`].filter(Boolean).join(", ")}</> : null}
                 </span>
                 <span className="sched-next num">{s.enabled && s.nextFire ? <>Next run {whenInline(s.nextFire)}</> : s.enabled ? "Paused" : "Off"}</span>
               </button>
@@ -173,17 +174,6 @@ export function ScheduleEditor({ e, initial, onDone }: { e: EmployeeView; initia
           <div className="field">
             <span className="field-label">On</span>
             <div className="row" style={{ height: 34 }}><Switch checked={d.enabled} onChange={(v) => set("enabled", v)} label="Schedule on" /><span className="muted" style={{ fontSize: "var(--t-sm)" }}>{d.enabled ? "Runs at these times" : "Off until you turn it on"}</span></div>
-          </div>
-          <div className="field">
-            <span className="field-label">If Omega Star wasn't running at the time</span>
-            <div className="misfire" role="radiogroup" aria-label="Missed runs">
-              <button type="button" role="radio" aria-checked={d.misfire === "catchUp"} className="misfire-opt" onClick={() => set("misfire", "catchUp")}>
-                <span className="misfire-radio" /><span className="stack"><b>Catch up once</b><span>Run as soon as Omega Star starts again. Several missed runs become one.</span></span>
-              </button>
-              <button type="button" role="radio" aria-checked={d.misfire === "skip"} className="misfire-opt" onClick={() => set("misfire", "skip")}>
-                <span className="misfire-radio" /><span className="stack"><b>Skip it</b><span>Only run on time. Good for things that go stale, like a morning briefing.</span></span>
-              </button>
-            </div>
           </div>
         </div>
       </div>

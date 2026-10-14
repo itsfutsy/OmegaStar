@@ -451,8 +451,9 @@ without it and Omega Star starts a new run for you when it arrives."
                     cron: s.cron,
                     instruction: s.instruction,
                     enabled: s.enabled,
-                    misfire: s.misfire,
                     quiet: s.quiet,
+                    model: s.model,
+                    effort: s.effort,
                 }
             }
             None => ScheduleDraft {
@@ -462,8 +463,9 @@ without it and Omega Star starts a new run for you when it arrives."
                 cron: String::new(),
                 instruction: String::new(),
                 enabled: true,
-                misfire: Misfire::CatchUp,
                 quiet: false,
+                model: None,
+                effort: None,
             },
         };
         let text = |k: &str| args.get(k).and_then(|v| v.as_str());
@@ -483,11 +485,11 @@ without it and Omega Star starts a new run for you when it arrives."
         if let Some(v) = flag("enabled") {
             d.enabled = v;
         }
-        match text("misfire") {
-            None => {}
-            Some("catchUp") => d.misfire = Misfire::CatchUp,
-            Some("skip") => d.misfire = Misfire::Skip,
-            Some(o) => return Err(AppError::invalid(format!("misfire must be 'catchUp' or 'skip', not '{o}'"))),
+        if let Some(v) = text("model") {
+            d.model = Some(v.trim()).filter(|m| !m.is_empty() && *m != "default").map(String::from);
+        }
+        if let Some(v) = text("effort") {
+            d.effort = effort_arg(v)?;
         }
         if d.cron.trim().is_empty() {
             return Err(AppError::invalid("cron is required"));
@@ -671,4 +673,25 @@ fn parse_due(s: &str) -> Result<Ts> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map(|d| d.and_hms_opt(12, 0, 0).unwrap().and_utc())
         .map_err(|_| AppError::invalid("dueAt must be an ISO date or date-time"))
+}
+
+/// The schedule tool's `effort`: a level, or 'default' (or nothing) to go back to the employee's own.
+fn effort_arg(v: &str) -> Result<Option<Effort>> {
+    match v.trim() {
+        "" | "default" => Ok(None),
+        v => serde_json::from_value(json!(v)).map(Some).map_err(|_| AppError::invalid("effort must be low, medium, high, xhigh or max")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schedule_effort_takes_a_level_or_default() {
+        assert_eq!(effort_arg("low").unwrap(), Some(Effort::Low));
+        assert_eq!(effort_arg(" xhigh ").unwrap(), Some(Effort::Xhigh));
+        assert_eq!(effort_arg("default").unwrap(), None);
+        assert_eq!(effort_arg("quick").unwrap_err().message, "effort must be low, medium, high, xhigh or max");
+    }
 }
