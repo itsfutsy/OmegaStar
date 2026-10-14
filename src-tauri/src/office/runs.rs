@@ -405,15 +405,6 @@ impl Office {
         };
         let session = db.run(&run.id)?.map(|r| r.session).unwrap_or_else(|| run.id.clone());
         let resume = db.session_started(&session)?;
-        // The threads you closed since this chat's last turn: read once, by this turn.
-        let briefs = if matches!(run.kind, RunKind::Chat) {
-            let pending = db.briefs(&e.id, &session, true)?;
-            let ids: Vec<String> = pending.iter().map(|b| b.id.clone()).collect();
-            db.consume_briefs(&ids, now())?;
-            pending.into_iter().map(|b| b.text).collect()
-        } else {
-            vec![]
-        };
         drop(db);
         let tidy = self.tidy_brief(run, &e)?;
         let catalog = self.skill_catalog();
@@ -441,7 +432,6 @@ impl Office {
             checks,
             tidy,
             replier,
-            briefs,
             watched,
             resume,
             session,

@@ -27,8 +27,8 @@ function digest(t: Thread): { run: Run; title: string; preview: string } {
 
 /** What an Inbox row can do to its thread. */
 export type ItemActions = {
-  /** Mark it done; `brief` tells the employee's ongoing chat what was decided. */
-  done: (brief: boolean) => Promise<void>;
+  /** Mark it done. */
+  done: () => Promise<void>;
   snooze: (until: Date) => void;
   wake: () => void;
   reopen: () => void;
@@ -118,7 +118,7 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
           ) : (
             <>
               <SnoozeButton snoozedUntil={status.snoozedUntil} onSnooze={actions.snooze} onWake={actions.wake} />
-              <DoneButton name={who} task={r.kind.type === "task"} replies={n} disabled={busy} onDone={actions.done} />
+              <DoneButton name={who} task={r.kind.type === "task"} disabled={busy} onDone={actions.done} />
             </>
           )}
           <button className="btn btn-ghost btn-sm btn-icon" title={`Open on ${who}'s panel`} aria-label={`Open on ${who}'s panel`} onClick={() => openMember(e.id, "chat", threadFocus(r.id))}>

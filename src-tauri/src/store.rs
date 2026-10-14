@@ -56,10 +56,6 @@ CREATE TABLE IF NOT EXISTS checks(
   id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, state TEXT NOT NULL, due_at INTEGER NOT NULL, created_at INTEGER NOT NULL, data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS checks_by_employee ON checks(employee_id, state, due_at);
-CREATE TABLE IF NOT EXISTS briefs(
-  id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, session TEXT NOT NULL, created_at INTEGER NOT NULL, consumed_at INTEGER, data TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, created_at);
 "#;
 
 fn ms(t: Ts) -> i64 {
@@ -630,7 +626,7 @@ impl Store {
         Ok(v)
     }
 
-    // ---- threads and briefs ----
+    // ---- threads ----
 
     /// Every Reply run, of one employee or of everyone, oldest first. Threads are built from them.
     pub fn reply_runs(&self, employee_id: Option<&str>) -> Result<Vec<Run>> {
@@ -687,40 +683,6 @@ impl Store {
     pub fn runs_by_id(&self, ids: &[String]) -> Result<Vec<Run>> {
         let ids = serde_json::to_string(ids)?;
         self.runs_where("WHERE id IN (SELECT value FROM json_each(?))", &[&ids])
-    }
-
-    pub fn insert_brief(&self, b: &Brief, session: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO briefs(id, employee_id, session, created_at, consumed_at, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![b.id, b.employee_id, session, ms(b.created_at), b.consumed_at.map(ms), to_json(b)?],
-        )?;
-        Ok(())
-    }
-
-    /// The briefs written for one chat session, oldest first; `unconsumed_only` keeps those no turn has read.
-    pub fn briefs(&self, employee_id: &str, session: &str, unconsumed_only: bool) -> Result<Vec<Brief>> {
-        let mut st = self.conn.prepare(
-            "SELECT data FROM briefs WHERE employee_id = ?1 AND session = ?2 AND (?3 = 0 OR consumed_at IS NULL) ORDER BY created_at, rowid",
-        )?;
-        let v = readable("briefs", st.query_map(params![employee_id, session, unconsumed_only as i64], |r| from_row(r, 0))?)?;
-        Ok(v)
-    }
-
-    /// Drops the briefs about a thread that no chat turn has read yet: the thread came back to the Inbox.
-    pub fn drop_unread_briefs(&self, root_run_id: &str) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM briefs WHERE consumed_at IS NULL AND json_valid(data) AND json_extract(data, '$.rootRunId') = ?", [root_run_id])?)
-    }
-
-    /// Marks briefs as read by a chat turn launched at `at`.
-    pub fn consume_briefs(&self, ids: &[String], at: Ts) -> Result<()> {
-        for id in ids {
-            let found = self.conn.query_row("SELECT data FROM briefs WHERE id = ?", [id], |r| from_row::<Brief>(r, 0)).optional()?;
-            if let Some(mut b) = found {
-                b.consumed_at = Some(at);
-                self.conn.execute("UPDATE briefs SET consumed_at = ?2, data = ?3 WHERE id = ?1", params![id, ms(at), to_json(&b)?])?;
-            }
-        }
-        Ok(())
     }
 
     // ---- checks ----
@@ -901,12 +863,8 @@ mod tests {
                 params![ada.id, now],
             )
             .unwrap();
-        db.conn
-            .execute("INSERT INTO briefs(id, employee_id, session, created_at, data) VALUES ('b1', ?1, 's1', ?2, 'not json')", params![ada.id, now])
-            .unwrap();
         assert!(db.watched_requests().unwrap().is_empty());
         assert!(db.requests_of_run(&queued_id).unwrap().is_empty());
-        assert_eq!(db.drop_unread_briefs("root-1").unwrap(), 0);
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1035,6 +993,62 @@ INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data
         let taught: Vec<String> = db.taught_since(&ada.id, None, 10).unwrap().into_iter().map(|(_, t)| t).collect();
         assert_eq!(taught.len(), 1, "{taught:?}");
         assert!(taught[0].ends_with("Try the other folder."));
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn tables(db: &Store) -> BTreeSet<String> {
+        let mut st = db.conn.prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')").unwrap();
+        let v = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        v
+    }
+
+    #[test]
+    fn a_briefs_table_is_left_alone() {
+        let dir = temp_dir();
+        let path = dir.join("office.db");
+        let db = Store::open(&path).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let done = run(&ada, RunKind::Manual, RunState::Succeeded);
+        assert!(db.insert_run(&done, &done.id).unwrap());
+        // As an older build left it.
+        let brief = r#"{"id":"b1","employeeId":"e1","rootRunId":"r1","label":"Manual run","replies":1,"excerpt":"Done.","text":"Settled."}"#;
+        db.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS briefs(
+  id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, session TEXT NOT NULL, created_at INTEGER NOT NULL, consumed_at INTEGER, data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, created_at);",
+            )
+            .unwrap();
+        db.conn.execute("INSERT INTO briefs(id, employee_id, session, created_at, data) VALUES ('b1', 'e1', 's1', 1, ?)", [brief]).unwrap();
+        drop(db);
+
+        let db = Store::open(&path).unwrap();
+        assert_eq!(db.run(&done.id).unwrap().unwrap().run, done);
+        assert_eq!(ids(&db.recent_runs(None, 10).unwrap()), ids(&[done]));
+        let t = tables(&db);
+        assert!(t.contains("briefs") && t.contains("briefs_by_session"), "the briefs table stays");
+        let rows: Vec<(String, String)> = {
+            let mut st = db.conn.prepare("SELECT id, data FROM briefs").unwrap();
+            let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+            v
+        };
+        assert_eq!(rows, vec![("b1".to_string(), brief.to_string())]);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fresh_office_has_no_briefs_table() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let t = tables(&db);
+        assert!(t.contains("runs"));
+        assert!(!t.contains("briefs") && !t.contains("briefs_by_session"));
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

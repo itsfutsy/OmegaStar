@@ -331,24 +331,12 @@ finish with a report as your handbook's \"Your report\" describes. Before the re
 `omega-skill-craft`: if this run exposed a gap or a correction, make the smallest skill edit that would have prevented \
 it; otherwise change nothing. The retrospective is for you: leave it out of the report.";
     let frame = match &run.kind {
-        RunKind::Chat => {
-            let mut f = format!(
-                "You are talking with {}, the {} of {} and the person you work for. Every procedure, preference or \
+        RunKind::Chat => format!(
+            "You are talking with {}, the {} of {} and the person you work for. Every procedure, preference or \
 correction they teach you becomes a skill edit, now, not a promise: update the right skill before your reply ends, \
 then say in one line which skill changed and how.",
-                s.company.ceo_name, s.company.title, s.company.name
-            );
-            if !s.briefs.is_empty() {
-                f += &format!(
-                    "\n\nSince your last turn here, {} closed {} you had with them outside this chat: threads on your \
-reports, or tasks. What each decided is below; the work in it is done and it is no longer open.\n\n{}",
-                    s.company.ceo_name,
-                    if s.briefs.len() == 1 { "a conversation".to_string() } else { format!("{} conversations", s.briefs.len()) },
-                    s.briefs.join("\n\n")
-                );
-            }
-            f
-        }
+            s.company.ceo_name, s.company.title, s.company.name
+        ),
         RunKind::Scheduled { label, quiet: false, .. } => format!("Scheduled routine '{label}'. {autonomous}"),
         RunKind::Scheduled { label, quiet: true, .. } => format!(
             "Scheduled routine '{label}', quiet: {} sees this run only if you call the `omega` tool `notify`, one call for \

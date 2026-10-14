@@ -239,7 +239,6 @@ pub fn run() {
             commands::archived,
             commands::conversations,
             commands::thread,
-            commands::chat_briefs,
             commands::set_archived,
             commands::reply_to_run,
             commands::approve_blocked,
