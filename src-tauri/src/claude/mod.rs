@@ -509,6 +509,7 @@ mod tests {
             quiet: true,
             model: model.map(String::from),
             effort,
+            review: false,
         };
         assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
         assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);

@@ -1116,7 +1116,7 @@ Pat also wrote into Bo's run on the way:\n\
             source(&o, &d)
         };
 
-        let sweep = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None };
+        let sweep = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
         let scheduled = run(&o.db, &ada, sweep, "Sweep the inbox.", RunState::Running, 5, None);
         assert_eq!(from(&scheduled), "This began with Ada's scheduled 'Sweep', not a message from Pat.");
 

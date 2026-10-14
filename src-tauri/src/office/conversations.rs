@@ -127,7 +127,7 @@ mod tests {
         let sub_reply = Run::new(&bo.id, RunKind::Reply { to_run_id: sub_report.id.clone(), label: "Manual run".into(), task: false }, "and?".into(), now());
         db.insert_run(&sub_reply, &sub_report.id).unwrap();
         let live = run(&db, &ada, RunKind::Manual, RunState::Running, 0, None);
-        let quiet = RunKind::Scheduled { schedule_id: "s".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None };
+        let quiet = RunKind::Scheduled { schedule_id: "s".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
         let live_quiet = run(&db, &ada, quiet, RunState::Running, 0, None);
         let live_sub = run(&db, &bo, RunKind::Manual, RunState::Queued, 0, None);
 

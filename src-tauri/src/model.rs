@@ -675,6 +675,9 @@ pub struct Schedule {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<Effort>,
+    /// The weekly review Omega Star seeds for every employee.
+    #[serde(default)]
+    pub review: bool,
     /// Computed on read, never stored.
     #[serde(default)]
     pub next_fire: Option<Ts>,
@@ -717,6 +720,8 @@ pub enum RunKind {
         model: Option<String>,
         #[serde(default)]
         effort: Option<Effort>,
+        #[serde(default)]
+        review: bool,
     },
     Delegated { parent_run_id: String },
     /// A colleague (any employee, not only a manager) asked this employee a question, or with
@@ -1234,8 +1239,7 @@ impl CheckState {
 }
 
 /// Something an employee said they would look at again, tracked so it is not left as a sentence in a
-/// file. Without a schedule, no run of theirs happens later unless something starts it; an open check
-/// past its date is that something (see `tidy`).
+/// file. An open check past its date starts a run of its own, see `Office::tick`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
@@ -1592,14 +1596,14 @@ mod tests {
         assert_eq!(skip.misfire, Misfire::Skip);
         let none: Schedule = serde_json::from_str(&schedule_json(None)).unwrap();
         assert_eq!(none.misfire, Misfire::CatchUp);
-        assert_eq!((none.model, none.effort), (None, None));
+        assert_eq!((none.model, none.effort, none.review), (None, None, false));
         let saved = serde_json::to_string(&Schedule { misfire: Misfire::CatchUp, ..skip }).unwrap();
         assert!(saved.contains(r#""misfire":"catchUp""#), "{saved}");
     }
 
     #[test]
     fn check_id_reads_only_check_runs() {
-        let scheduled = |id: &str| RunKind::Scheduled { schedule_id: id.into(), slot: Utc::now(), label: "x".into(), quiet: true, model: None, effort: None };
+        let scheduled = |id: &str| RunKind::Scheduled { schedule_id: id.into(), slot: Utc::now(), label: "x".into(), quiet: true, model: None, effort: None, review: false };
         assert_eq!(scheduled("check:abc").check_id(), Some("abc"));
         assert_eq!(scheduled("6f1c0e2a").check_id(), None);
         assert_eq!(RunKind::Chat.check_id(), None);

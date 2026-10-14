@@ -123,14 +123,15 @@ export type Schedule = {
   enabled: boolean;
   quiet: boolean;            // reports reach the Inbox only when the run calls notify or fails
   model: string | null; effort: Effort | null;   // null: the employee's own
+  review?: boolean;          // the weekly review Omega Star seeds for every employee
   nextFire: string | null;
 };
-export type ScheduleDraft = Omit<Schedule, "id" | "nextFire"> & { id?: string };
+export type ScheduleDraft = Omit<Schedule, "id" | "nextFire" | "review"> & { id?: string };
 export type CronPreview = { ok: true; description: string; next: string[] } | { ok: false; error: string };
 
 export type RunKind =
   | { type: "manual" } | { type: "chat" }
-  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean; model?: string | null; effort?: Effort | null }
+  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean; model?: string | null; effort?: Effort | null; review?: boolean }
   | { type: "delegated"; parentRunId: string }
   | { type: "asked"; parentRunId: string; askedBy: string; task: boolean }   // a colleague's question or task; askedBy = their employee id
   | { type: "answered"; askedRunId: string; from: string; task: boolean; chat: boolean }    // brings an answer or report to an asker whose run had ended; chat: as a turn in their chat

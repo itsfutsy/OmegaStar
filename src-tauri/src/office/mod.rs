@@ -190,6 +190,9 @@ impl Office {
                 log!("delivering answers after run {} failed: {e}", run.id);
             }
         }
+        if let Err(e) = office.seed_reviews() {
+            log!("seeding weekly reviews failed: {e}");
+        }
         office.0.rt.spawn(crate::mcp::serve(listener, office.clone()));
         office.pump();
         Ok(office)

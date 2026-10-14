@@ -142,7 +142,7 @@ fn tools() -> Value {
         },
         {
             "name": "check_later",
-            "description": "Set yourself a check: something you must find out later and cannot now (a change that needs a day to show up, a fact you could not verify). Omega Star tracks it and brings it back to you when it is due, even if nothing else starts a run. Use this instead of writing 'verify later' or 'not yet confirmed' in a skill or notes file. Max 20 open at once.",
+            "description": "Set yourself a check: something you must find out or do later and cannot now (a change that needs a day to show up, a follow-up you promised). On its due date Omega Star starts a quiet run of yours with what and how as its instruction, whether or not anything else runs. Use it for anything you will do later, instead of writing 'I'll check' in a report or 'verify later' in a skill or notes file. Max 20 open at once.",
             "inputSchema": obj(json!({
                 "what": { "type": "string", "description": "What you will find out, in one sentence." },
                 "how": { "type": "string", "description": "Where or how you will look: the command, the page, who to ask. Specific enough that a future run can do it cold." },

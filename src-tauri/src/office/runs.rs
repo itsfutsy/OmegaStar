@@ -983,7 +983,7 @@ mod tests {
 
     #[test]
     fn the_gate_holds_runs_by_kind() {
-        let scheduled = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None };
+        let scheduled = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
         let tidy = RunKind::Tidy { reason: TidyReason::Auto, signature: vec![], plan: None };
         // gate(kind, held, account_ok, talking, awake)
         assert_eq!(gate(&RunKind::Chat, true, true, false, true), Gate::Skip);
