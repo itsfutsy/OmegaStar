@@ -64,10 +64,21 @@ pub(crate) const RUNNING_MARKER: &str = "omega.running";
 const BEFORE_SNAPSHOT: &str = "before.json";
 const DEFAULT_PROMPT: &str = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
+/// OMEGASTAR_DATA_DIR, or the channel's own folder: only a release build opens the real office, since an
+/// older build that saves a row drops the fields a newer one wrote.
 pub fn default_data_dir() -> PathBuf {
     match std::env::var_os("OMEGASTAR_DATA_DIR") {
         Some(d) if !d.is_empty() => PathBuf::from(d),
-        _ => dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("OmegaStar"),
+        _ => dirs::data_dir().unwrap_or_else(std::env::temp_dir).join(data_folder(BuildChannel::current())),
+    }
+}
+
+/// The folder a build of `channel` keeps its office in when OMEGASTAR_DATA_DIR is not set. Pure.
+fn data_folder(channel: BuildChannel) -> &'static str {
+    match channel {
+        BuildChannel::Release => "OmegaStar",
+        BuildChannel::Dogfood => "OmegaStar-dogfood",
+        BuildChannel::Dev => "OmegaStar-dev",
     }
 }
 
@@ -473,6 +484,13 @@ mod tests {
 
     fn left<'a>(transcript: &'a str, skills: Option<(own_skills::Snapshot, own_skills::Snapshot)>) -> Leftover<'a> {
         Leftover { transcript, home: home(), supervised: true, modified: Some(started() + chrono::Duration::minutes(8)), now: now(), stderr_tail: None, skills }
+    }
+
+    #[test]
+    fn only_a_release_build_opens_the_real_office() {
+        assert_eq!(data_folder(BuildChannel::Release), "OmegaStar");
+        assert_eq!(data_folder(BuildChannel::Dogfood), "OmegaStar-dogfood");
+        assert_eq!(data_folder(BuildChannel::Dev), "OmegaStar-dev");
     }
 
     #[test]

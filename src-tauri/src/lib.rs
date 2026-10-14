@@ -175,7 +175,7 @@ pub fn run() {
             }
             // `package_info` carries a version set with `tauri build --config`, as dogfood builds do.
             let build = Build::new(app.package_info().version.to_string());
-            log!("Omega Star {} started ({} build {})", build.version, format!("{:?}", build.channel).to_lowercase(), build.commit);
+            log!("Omega Star {} started ({} build {}) on {}", build.version, format!("{:?}", build.channel).to_lowercase(), build.commit, data_dir.display());
             let sink = Arc::new(TauriSink { app: app.handle().clone(), pause_item: OnceLock::new() });
             let office = match tauri::async_runtime::block_on(Office::open(data_dir.clone(), sink.clone(), build)) {
                 Ok(office) => office,

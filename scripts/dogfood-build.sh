@@ -11,4 +11,4 @@ version="$major.$minor.$((patch + 1))-dogfood.$(date +%Y%m%d%H%M)"
 OMEGA_CHANNEL=dogfood npx tauri build --bundles app --config "{\"version\":\"$version\"}"
 
 echo "BUILT $version"
-echo "Run it on a copy of the office (set OMEGASTAR_DATA_DIR) until this branch ships: an older build that saves a run drops the newer fields."
+echo "It opens its own office in ~/Library/Application Support/OmegaStar-dogfood (or OMEGASTAR_DATA_DIR), never the real one: an older build that saves a run drops the newer fields."

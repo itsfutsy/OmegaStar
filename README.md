@@ -212,7 +212,7 @@ cd src-tauri
 cargo clippy --all-targets
 ```
 
-Your office lives in the app data directory: `~/Library/Application Support/OmegaStar` on macOS, `%APPDATA%\OmegaStar` on Windows and `~/.local/share/OmegaStar` on Linux. Set `OMEGASTAR_DATA_DIR` to use another folder. Errors are logged to `omega.log` there.
+Your office lives in the app data directory: `~/Library/Application Support/OmegaStar` on macOS, `%APPDATA%\OmegaStar` on Windows and `~/.local/share/OmegaStar` on Linux. A dev or dogfood build uses `OmegaStar-dev` or `OmegaStar-dogfood` beside it, so it never touches your real office. Set `OMEGASTAR_DATA_DIR` to use another folder. Errors are logged to `omega.log` there.
 
 Each employee has a folder there with a generated `CLAUDE.md` handbook, their own skills and a scratch workspace. A per-run `settings.json` hides skills they weren't granted, and office tools (delegation, requests, schedules) use an MCP endpoint the app serves on 127.0.0.1.
 
