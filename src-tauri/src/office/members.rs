@@ -349,10 +349,15 @@ impl Office {
                         None => format!(
                             "{} reports to you. They start with only their role skill and know nothing of your work. Brief them now: \
 `delegate` them a first task that gives them the context they need from you (what your area does, what you expect of them, \
-where things live), then report what you handed over.",
+where things live). Do not wait for their report: finish with a short report of what you handed over. Their report comes back \
+to you as a new run when they are done.",
                             e.name
                         ),
-                        Some(m) => format!("{} reports to {m}. If they need context from you, hand it over with `ask_colleague` (kind task), then report.", e.name),
+                        Some(m) => format!(
+                            "{} reports to {m}. If they need context from you, hand it over with `ask_colleague` (kind task) and finish with a \
+short report; do not wait for their answer, which comes back to you as a new run.",
+                            e.name
+                        ),
                     };
                     format!(
                         "{ceo} approved your hire proposal: {} joined as {}{changed}.{}\n\nWhy you proposed it:\n{}\n\n{next}",
