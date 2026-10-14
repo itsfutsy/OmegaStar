@@ -194,17 +194,6 @@ export type Conversations = {
   inbox: string[];             // root ids of the threads that lead an Inbox row: reports that reached you
   chats: ChatHead[];           // one per current employee
 };
-/** What an employee's ongoing chat is told about a thread or task you archived; the chat shows it as a card. */
-export type Brief = {
-  id: string; employeeId: string; rootRunId: string;
-  label: string;               // what the report was
-  replies: number;
-  excerpt: string;             // the last thing the employee said in the thread, one line
-  text: string;                // what the employee reads at the start of their next turn
-  createdAt: string; consumedAt: string | null;   // consumed: a chat turn was launched with it
-  task: boolean;               // the thread was a task's
-};
-
 export type OwnSkill = {
   name: string; description: string; role: boolean; managed: boolean;
   files: string[]; updatedAt: string;
@@ -322,10 +311,8 @@ export type Commands = {
   conversations: { args: Record<string, never>; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
-  /** Briefs left for the employee's current chat conversation, oldest first. */
-  chat_briefs: { args: { employeeId: string }; ret: Brief[] };
-  /** Archives a thread (any run in it) or moves it back. Archiving one you replied in briefs the ongoing chat unless `brief: false`. */
-  set_archived: { args: { runId: string; archived: boolean; brief?: boolean }; ret: Run };
+  /** Archives a thread (any run in it) or moves it back. */
+  set_archived: { args: { runId: string; archived: boolean }; ret: Run };
   /** Your reply in a report's thread (`runId`: any run in it). `archive` means "don't bring the answer back unless it needs me". */
   reply_to_run: { args: { runId: string; text: string; archive: boolean; attachments?: NewAttachment[] }; ret: Run };
   /** Allow what a finished run was blocked on and send it back to retry. `rules` must come from its denials

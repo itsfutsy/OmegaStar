@@ -14,7 +14,7 @@ import { Avatar, ErrorNote, Skeleton, StatePill } from "../components/ui";
 import { OngoingChat } from "../components/conversation/OngoingChat";
 import { NewTask } from "../components/conversation/NewTask";
 import { ConversationChips } from "../components/conversation/ConversationChips";
-import { canBrief, DoneButton, markDone, reopen, sendAndDone, SnoozeButton, ThreadView } from "../components/conversation/ThreadView";
+import { DoneButton, markDone, reopen, sendAndDone, SnoozeButton, ThreadView } from "../components/conversation/ThreadView";
 import { employeeItems, useStatuses, type Item } from "../components/conversation/useStatuses";
 import "./Conversation.css";
 
@@ -60,7 +60,6 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
   const runs = thread.turns?.map((t) => t.run) ?? [];
   useMarkSeen(rootId, lastMoved(runs));
   const root = runs[0] ?? null;
-  const replies = Math.max(0, runs.length - 1);
   const task = root?.kind.type === "task";
   const archived = !!root?.archivedAt;
   const name = firstName(e.name);
@@ -68,9 +67,9 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
   const status = root ? threadStatus({ root, replies: runs.slice(1), related: [] }, !!filed?.has(rootId), ctx) : null;
   const title = root ? runKindLabel(root.kind, kindNames(root, snap?.employees ?? [], snap?.people ?? [])) : row?.title ?? "";
 
-  const done = async (brief: boolean) => {
+  const done = async () => {
     const go = leave();
-    if (await markDone(rootId, name, brief)) go();
+    if (await markDone(rootId, name)) go();
   };
   const sendDone = async (text: string, attachments: NewAttachment[]) => {
     const go = leave();
@@ -91,11 +90,11 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
       if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target) || document.querySelector(".popover")) return;
       if (ev.key.toLowerCase() !== "e" || !ready) return;
       ev.preventDefault();
-      void doneRef.current(canBrief(task, replies));
+      void doneRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ready, task, replies]);
+  }, [ready]);
 
   const actions = root ? (
     <>
@@ -103,7 +102,7 @@ function ThreadConversation({ e, rootId, variant }: { e: EmployeeView; rootId: s
       {task ? null : <button className="btn btn-ghost btn-sm" onClick={() => openRun(root.id)}>Open run <Icon name="arrowUpRight" size={12} /></button>}
       {archived
         ? <button className="btn btn-sm" onClick={() => void reopen(rootId)}><Icon name="undo" size={13} /> Reopen</button>
-        : <DoneButton name={name} task={task} replies={replies} disabled={!ready} onDone={done} />}
+        : <DoneButton name={name} task={task} disabled={!ready} onDone={done} />}
     </>
   ) : null;
   return (

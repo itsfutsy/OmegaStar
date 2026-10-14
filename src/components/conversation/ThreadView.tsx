@@ -11,7 +11,7 @@ import { BlockedCard } from "../BlockedCard";
 import { TidyProposal } from "../TidyProposal";
 import { Icon } from "../Icon";
 import { Markdown } from "../Markdown";
-import { Avatar, ErrorNote, Popover, Skeleton, SkillsGrew, Switch } from "../ui";
+import { Avatar, ErrorNote, Popover, Skeleton, SkillsGrew } from "../ui";
 import { ChatSurface, type ChatSurfaceHandle } from "../panel/ChatSurface";
 import { Turn } from "../panel/ChatTurn";
 import "../panel/ChatTab.css";
@@ -130,20 +130,16 @@ function ReportTurn({ root, e, blocked, archived }: { root: Run; e: EmployeeView
   );
 }
 
-/** Whether marking a thread done can brief the employee's ongoing chat: a task, or a report you replied to. */
-export const canBrief = (task: boolean, replies: number): boolean => task || replies > 0;
-
-/** Marks the thread with `rootId` done, which archives it, and offers Undo. `brief`: the ongoing chat of `name` hears
- *  what was decided. Resolves false, having said why, when it failed. */
-export async function markDone(rootId: string, name: string, brief: boolean): Promise<boolean> {
+/** Marks the thread with `rootId` done, which archives it, and offers Undo. Resolves false, having said why, when it failed. */
+export async function markDone(rootId: string, _name: string): Promise<boolean> {
   try {
-    await call("set_archived", { runId: rootId, archived: true, brief });
+    await call("set_archived", { runId: rootId, archived: true });
   } catch (err) {
     toast(errorMessage(err), "err");
     return false;
   }
   const undo = () => void call("set_archived", { runId: rootId, archived: false }).catch((err) => toast(errorMessage(err), "err"));
-  toast(brief ? `Done. ${name} hears what was decided in their ongoing chat.` : "Done", "ok", { label: "Undo", run: undo });
+  toast("Done", "ok", { label: "Undo", run: undo });
   return true;
 }
 
@@ -155,7 +151,7 @@ export async function reopen(rootId: string) {
     toast(errorMessage(err), "err");
     return;
   }
-  const undo = () => void call("set_archived", { runId: rootId, archived: true, brief: false }).catch((err) => toast(errorMessage(err), "err"));
+  const undo = () => void call("set_archived", { runId: rootId, archived: true }).catch((err) => toast(errorMessage(err), "err"));
   toast("Reopened", "ok", { label: "Undo", run: undo });
 }
 
@@ -165,59 +161,23 @@ export async function sendAndDone(rootId: string, name: string, text: string, at
   toast(`Sent to ${name}. It comes back only if the answer needs you.`, "ok");
 }
 
-/** Done, with one choice: whether the employee's ongoing chat hears what the thread or task decided. Done is the
- *  archive: the thread leaves the Inbox and the employee's chips, and comes back if the employee raises something new. */
-export function DoneButton({ name, task, replies, disabled, onDone }: {
+/** Done is the archive: the thread leaves the Inbox and the employee's chips, and comes back if the employee raises something new. */
+export function DoneButton({ name, disabled, onDone }: {
   /** The employee's first name. */
   name: string;
   task: boolean;
-  /** How many replies the thread has: a report nobody replied to has nothing to brief. */
-  replies: number;
   /** The thread is still working, so it cannot be done yet. */
   disabled: boolean;
-  onDone: (brief: boolean) => Promise<void>;
+  onDone: () => Promise<void>;
 }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-  const [brief, setBrief] = useState(true);
   const [busy, setBusy] = useState(false);
   return (
-    <>
-      <button ref={ref} className="btn btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} disabled={disabled} title={disabled ? `${name} is still working on it` : "Done (E)"}>
-        <Icon name="check" size={13} /> Done <kbd className="kbd">E</kbd>
-      </button>
-      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} width={360}>
-        <div className="stack" style={{ gap: 12 }} data-esc-stop>
-          <div className="stack" style={{ gap: 3 }}>
-            <span className="h-md">Done with this {task ? "task" : "thread"}?</span>
-            <span className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-              {task
-                ? `It leaves your Inbox. You can still find it in ${name}'s Work tab.`
-                : `It moves to the Archive in your Inbox, and stays in ${name}'s Work tab.`}
-            </span>
-          </div>
-          {canBrief(task, replies) ? (
-            <div className="thread-brief-opt">
-              <Switch checked={brief} onChange={setBrief} label={`Brief ${name}'s ongoing chat`} />
-              <span className="stack" style={{ gap: 1 }}>
-                <span style={{ fontWeight: 500 }}>Brief {name}'s ongoing chat</span>
-                <span className="muted">What was said here, read at the start of their next turn there.</span>
-              </span>
-            </div>
-          ) : null}
-          <div className="row">
-            <span className="grow" />
-            <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Keep</button>
-            <button
-              className="btn btn-primary btn-sm" disabled={busy}
-              onClick={async () => { setBusy(true); try { await onDone(brief && canBrief(task, replies)); } finally { setBusy(false); setOpen(false); } }}
-            >
-              <Icon name="check" size={13} /> Mark done
-            </button>
-          </div>
-        </div>
-      </Popover>
-    </>
+    <button
+      className="btn btn-sm" disabled={disabled || busy} title={disabled ? `${name} is still working on it` : "Done (E)"}
+      onClick={async () => { setBusy(true); try { await onDone(); } finally { setBusy(false); } }}
+    >
+      <Icon name="check" size={13} /> Done <kbd className="kbd">E</kbd>
+    </button>
   );
 }
 

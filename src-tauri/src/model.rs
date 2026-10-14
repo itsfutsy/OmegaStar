@@ -1103,30 +1103,6 @@ pub struct Conversations {
     pub chats: Vec<ChatHead>,
 }
 
-/// What an employee's ongoing chat is told about a thread you archived. Written when you archive it,
-/// read by the next chat turn in that session, shown in the chat as a card.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Brief {
-    pub id: String,
-    pub employee_id: String,
-    pub root_run_id: String,
-    /// What the report was.
-    pub label: String,
-    pub replies: u32,
-    /// One line for the chat timeline: the last thing the employee said in the thread.
-    pub excerpt: String,
-    /// What the employee reads at the start of their next turn.
-    pub text: String,
-    pub created_at: Ts,
-    /// When a chat turn was launched with it.
-    #[serde(default)]
-    pub consumed_at: Option<Ts>,
-    /// The thread was a task's.
-    #[serde(default)]
-    pub task: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OwnSkill {

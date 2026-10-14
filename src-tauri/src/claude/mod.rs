@@ -178,8 +178,6 @@ pub struct Snapshot {
     pub tidy: Option<TidyBrief>,
     /// For follow-up runs, reply checks, nudges and give-ups: the person the request went to.
     pub replier: Option<String>,
-    /// For chat turns: what the threads you closed since the last turn decided, oldest first.
-    pub briefs: Vec<String>,
     /// For reply checks, nudges and give-ups: the request they are about.
     pub watched: Option<Watched>,
     pub settings: Value,

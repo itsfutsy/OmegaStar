@@ -11,7 +11,7 @@ import { AskRow } from "../components/ColleagueAsks";
 import { useShell } from "../Shell";
 import { Icon } from "../components/Icon";
 import { ErrorNote, PageColumn, Section, Skeleton } from "../components/ui";
-import { canBrief, markDone, reopen, sendAndDone } from "../components/conversation/ThreadView";
+import { markDone, reopen, sendAndDone } from "../components/conversation/ThreadView";
 import { toItem, useStatuses, type Item } from "../components/conversation/useStatuses";
 import { InboxItem, type ItemActions } from "./InboxItem";
 import "./Inbox.css";
@@ -81,9 +81,9 @@ export function InboxScreen() {
       return () => setOpenId(next);
     };
     return {
-      done: async (brief) => {
+      done: async () => {
         const go = leaving();
-        if (await markDone(id, name, brief)) go();
+        if (await markDone(id, name)) go();
       },
       snooze: (until) => {
         const go = leaving();
@@ -118,7 +118,7 @@ export function InboxScreen() {
       e.preventDefault();
       const act = actionsFor(i);
       if (i.status.state === "done") act.reopen();
-      else if (i.status.state !== "working" && i.status.state !== "queued") void act.done(canBrief(i.thread.root.kind.type === "task", i.thread.replies.length));
+      else if (i.status.state !== "working" && i.status.state !== "queued") void act.done();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

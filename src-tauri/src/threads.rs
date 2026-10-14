@@ -11,8 +11,6 @@ use crate::claude::{clip, one_line};
 use crate::model::*;
 use std::collections::{HashMap, HashSet};
 
-/// Replies a brief quotes at most; older ones are summarised as a count.
-const BRIEF_TURNS: usize = 12;
 /// Turns a new task is told about from the conversation it started in.
 const CONTEXT_TURNS: usize = 8;
 /// A task's name, cut from your first message.
@@ -248,7 +246,7 @@ pub fn report_label(kind: &RunKind) -> String {
     }
 }
 
-/// One turn of a conversation as a brief or a task's context quotes it: what you said, then the
+/// One turn of a conversation as a task's context quotes it: what you said, then the
 /// employee's answer, or `pending` while it is still coming.
 fn exchange(ceo: &str, r: &Run, pending: &str) -> String {
     let mut text = String::new();
@@ -261,43 +259,6 @@ fn exchange(ceo: &str, r: &Run, pending: &str) -> String {
         None => text += &format!("- You: ({pending})\n"),
     }
     text
-}
-
-/// What an employee's ongoing chat is told when you archive a thread you replied in, or a task: the
-/// exchange, oldest first, each turn clipped. Returns (text for the employee, one-line excerpt for the UI).
-pub fn brief(ceo: &str, label: &str, root: &Run, replies: &[Run]) -> (String, String) {
-    let n = replies.len();
-    let pending = "still working on it when it was closed";
-    let mut text = if matches!(root.kind, RunKind::Task { .. }) {
-        let mut t = format!("{ceo} closed your task \"{label}\". What was said, oldest first:\n\n");
-        t += &exchange(ceo, root, pending);
-        t
-    } else {
-        let mut t = format!(
-            "{ceo} closed the thread on your report \"{label}\" ({n} {}). What was said, oldest first:\n\n",
-            if n == 1 { "reply" } else { "replies" }
-        );
-        if let Some(s) = root.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            t += &format!("- Your report: {}\n", clip(&one_line(s), 400));
-        }
-        t
-    };
-    let skipped = n.saturating_sub(BRIEF_TURNS);
-    if skipped > 0 {
-        text += &format!("- ({skipped} earlier {} omitted)\n", if skipped == 1 { "reply" } else { "replies" });
-    }
-    for r in replies.iter().skip(skipped) {
-        text += &exchange(ceo, r, pending);
-    }
-    text += "\nTreat this as settled. Mention it only where it bears on what they say next.";
-    let excerpt = replies
-        .iter()
-        .rev()
-        .find_map(|r| r.summary.as_deref().filter(|s| !s.trim().is_empty()))
-        .or(root.summary.as_deref())
-        .map(|s| clip(&one_line(&first_line(s)), 160))
-        .unwrap_or_default();
-    (text, excerpt)
 }
 
 /// The first line of a report with markdown marks stripped, so an excerpt reads as plain text.

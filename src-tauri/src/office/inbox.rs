@@ -97,13 +97,6 @@ impl Office {
         Self::thread_in(&self.db(), run_id)
     }
 
-    /// The briefs left for the employee's current chat conversation, oldest first.
-    pub fn chat_briefs(&self, employee_id: &str) -> Result<Vec<Brief>> {
-        let db = self.db();
-        let e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
-        db.briefs(&e.id, &e.chat_session, false)
-    }
-
     /// A reply that lands on an archived thread brings it back to the Inbox only when it needs you:
     /// "Send & archive" meant you did not want the answer back, unless the answer raises something.
     pub(super) fn surface_thread(&self, reply: &Run) -> Result<()> {
@@ -130,17 +123,15 @@ impl Office {
     }
 
     /// Archives a report with its thread and the rest of its Inbox row (they leave the Inbox and the
-    /// employee's chips), or moves them all back. Archiving a thread you replied in, or a task, leaves a brief
-    /// for its employee's ongoing chat, unless `brief` is `Some(false)`. `run_id` may be any run in the row.
-    pub fn set_archived(&self, run_id: &str, archived: bool, brief: Option<bool>) -> Result<Run> {
-        let (root, changed, briefed) = {
+    /// employee's chips), or moves them all back. `run_id` may be any run in the row.
+    pub fn set_archived(&self, run_id: &str, archived: bool) -> Result<Run> {
+        let (root, changed) = {
             let db = self.db();
             let t = Self::thread_in(&db, run_id)?;
             if !t.root.state.is_finished() {
                 return Err(AppError::conflict("it is still working, so it cannot be archived yet"));
             }
-            let ceo = ceo_of(&db)?;
-            let (mut changed, mut briefed) = (vec![], false);
+            let mut changed = vec![];
             for m in Self::row_of(&db, &t.root)? {
                 // A run still going joins the row when it finishes, and shows only if it needs you.
                 let mut root = m.root;
@@ -149,41 +140,13 @@ impl Office {
                 }
                 root.archived_at = archived.then(now);
                 db.save_run(&root)?;
-                if !archived {
-                    // Back in the Inbox: a brief no turn has read would tell the chat the thread was closed.
-                    db.drop_unread_briefs(&root.id)?;
-                }
-                let task = matches!(root.kind, RunKind::Task { .. });
-                if archived && (task || !m.replies.is_empty()) && brief.unwrap_or(true) {
-                    if let Some(e) = db.employee(&root.employee_id)? {
-                        let label = threads::report_label(&root.kind);
-                        let (text, excerpt) = threads::brief(&ceo, &label, &root, &m.replies);
-                        let b = Brief {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            employee_id: e.id.clone(),
-                            root_run_id: root.id.clone(),
-                            label,
-                            replies: m.replies.len() as u32,
-                            excerpt,
-                            text,
-                            created_at: now(),
-                            consumed_at: None,
-                            task,
-                        };
-                        db.insert_brief(&b, &e.chat_session)?;
-                        briefed = true;
-                    }
-                }
                 changed.push(root);
             }
             let root = db.run(&t.root.id)?.map(|r| r.run).unwrap_or(t.root);
-            (root, changed, briefed)
+            (root, changed)
         };
         for r in &changed {
             self.sink().run_updated(r);
-        }
-        if briefed {
-            self.sink().org_changed();
         }
         Ok(root)
     }
@@ -310,5 +273,107 @@ pub(super) fn run_of(db: &Store, id: &str) -> Option<Run> {
             log!("reading run {id}: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoSink;
+    impl EventSink for NoSink {
+        fn org_changed(&self) {}
+        fn run_updated(&self, _run: &Run) {}
+        fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
+        fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    /// Every row of every table, each column as text, with `archivedAt` left out of run data.
+    fn every_row(path: &Path) -> Vec<(String, Vec<String>)> {
+        let c = rusqlite::Connection::open(path).unwrap();
+        let mut st = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap();
+        let tables: Vec<String> = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        let mut out = vec![];
+        for t in tables {
+            let mut st = c.prepare(&format!("SELECT * FROM {t} ORDER BY rowid")).unwrap();
+            let names: Vec<String> = st.column_names().into_iter().map(String::from).collect();
+            let rows = st
+                .query_map([], |r| {
+                    let mut cols = vec![];
+                    for (i, name) in names.iter().enumerate() {
+                        let v: rusqlite::types::Value = r.get(i)?;
+                        cols.push(match v {
+                            rusqlite::types::Value::Text(s) if t == "runs" && name == "data" => {
+                                let mut j: Value = serde_json::from_str(&s).unwrap();
+                                j.as_object_mut().unwrap().remove("archivedAt");
+                                j.to_string()
+                            }
+                            v => format!("{v:?}"),
+                        });
+                    }
+                    Ok(cols)
+                })
+                .unwrap();
+            for row in rows {
+                out.push((t.clone(), row.unwrap()));
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn archiving_a_replied_thread_writes_only_archived_at() {
+        let dir = std::env::temp_dir().join(format!("omegastar-inbox-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("office.db");
+        fs::create_dir_all(&dir).unwrap();
+        let ada = Employee {
+            id: uuid::Uuid::new_v4().to_string(),
+            slug: "ada".into(),
+            name: "Ada".into(),
+            title: "Tester".into(),
+            description: String::new(),
+            objective: String::new(),
+            manager_id: None,
+            skills: SkillGrant { builtins: false, keys: vec![] },
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: None,
+            effort: None,
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![],
+            hue: 0,
+            chat_session: "chat-ada".into(),
+            hired_at: now(),
+        };
+        let mut report = Run::new(&ada.id, RunKind::Manual, "go".into(), now());
+        report.state = RunState::Succeeded;
+        report.ended_at = Some(now());
+        report.summary = Some("All good.".into());
+        report.replied_at = Some(now());
+        let mut reply = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false }, "Thanks.".into(), now());
+        reply.state = RunState::Succeeded;
+        reply.ended_at = Some(now());
+        reply.summary = Some("Noted.".into());
+        {
+            let db = Store::open(&path).unwrap();
+            db.save_employee(&ada).unwrap();
+            assert!(db.insert_run(&report, &report.id).unwrap());
+            assert!(db.insert_run(&reply, &report.id).unwrap());
+        }
+
+        let office = Office::open(dir.clone(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap();
+        let before = every_row(&path);
+        let archived = office.set_archived(&reply.id, true).unwrap();
+        assert_eq!(archived.id, report.id);
+        assert!(archived.archived_at.is_some());
+        assert_eq!(every_row(&path), before, "nothing but archivedAt changed");
+        let c = rusqlite::Connection::open(&path).unwrap();
+        let mut st = c.prepare("SELECT id FROM runs WHERE json_extract(data, '$.archivedAt') IS NOT NULL").unwrap();
+        let stamped: Vec<String> = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(stamped, vec![report.id.clone()]);
+
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

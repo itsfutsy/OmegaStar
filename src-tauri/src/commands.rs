@@ -221,13 +221,8 @@ pub async fn thread(office: O<'_>, run_id: String) -> Result<Thread> {
 }
 
 #[tauri::command]
-pub async fn chat_briefs(office: O<'_>, employee_id: String) -> Result<Vec<Brief>> {
-    office.chat_briefs(&employee_id)
-}
-
-#[tauri::command]
-pub async fn set_archived(office: O<'_>, run_id: String, archived: bool, brief: Option<bool>) -> Result<Run> {
-    office.set_archived(&run_id, archived, brief)
+pub async fn set_archived(office: O<'_>, run_id: String, archived: bool) -> Result<Run> {
+    office.set_archived(&run_id, archived)
 }
 
 #[tauri::command]
