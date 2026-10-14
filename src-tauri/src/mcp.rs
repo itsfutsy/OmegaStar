@@ -111,7 +111,7 @@ fn tools() -> Value {
         },
         {
             "name": "schedule",
-            "description": "Create a recurring schedule for yourself, or change one by id (only the fields you pass change). Omega Star starts a run with the instruction at every cron slot, whether or not any Claude session is open. Check schedules() first so you never create a duplicate.",
+            "description": "Create a recurring schedule for yourself, or change one by id (only the fields you pass change). Omega Star starts a run with the instruction at every cron slot, whether or not any Claude session is open. Check schedules() first so you never create a duplicate. If Omega Star was closed, asleep or waiting at a slot, the routine runs once as soon as it can.",
             "inputSchema": obj(json!({
                 "id": { "type": "string", "description": "Omit to create; pass to change an existing schedule." },
                 "label": { "type": "string", "description": "Short name, e.g. 'Inbox watch'." },
@@ -119,7 +119,8 @@ fn tools() -> Value {
                 "instruction": { "type": "string", "description": "What you do each time it fires. Keep it short; the how lives in your skills." },
                 "quiet": { "type": "boolean", "description": "true: a run's report reaches the person you work for only if the run calls notify or fails. Use for frequent watches. Default false: every report lands in their Inbox." },
                 "enabled": { "type": "boolean" },
-                "misfire": { "type": "string", "enum": ["catchUp", "skip"], "description": "When the app was closed at a slot: run once on start (catchUp, default) or skip it." }
+                "model": { "type": "string", "description": "Optional. The model this routine runs on, e.g. 'haiku' for a frequent, simple check. Leave it out to use your usual model; pass 'default' to go back to it." },
+                "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "default"], "description": "Optional. How hard this routine thinks: 'low' for a quick check, 'high' or more for research. 'default' goes back to your usual effort." }
             }), &[]),
         },
         {

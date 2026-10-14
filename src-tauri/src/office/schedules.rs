@@ -31,8 +31,10 @@ impl Office {
                 cron: d.cron.trim().to_string(),
                 instruction: d.instruction,
                 enabled: d.enabled,
-                misfire: d.misfire,
+                misfire: Misfire::CatchUp,
                 quiet: d.quiet,
+                model: d.model,
+                effort: d.effort,
                 next_fire: None,
             };
             // A new, re-timed or re-enabled schedule starts counting from now: it never fires for
@@ -72,16 +74,15 @@ impl Office {
                     continue;
                 }
                 let Ok(cron) = schedule::parse(&s.cron) else { continue };
-                match schedule::due_slot(&cron, s.misfire, last, now, &Local) {
+                match schedule::due_slot(&cron, last, now, &Local) {
                     Due::Nothing => {}
-                    Due::Missed(slot) => db.set_last_slot(&s.id, slot)?,
                     Due::Fire(slot) => {
                         db.set_last_slot(&s.id, slot)?;
                         if db.schedule_has_queued_run(&s.id)? || db.employee(&s.employee_id)?.is_none() {
                             continue;
                         }
                         let prompt = if s.instruction.trim().is_empty() { DEFAULT_PROMPT.to_string() } else { s.instruction.clone() };
-                        let kind = RunKind::Scheduled { schedule_id: s.id.clone(), slot, label: s.label.clone(), quiet: s.quiet };
+                        let kind = RunKind::Scheduled { schedule_id: s.id.clone(), slot, label: s.label.clone(), quiet: s.quiet, model: s.model.clone(), effort: s.effort };
                         let run = Run::new(&s.employee_id, kind, prompt, now);
                         if db.insert_run(&run, &run.id)? {
                             created.push(run);

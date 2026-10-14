@@ -12,7 +12,7 @@ pub use stream::*;
 
 use crate::model::*;
 use serde_json::{json, Value};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -74,15 +74,30 @@ pub fn locate(override_path: Option<&str>) -> Option<PathBuf> {
     found.or_else(|| fallback_locations().into_iter().find(|p| p.is_file()))
 }
 
-/// A child process with no console window and the login shell's PATH.
+/// A child process with no console window, the login shell's PATH and none of the inherited
+/// Anthropic credentials or provider settings, so a run always uses the signed-in account.
 pub(crate) fn command(program: &Path) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(program);
     if let Some(p) = child_path() {
         c.env("PATH", p);
     }
+    let names: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
+    for n in scrubbed_vars(names.iter().map(OsString::as_os_str)) {
+        c.env_remove(n);
+    }
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c
+}
+
+/// The inherited variables a child must not see: Anthropic keys, base URLs and tokens, and the
+/// switches to another provider. Network proxy variables and CLAUDE_CONFIG_DIR stay.
+fn scrubbed_vars<'a>(names: impl Iterator<Item = &'a OsStr>) -> Vec<OsString> {
+    const EXACT: [&str; 3] = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "AWS_BEARER_TOKEN_BEDROCK"];
+    names
+        .filter(|n| n.to_str().is_some_and(|n| n.starts_with("ANTHROPIC_") || n.starts_with("CLAUDE_CODE_USE_") || EXACT.contains(&n)))
+        .map(OsStr::to_os_string)
+        .collect()
 }
 
 async fn capture(program: &Path, args: &[&str]) -> Option<String> {
@@ -290,6 +305,24 @@ fn with_attachments(prompt: &str, dir: &Path, names: &[String]) -> String {
 /// `omega` MCP tools `schedule` and `notify` replace them.
 const SESSION_ONLY_TOOLS: [&str; 6] = ["CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "PushNotification"];
 
+/// `--model` and `--effort` for a run: the employee's own, unless its kind says otherwise.
+fn model_args(kind: &RunKind, e: &Employee) -> Vec<String> {
+    let (model, effort) = match kind {
+        // A reply check only looks and reports: the smallest model does it.
+        RunKind::ReplyCheck { .. } => (Some("haiku".to_string()), Some(Effort::Low)),
+        RunKind::Scheduled { model, effort, .. } => (model.clone().or_else(|| e.model.clone()), effort.or(e.effort)),
+        _ => (e.model.clone(), e.effort),
+    };
+    let mut args = vec![];
+    if let Some(m) = model {
+        args.extend(["--model".into(), m]);
+    }
+    if let Some(eff) = effort {
+        args.extend(["--effort".into(), eff.as_str().into()]);
+    }
+    args
+}
+
 pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     let e = &s.employee;
     let settings_path = s.run_dir.join("settings.json");
@@ -313,17 +346,7 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
         args.push("--chrome".into());
     }
     args.extend(["--disallowedTools".into(), SESSION_ONLY_TOOLS.join(",")]);
-    // A reply check only looks and reports: the smallest model does it.
-    let (model, effort) = match run.kind {
-        RunKind::ReplyCheck { .. } => (Some("haiku".to_string()), Some(Effort::Low)),
-        _ => (e.model.clone(), e.effort),
-    };
-    if let Some(m) = model {
-        args.extend(["--model".into(), m]);
-    }
-    if let Some(eff) = effort {
-        args.extend(["--effort".into(), eff.as_str().into()]);
-    }
+    args.extend(model_args(&run.kind, e));
     for w in e.workspaces.iter().filter(|w| !w.trim().is_empty()) {
         args.extend(["--add-dir".into(), w.clone()]);
     }
@@ -445,4 +468,54 @@ pub async fn probe_usage(program: &Path, cwd: &Path) -> Option<UsageSample> {
     }
     let _ = child.wait().await;
     parse_usage_output(&out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_schedule_can_run_on_its_own_model_and_effort() {
+        let e = Employee {
+            id: "e1".into(),
+            slug: "ada".into(),
+            name: "Ada".into(),
+            title: "Tester".into(),
+            description: String::new(),
+            objective: String::new(),
+            manager_id: None,
+            skills: SkillGrant::default(),
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: Some("opus".into()),
+            effort: Some(Effort::High),
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![],
+            hue: 0,
+            chat_session: "chat-ada".into(),
+            hired_at: chrono::Utc::now(),
+        };
+        let scheduled = |model: Option<&str>, effort| RunKind::Scheduled {
+            schedule_id: "s1".into(),
+            slot: chrono::Utc::now(),
+            label: "Inbox watch".into(),
+            quiet: true,
+            model: model.map(String::from),
+            effort,
+        };
+        assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
+        assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);
+        assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false }, &e), ["--model", "opus", "--effort", "high"]);
+    }
+
+    #[test]
+    fn runs_lose_inherited_anthropic_settings_but_keep_the_network() {
+        let names = [
+            "PATH", "HOME", "CLAUDE_CONFIG_DIR", "SHELL", "HTTPS_PROXY", "no_proxy",
+            "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
+        ];
+        let scrubbed = scrubbed_vars(names.iter().map(OsStr::new));
+        assert_eq!(scrubbed, ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"]);
+    }
 }

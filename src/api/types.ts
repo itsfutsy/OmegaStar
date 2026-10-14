@@ -118,11 +118,11 @@ export type SkillSources = {
   error: string | null;       // the first I/O error, with its path
 };
 
-export type Misfire = "catchUp" | "skip";
 export type Schedule = {
   id: string; employeeId: string; label: string; cron: string; instruction: string;
-  enabled: boolean; misfire: Misfire;
+  enabled: boolean;
   quiet: boolean;            // reports reach the Inbox only when the run calls notify or fails
+  model: string | null; effort: Effort | null;   // null: the employee's own
   nextFire: string | null;
 };
 export type ScheduleDraft = Omit<Schedule, "id" | "nextFire"> & { id?: string };
@@ -130,7 +130,7 @@ export type CronPreview = { ok: true; description: string; next: string[] } | { 
 
 export type RunKind =
   | { type: "manual" } | { type: "chat" }
-  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean }
+  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean; model?: string | null; effort?: Effort | null }
   | { type: "delegated"; parentRunId: string }
   | { type: "asked"; parentRunId: string; askedBy: string; task: boolean }   // a colleague's question or task; askedBy = their employee id
   | { type: "answered"; askedRunId: string; from: string; task: boolean }    // brings a colleague's answer to an asker whose run had ended

@@ -629,9 +629,10 @@ pub struct SkillSources {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Misfire {
+    #[default]
     CatchUp,
     Skip,
 }
@@ -646,10 +647,14 @@ pub struct ScheduleDraft {
     pub cron: String,
     pub instruction: String,
     pub enabled: bool,
-    pub misfire: Misfire,
     /// Quiet routines reach the Inbox only when the run calls `notify` or does not succeed.
     #[serde(default)]
     pub quiet: bool,
+    /// The model and effort the routine runs on; `None` = the employee's own.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<Effort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -661,9 +666,15 @@ pub struct Schedule {
     pub cron: String,
     pub instruction: String,
     pub enabled: bool,
+    /// Kept only so older builds, which require it, can read schedules this build saves. Always CatchUp; nothing reads it.
+    #[serde(default)]
     pub misfire: Misfire,
     #[serde(default)]
     pub quiet: bool,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<Effort>,
     /// Computed on read, never stored.
     #[serde(default)]
     pub next_fire: Option<Ts>,
@@ -687,6 +698,9 @@ impl Serialize for CronPreview {
     }
 }
 
+/// The schedule_id prefix of a due check's run (see `RunKind::check_id`).
+pub const CHECK_PREFIX: &str = "check:";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum RunKind {
@@ -699,6 +713,10 @@ pub enum RunKind {
         /// Copied from the schedule when the slot fires.
         #[serde(default)]
         quiet: bool,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<Effort>,
     },
     Delegated { parent_run_id: String },
     /// A colleague (any employee, not only a manager) asked this employee a question, or with
@@ -832,6 +850,14 @@ impl RunKind {
     /// everything else. The rest is background work, which an employee does one piece at a time.
     pub fn is_conversation(&self) -> bool {
         matches!(self, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. })
+    }
+
+    /// A due check runs as a Scheduled run whose schedule_id is check:<check id>; no schedules row has that id.
+    pub fn check_id(&self) -> Option<&str> {
+        match self {
+            RunKind::Scheduled { schedule_id, .. } => schedule_id.strip_prefix(CHECK_PREFIX),
+            _ => None,
+        }
     }
 }
 
@@ -1537,5 +1563,29 @@ mod tests {
     #[test]
     fn a_build_channel_is_lower_case() {
         assert_eq!(serde_json::to_value(BuildChannel::Dogfood).unwrap(), json!("dogfood"));
+    }
+
+    fn schedule_json(misfire: Option<&str>) -> String {
+        let misfire = misfire.map(|m| format!(r#","misfire":"{m}""#)).unwrap_or_default();
+        format!(r#"{{"id":"s1","employeeId":"e1","label":"Sweep","cron":"0 9 * * *","instruction":"Look","enabled":true{misfire}}}"#)
+    }
+
+    #[test]
+    fn schedules_read_old_misfire_values_and_save_catch_up() {
+        let skip: Schedule = serde_json::from_str(&schedule_json(Some("skip"))).unwrap();
+        assert_eq!(skip.misfire, Misfire::Skip);
+        let none: Schedule = serde_json::from_str(&schedule_json(None)).unwrap();
+        assert_eq!(none.misfire, Misfire::CatchUp);
+        assert_eq!((none.model, none.effort), (None, None));
+        let saved = serde_json::to_string(&Schedule { misfire: Misfire::CatchUp, ..skip }).unwrap();
+        assert!(saved.contains(r#""misfire":"catchUp""#), "{saved}");
+    }
+
+    #[test]
+    fn check_id_reads_only_check_runs() {
+        let scheduled = |id: &str| RunKind::Scheduled { schedule_id: id.into(), slot: Utc::now(), label: "x".into(), quiet: true, model: None, effort: None };
+        assert_eq!(scheduled("check:abc").check_id(), Some("abc"));
+        assert_eq!(scheduled("6f1c0e2a").check_id(), None);
+        assert_eq!(RunKind::Chat.check_id(), None);
     }
 }

@@ -59,22 +59,34 @@ impl ScanReport {
 
 /// Catalog in display order: user, synced, plugins; each sorted by name.
 pub fn scan(config: &Path) -> Vec<SkillInfo> {
-    scan_with_report(config).0
+    scan_with_report(config, &claude_json_path()).0
 }
 
-fn scan_with_report(config: &Path) -> (Vec<SkillInfo>, ScanReport) {
+fn scan_with_report(config: &Path, claude_json: &Path) -> (Vec<SkillInfo>, ScanReport) {
     let mut r = ScanReport::default();
     let root = config.join("skills");
     let mut out = user_skills(&root, &mut r);
     let user_names: HashSet<String> = out.iter().map(|s| s.name.clone()).collect();
-    out.extend(synced_skills(&root.join("synced"), &mut r).into_iter().filter(|s| !user_names.contains(&s.name)));
+    if let Some(bucket) = active_bucket(claude_json) {
+        out.extend(synced_skills(&root.join("synced").join(bucket), &mut r).into_iter().filter(|s| !user_names.contains(&s.name)));
+    }
     out.extend(plugins(&config.join("plugins").join("installed_plugins.json"), &mut r));
     (out, r)
 }
 
+/// The synced-skills folder of the signed-in organisation and account, named
+/// `<organization uuid>_<account uuid or "unbound">` in lower case. Other folders belong to
+/// organisations the account is not using now, whose skills would not load. `None` when signed out.
+fn active_bucket(claude_json: &Path) -> Option<String> {
+    let v: Value = serde_json::from_str(&fs::read_to_string(claude_json).ok()?).ok()?;
+    let account = v.get("oauthAccount")?;
+    let uuid = |k: &str| account.get(k).and_then(|u| u.as_str()).map(|u| u.trim().to_lowercase()).filter(|u| !u.is_empty());
+    Some(format!("{}_{}", uuid("organizationUuid")?, uuid("accountUuid").unwrap_or_else(|| "unbound".into())))
+}
+
 /// Where the catalog comes from and how the last scan went.
 pub fn sources(config: &Path) -> SkillSources {
-    let (catalog, r) = scan_with_report(config);
+    let (catalog, r) = scan_with_report(config, &claude_json_path());
     SkillSources {
         config_dir: config.to_string_lossy().into_owned(),
         skills_dir: config.join("skills").to_string_lossy().into_owned(),
@@ -159,25 +171,22 @@ fn user_skills(root: &Path, r: &mut ScanReport) -> Vec<SkillInfo> {
         .collect()
 }
 
-fn synced_skills(root: &Path, r: &mut ScanReport) -> Vec<SkillInfo> {
+/// The skills in one synced bucket folder.
+fn synced_skills(bucket: &Path, r: &mut ScanReport) -> Vec<SkillInfo> {
+    let manifest: BTreeMap<String, String> = r
+        .read_optional(&bucket.join("manifest.json"))
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("skills").and_then(|s| s.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| Some((s.get("name")?.as_str()?.to_string(), s.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string())))
+        .collect();
     let mut by_name: BTreeMap<String, String> = BTreeMap::new();
-    for bucket in subdirs(root, false, r) {
-        let manifest: BTreeMap<String, String> = r
-            .read_optional(&bucket.join("manifest.json"))
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .and_then(|v| v.get("skills").and_then(|s| s.as_array()).cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|s| {
-                Some((s.get("name")?.as_str()?.to_string(), s.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string()))
-            })
-            .collect();
-        for d in subdirs(&bucket, false, r) {
-            if let Some((_, desc)) = read_skill_reported(&d, r) {
-                let name = dir_name(&d);
-                let desc = manifest.get(&name).filter(|m| !m.is_empty()).cloned().unwrap_or(desc);
-                by_name.entry(name).or_insert(desc);
-            }
+    for d in subdirs(bucket, false, r) {
+        if let Some((_, desc)) = read_skill_reported(&d, r) {
+            let name = dir_name(&d);
+            let desc = manifest.get(&name).filter(|m| !m.is_empty()).cloned().unwrap_or(desc);
+            by_name.insert(name, desc);
         }
     }
     by_name
@@ -234,15 +243,17 @@ fn plugins(manifest: &Path, r: &mut ScanReport) -> Vec<SkillInfo> {
 
 /// The folder a user or synced catalog skill is read from. Plugin skills belong to their plugin.
 pub fn source_dir(config: &Path, s: &SkillInfo) -> Option<PathBuf> {
+    source_dir_with(config, &claude_json_path(), s)
+}
+
+fn source_dir_with(config: &Path, claude_json: &Path, s: &SkillInfo) -> Option<PathBuf> {
     let root = config.join("skills");
-    match s.source {
-        SkillSource::User => Some(root.join(&s.name)).filter(|d| d.join("SKILL.md").is_file()),
-        SkillSource::Synced => {
-            let mut r = ScanReport::default();
-            subdirs(&root.join("synced"), false, &mut r).into_iter().map(|b| b.join(&s.name)).find(|d| d.join("SKILL.md").is_file())
-        }
-        SkillSource::Plugin => None,
-    }
+    let dir = match s.source {
+        SkillSource::User => root.join(&s.name),
+        SkillSource::Synced => root.join("synced").join(active_bucket(claude_json)?).join(&s.name),
+        SkillSource::Plugin => return None,
+    };
+    Some(dir).filter(|d| d.join("SKILL.md").is_file())
 }
 
 /// Minimal YAML frontmatter reader: top-level `key: value` pairs, with quoted, plain multi-line
@@ -308,6 +319,9 @@ fn unquote_double(s: &str) -> String {
     out
 }
 
+/// The context size at which Claude Code compacts a long session on its own.
+const AUTO_COMPACT_WINDOW: u64 = 200_000;
+
 /// The per-run `settings.json`: exactly the granted catalog skills stay visible. `own` are the
 /// employee's project skills, which must never be switched off even if a catalog skill shares a name.
 pub fn render_settings(grant: &SkillGrant, catalog: &[SkillInfo], own: &HashSet<String>, allow_rules: &[String]) -> Value {
@@ -331,9 +345,49 @@ pub fn render_settings(grant: &SkillGrant, catalog: &[SkillInfo], own: &HashSet<
     let mut allow: Vec<Value> = allow_rules.iter().map(|r| json!(r)).collect();
     allow.push(json!("mcp__omega__*"));
     json!({
+        "autoCompactWindow": AUTO_COMPACT_WINDOW,
         "disableBundledSkills": !grant.builtins,
         "skillOverrides": overrides,
         "enabledPlugins": plugins,
         "permissions": { "allow": allow },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn skill(dir: &Path, name: &str) {
+        fs::create_dir_all(dir.join(name)).unwrap();
+        fs::write(dir.join(name).join("SKILL.md"), format!("---\nname: {name}\ndescription: Does {name}.\n---\n")).unwrap();
+    }
+
+    #[test]
+    fn synced_skills_come_from_the_signed_in_bucket_only() {
+        let dir = std::env::temp_dir().join(format!("omegastar-catalog-{}", uuid::Uuid::new_v4()));
+        let config = dir.join("config");
+        let synced = config.join("skills").join("synced");
+        skill(&synced.join("a_x"), "old-org-skill");
+        skill(&synced.join("b_y"), "current-skill");
+        let claude_json = dir.join(".claude.json");
+        let names = |claude_json: &Path| scan_with_report(&config, claude_json).0.into_iter().map(|s| s.name).collect::<Vec<_>>();
+
+        fs::write(&claude_json, r#"{"oauthAccount":{"organizationUuid":"B","accountUuid":"Y"}}"#).unwrap();
+        assert_eq!(names(&claude_json), ["current-skill"]);
+        let found = SkillInfo { id: "synced:current-skill".into(), name: "current-skill".into(), description: String::new(), source: SkillSource::Synced, skills: None };
+        assert_eq!(source_dir_with(&config, &claude_json, &found), Some(synced.join("b_y").join("current-skill")));
+        let other = SkillInfo { name: "old-org-skill".into(), ..found };
+        assert_eq!(source_dir_with(&config, &claude_json, &other), None);
+
+        fs::write(&claude_json, r#"{"numStartups":3}"#).unwrap();
+        assert!(names(&claude_json).is_empty(), "signed out: no synced skills");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_set_the_auto_compact_window() {
+        let s = render_settings(&SkillGrant::default(), &[], &HashSet::new(), &[]);
+        assert_eq!(s["autoCompactWindow"], 200_000);
+    }
 }
