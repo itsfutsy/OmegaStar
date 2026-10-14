@@ -63,12 +63,7 @@ impl Office {
         }
         let rows = threads::file(&starts, db.conversation_runs()?, |id| run_of(db, id), &top);
         let cache = std::cell::RefCell::new(HashMap::new());
-        let rows = threads::merge_rows(rows, |row| {
-            let lead = row.members.first().map(|(t, _)| &t.root);
-            threads::chore_key(row)
-                .or_else(|| lead.and_then(threads::review_week))
-                .or_else(|| lead.and_then(|r| Self::streak_of(db, &cache, r)))
-        });
+        let rows = threads::merge_rows(rows, |row| Self::row_key(db, &cache, row));
         let mut out: Vec<Thread> = rows.into_iter().filter_map(|r| threads::present(r, archive)).collect();
         if archive {
             out.sort_by_key(|t| std::cmp::Reverse(threads::row_archived_at(t)));
@@ -76,6 +71,15 @@ impl Office {
             out.sort_by_key(|t| std::cmp::Reverse(threads::activity_at(&t.root, &t.replies)));
         }
         Ok(out)
+    }
+
+    /// What a row belongs to, so rows with the same key become one: a chore waiting on you first, then a
+    /// week's reviews, then a schedule's run of failures.
+    fn row_key(db: &Store, cache: &std::cell::RefCell<HashMap<String, Vec<Ts>>>, row: &threads::Row) -> Option<String> {
+        let lead = row.members.first().map(|(t, _)| &t.root);
+        threads::chore_key(row)
+            .or_else(|| lead.and_then(threads::review_week))
+            .or_else(|| lead.and_then(|r| Self::streak_of(db, cache, r)))
     }
 
     /// Every thread in the row `root` (a thread's root) is filed under, oldest first: its hand-off, for a
@@ -97,11 +101,10 @@ impl Office {
                 starts.extend(db.failures_of_schedule(schedule_id)?.into_iter().filter(same));
             }
         }
-        let rows = threads::merge_rows(threads::file(&starts, conversation, lookup, &top), |row| {
-            let lead = row.members.first().map(|(t, _)| &t.root);
-            lead.and_then(threads::review_week).or_else(|| lead.and_then(|r| Self::streak_of(db, &cache, r)))
-        });
-        Ok(rows.into_iter().next().map(|r| r.members.into_iter().map(|(t, _)| t).collect()).unwrap_or_default())
+        // Keyed as the Inbox keys them, so a review held in a chore's row neither joins the week nor brings it along.
+        let rows = threads::merge_rows(threads::file(&starts, conversation, lookup, &top), |row| Self::row_key(db, &cache, row));
+        let at = rows.iter().position(|r| r.members.iter().any(|(t, _)| t.root.id == root.id)).unwrap_or(0);
+        Ok(rows.into_iter().nth(at).map(|r| r.members.into_iter().map(|(t, _)| t).collect()).unwrap_or_default())
     }
 
     /// The thread a run belongs to: the report or task (root) and every reply on it, oldest first.
@@ -513,13 +516,22 @@ mod tests {
         let b = review(&bo, this_week, RunState::Succeeded);
         let c = review(&cy, this_week, RunState::Failed);
         let later = review(&ada, next_week, RunState::Succeeded);
+        // A review waiting on a chore sits in the chore's row, as the Inbox files it.
+        let dee = hire("dee", None);
+        let mut d = review(&dee, "2026-10-08T12:00:00Z".parse::<Ts>().unwrap(), RunState::Succeeded);
+        d.needs_you = vec!["Open Chrome.".into()];
+        d.card = Some(Card { message: "Open Chrome.".into(), ask: CardAsk::Chore { subject: "chrome".into() }, answer: None });
+        db.save_run(&d).unwrap();
 
         let ids = |t: &Thread| -> HashSet<String> { std::iter::once(t).chain(&t.related).map(|x| x.root.id.clone()).collect() };
         let week: HashSet<String> = [&a, &b, &c].iter().map(|r| r.id.clone()).collect();
         let rows = Office::rows(&db, false).unwrap();
-        assert_eq!(rows.len(), 2, "the second week is a row of its own");
+        assert_eq!(rows.len(), 3, "the second week is a row of its own");
         assert_eq!(ids(&rows[0]), HashSet::from([later.id.clone()]));
-        assert_eq!(ids(&rows[1]), week, "the failed review is in the team's row, not a streak");
+        assert_eq!(ids(&rows[1]), HashSet::from([d.id.clone()]));
+        assert_eq!(ids(&rows[2]), week, "the failed review is in the team's row, not a streak");
+        let chored = Office::row_of(&db, &d).unwrap();
+        assert_eq!(chored.iter().map(|t| t.root.id.clone()).collect::<Vec<_>>(), vec![d.id.clone()], "answering the chore leaves the week alone");
 
         let row = Office::row_of(&db, &b).unwrap();
         assert_eq!(row.iter().map(|t| t.root.id.clone()).collect::<HashSet<_>>(), week, "a second-level employee's review leads to the whole week");
@@ -529,7 +541,7 @@ mod tests {
             db.save_run(&r).unwrap();
         }
         let rows = Office::rows(&db, false).unwrap();
-        assert_eq!(rows.iter().map(ids).collect::<Vec<_>>(), vec![HashSet::from([later.id.clone()])]);
+        assert_eq!(rows.iter().map(ids).collect::<Vec<_>>(), vec![HashSet::from([later.id.clone()]), HashSet::from([d.id.clone()])]);
         let archived = Office::rows(&db, true).unwrap();
         assert_eq!(archived.iter().map(ids).collect::<Vec<_>>(), vec![week]);
         drop(db);

@@ -48,10 +48,11 @@ export function isStreak(t: Thread): boolean {
     && t.related.every((x) => x.root.kind.type === "scheduled" && x.root.kind.scheduleId === k.scheduleId && didNotFinish(x.root));
 }
 
-/** An Inbox row that is a week of weekly reviews, everyone's in one row. */
+/** An Inbox row that is a week of weekly reviews, everyone's in one row. A review waiting on a chore is filed
+ *  in the chore's row instead. */
 export function isTeamWeek(t: Thread): boolean {
   const k = t.root.kind;
-  return k.type === "scheduled" && !!k.review;
+  return k.type === "scheduled" && !!k.review && !choreOpen(t);
 }
 
 /** The run in a thread whose card waits on your answer, newest first. */
@@ -62,9 +63,12 @@ export function openCard(t: Thread): Run | undefined {
 /** Some thread in an Inbox row has a card waiting on you, so the row cannot be marked done yet. */
 export const rowCardOpen = (t: Thread): boolean => rowThreads(t).some((x) => !!openCard(x));
 
+/** Some run in an Inbox row has a chore waiting on you. */
+const choreOpen = (t: Thread): boolean =>
+  rowThreads(t).some((x) => [x.root, ...x.replies].some((r) => r.card?.ask.type === "chore" && !r.card.answer));
+
 /** An Inbox row that is everyone waiting on the same chore. */
-export const isChoreRow = (t: Thread): boolean =>
-  t.related.length > 0 && rowThreads(t).some((x) => [x.root, ...x.replies].some((r) => r.card?.ask.type === "chore" && !r.card.answer));
+export const isChoreRow = (t: Thread): boolean => t.related.length > 0 && choreOpen(t);
 
 /** The conversation route's `focus` segment that selects a thread: `#/chat/<employee>/thread~<root run id>`. */
 export const threadFocus = (rootId: string): string => `thread~${rootId}`;

@@ -126,7 +126,7 @@ the person you work for can settle it, put it to them on a card (`notify`).
 ## Tidy runs
 
 Every so often Omega Star measures your skills and notes (sizes, broken pointers, unfinished notes,
-diaries that repeat, checks that came due) and starts a tidy run when something needs it. The person you
+diaries that repeat) and starts a tidy run when something needs it. A check that comes due starts a run of its own. The person you
 work for can also ask for one. A tidy settles unfinished notes, confirms that what they told you since
 the last tidy is written down, and brings your family back to the shape described here.
 

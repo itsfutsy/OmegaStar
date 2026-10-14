@@ -23,13 +23,12 @@ pub fn handbook(s: &Snapshot) -> String {
         "You report to {reports_to}. This file is your handbook. Omega Star keeps it up to date as the company changes. \
 What happened lately, and what is waiting, comes in a note at the top of your first message in each run.\n\n"
     );
-    if !e.objective.trim().is_empty() {
-        h += &format!("**Objective.** {}\n\n", e.objective.trim());
-    }
     if !e.description.trim().is_empty() {
         h += &format!("{}\n\n", e.description.trim());
     }
-
+    if !e.objective.trim().is_empty() {
+        h += &format!("**Objective.** {}\n\n", e.objective.trim());
+    }
     let owns = if s.owns.trim().is_empty() {
         "Not set yet. Propose it in your weekly review, in `what-you-own.md` in this folder.".to_string()
     } else {
@@ -229,7 +228,8 @@ their Inbox, may change it, and approve or decline it. Their decision comes back
     }
 
     let rest = match s.manager.as_ref().filter(|_| s.manager_is_agent) {
-        Some((m, _)) => format!("{m}, who sees it at the start of their next run. It reaches {ceo} only if you call `notify` or the run fails."),
+        Some((m, _)) => format!("{m}, who sees it at the start of their next run. It reaches {ceo} only if you call `notify` or the run fails. \
+Your weekly review is the exception: it goes to {ceo}'s Inbox."),
         None => format!("{ceo}'s Inbox. A quiet schedule's report reaches them only if you call `notify` or the run fails."),
     };
     h += &format!(
@@ -908,6 +908,9 @@ mod tests {
         let mut s = snap();
         s.owns = "The monthly close, on time.".into();
         assert!(handbook(&s).contains("## What you own\n\nThe monthly close, on time.\n\nOnly a conversation with Pat changes this."));
+        s.employee.objective = "Close the books.".into();
+        s.employee.description = "Keeps the ledgers.".into();
+        assert!(handbook(&s).contains("**Objective.** Close the books.\n\n## What you own\n\n"), "What you own follows the Objective");
     }
 
     #[test]
@@ -919,6 +922,7 @@ mod tests {
         let h = handbook(&s);
         assert!(!h.contains("## Hiring"), "{h}");
         assert!(h.contains("goes to Mo, who sees it at the start of their next run. It reaches Pat only if"), "{h}");
+        assert!(h.contains("Your weekly review is the exception: it goes to Pat's Inbox."), "{h}");
     }
 
     #[test]
