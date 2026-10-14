@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn a_schedules_failures_still_merge() {
         let failed = |schedule: &str| {
-            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: chrono::Utc::now(), label: "Sweep".into(), quiet: true, model: None, effort: None };
+            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: chrono::Utc::now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
             let mut r = Run::new("e1", kind, "go".into(), chrono::Utc::now());
             r.state = RunState::Failed;
             r

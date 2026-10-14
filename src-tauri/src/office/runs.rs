@@ -1119,7 +1119,7 @@ mod tests {
         let card = |r: &mut Run, ask: CardAsk| r.card = Some(Card { message: "Post these?".into(), ask, answer: None });
         let scheduled = |schedule: &str, ago: i64, ask: CardAsk, replied: bool| {
             let at = now() - chrono::Duration::minutes(ago);
-            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: at, label: "Drafts".into(), quiet: true, model: None, effort: None };
+            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: at, label: "Drafts".into(), quiet: true, model: None, effort: None, review: false };
             let mut r = Run::new(&e.id, kind, "go".into(), at);
             r.state = RunState::Succeeded;
             r.ended_at = Some(at);
