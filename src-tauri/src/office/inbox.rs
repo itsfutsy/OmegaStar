@@ -173,18 +173,18 @@ impl Office {
     /// run that resumes the thread's session, so the employee answers with everything it saw. The reply
     /// joins the thread and the report stays in the Inbox, unless `archive`: "send, and bring the answer
     /// back only if it needs me".
-    /// A reply you type answers the thread's open cards too, so their buttons go and the row can be archived.
+    /// A reply you type answers the thread's open cards too, once it has gone, so their buttons go and the row
+    /// can be archived.
     pub fn reply_to_run(&self, run_id: &str, text: &str, archive: bool, attachments: Vec<NewAttachment>) -> Result<Run> {
-        if !text.trim().is_empty() || !attachments.is_empty() {
-            let typed = {
-                let db = self.db();
-                db.tx(|| answer_typed(&db, run_id, text, now()))?
-            };
-            for r in &typed {
-                self.sink().run_updated(r);
-            }
+        let reply = self.reply_with(run_id, text, archive, vec![], attachments, ReplyBy::Ceo)?;
+        let typed = {
+            let db = self.db();
+            db.tx(|| answer_typed(&db, run_id, text, now()))?
+        };
+        for r in &typed {
+            self.sink().run_updated(r);
         }
-        self.reply_with(run_id, text, archive, vec![], attachments, ReplyBy::Ceo)
+        Ok(reply)
     }
 
     /// Your answer on a card. It goes to the run as a fixed message through `reply_with` and archives its row;
@@ -208,23 +208,44 @@ impl Office {
             if let (CardAsk::Chore { subject }, CardReply::Done) = (&card.ask, &reply) {
                 targets.extend(db.open_chore_runs(subject)?.into_iter().filter(|r| r.id != run_id));
             }
-            db.tx(|| {
-                for t in &mut targets {
-                    if let Some(c) = t.card.as_mut() {
-                        c.answer = Some(CardAnswer { at, how, text: text.clone().unwrap_or_default() });
-                    }
-                    db.save_run(t)?;
-                }
-                Ok(())
-            })?;
+            let answer = CardAnswer { at, how, text: text.clone().unwrap_or_default() };
+            db.tx(|| answer_cards(&db, &mut targets, &answer))?;
             (card.ask, text, targets)
         };
+        let mut replies = self.send_card_answers(&targets, &ask, text.as_deref());
+        if let (CardAsk::Chore { subject }, Some(text)) = (&ask, &text) {
+            let is_chore = |c: &Card| c.is_open() && matches!(&c.ask, CardAsk::Chore { subject: s } if s == subject);
+            let answer = CardAnswer { at, how: AnswerHow::Tapped, text: text.clone() };
+            // Runs still working on the same chore hear it now, in the turn they are in. Told and marked under one
+            // lock, so a run ending meanwhile either keeps the answer or is found by the read below.
+            for a in lock(&self.0.active).values_mut() {
+                let Some(c) = a.card.as_mut().filter(|c| is_chore(c)) else { continue };
+                if a.input.as_ref().is_some_and(|i| i.send(claude::user_line(text)).is_ok()) {
+                    c.answer = Some(answer.clone());
+                }
+            }
+            // A run that finished while the answers above went out was in neither pass.
+            let late = {
+                let db = self.db();
+                db.open_chore_runs(subject).and_then(|mut late| db.tx(|| answer_cards(&db, &mut late, &answer)).map(|_| late))
+            };
+            match late {
+                Ok(late) => replies.extend(self.send_card_answers(&late, &ask, Some(text))),
+                Err(e) => log!("answering the runs that finished waiting on the chore failed: {e}"),
+            }
+        }
+        Ok(replies)
+    }
+
+    /// Sends each answered card's `text` to its run and archives its row, carrying on past a run that fails.
+    /// Returns the reply runs it started.
+    fn send_card_answers(&self, targets: &[Run], ask: &CardAsk, text: Option<&str>) -> Vec<Run> {
         let mut replies = vec![];
-        for t in &targets {
+        for t in targets {
             self.sink().run_updated(t);
-            if let Some(text) = &text {
-                let sent = match (&ask, &t.card) {
-                    (CardAsk::Chore { .. }, _) | (_, None) => text.clone(),
+            if let Some(text) = text {
+                let sent = match (ask, &t.card) {
+                    (CardAsk::Chore { .. }, _) | (_, None) => text.to_string(),
                     (_, Some(c)) => format!("Your card: \"{}\"\n{text}", claude::clip(&c.message, 300)),
                 };
                 match self.reply_with(&t.id, &sent, false, vec![], vec![], ReplyBy::Card) {
@@ -240,22 +261,7 @@ impl Office {
                 _ => {}
             }
         }
-        // Runs still working on the same chore hear it now, in the turn they are in.
-        if let (CardAsk::Chore { subject }, Some(text)) = (&ask, &text) {
-            let live: Vec<String> = lock(&self.0.active)
-                .iter()
-                .filter(|(_, a)| a.card.as_ref().is_some_and(|c| c.is_open() && matches!(&c.ask, CardAsk::Chore { subject: s } if s == subject)))
-                .map(|(id, _)| id.clone())
-                .collect();
-            for id in live {
-                if self.tell(&id, text) {
-                    if let Some(c) = lock(&self.0.active).get_mut(&id).and_then(|a| a.card.as_mut()) {
-                        c.answer = Some(CardAnswer { at, how: AnswerHow::Tapped, text: text.clone() });
-                    }
-                }
-            }
-        }
-        Ok(replies)
+        replies
     }
 
     /// A blocked run's way forward: you allow what it was denied, and it resumes to retry. `always`
@@ -377,6 +383,17 @@ fn answer_typed(db: &Store, run_id: &str, text: &str, at: Ts) -> Result<Vec<Run>
     Ok(out)
 }
 
+/// Puts `answer` on each run's card and saves them. Call inside a transaction.
+fn answer_cards(db: &Store, runs: &mut [Run], answer: &CardAnswer) -> Result<()> {
+    for r in runs {
+        if let Some(c) = r.card.as_mut() {
+            c.answer = Some(answer.clone());
+        }
+        db.save_run(r)?;
+    }
+    Ok(())
+}
+
 /// A run by id while walking threads. A store error is logged and the run treated as missing, since
 /// the thread walkers take a plain lookup.
 pub(super) fn run_of(db: &Store, id: &str) -> Option<Run> {
@@ -475,6 +492,9 @@ mod tests {
         assert_eq!(office.set_archived(&report.id, true).unwrap_err().message, "Answer the card first, or dismiss it.");
         assert!(office.set_archived(&report.id, false).is_ok(), "moving it back is never blocked");
         assert_eq!(office.answer_card(&report.id, CardReply::Choice { index: 5 }).unwrap_err().message, "That answer does not fit this card.");
+        let unreadable = vec![NewAttachment { name: "notes.txt".into(), data: "not base64!".into() }];
+        assert_eq!(office.reply_to_run(&report.id, "Not now.", false, unreadable).unwrap_err().message, "notes.txt could not be read");
+        assert!(office.db().run(&report.id).unwrap().unwrap().run.card.unwrap().is_open(), "a reply that did not go leaves the card open");
         drop(office);
         let _ = fs::remove_dir_all(&dir);
     }

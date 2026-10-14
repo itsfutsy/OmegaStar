@@ -746,8 +746,8 @@ pub(super) fn due_answers(db: &Store, ended: &Run) -> Result<Vec<(Run, String)>>
     }
     let mut due = vec![];
     // Your answer on the card of a colleague's ask or delegated work let them carry on: what came of it goes
-    // to whoever handed it over, who already had their first report.
-    if let RunKind::Reply { card: true, to_run_id, .. } = &ended.kind {
+    // to whoever handed it over, who already had their first report. Not when you stopped the reply.
+    if let Some(RunKind::Reply { card: true, to_run_id, .. }) = Some(&ended.kind).filter(|_| ended.state != RunState::Cancelled) {
         if let Some(root) = db.run(to_run_id)?.map(|r| r.run).filter(|r| r.state.is_finished()) {
             let task = match &root.kind {
                 RunKind::Asked { task, .. } => Some(*task),
@@ -1175,12 +1175,13 @@ mod tests {
         o.db.save_run(&child).unwrap();
         assert_eq!(due_answers(&o.db, &child).unwrap().len(), 1, "the first report");
 
-        let reply = |card: bool| {
+        let reply = |card: bool, state: RunState| {
             let kind = RunKind::Reply { to_run_id: child.id.clone(), label: "Delegated".into(), task: false, card };
-            run(&o.db, &bo, kind, "Your card: \"Boost it?\"\nChose: Not now.", RunState::Succeeded, 5, Some(&child.id))
+            run(&o.db, &bo, kind, "Your card: \"Boost it?\"\nChose: Not now.", state, 5, Some(&child.id))
         };
-        assert!(due_answers(&o.db, &reply(false)).unwrap().is_empty(), "a reply you typed stays with Bo");
-        let tapped = reply(true);
+        assert!(due_answers(&o.db, &reply(false, RunState::Succeeded)).unwrap().is_empty(), "a reply you typed stays with Bo");
+        assert!(due_answers(&o.db, &reply(true, RunState::Cancelled)).unwrap().is_empty(), "a reply you stopped stays with Bo");
+        let tapped = reply(true, RunState::Succeeded);
         let due = due_answers(&o.db, &tapped).unwrap();
         assert_eq!(due.len(), 1);
         let (a, session) = &due[0];

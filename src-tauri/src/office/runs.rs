@@ -285,11 +285,12 @@ impl Office {
             }
             Ok((started, dropped))
         })?;
-        // Registered while the store is still locked, so a cancel that sees a run as running finds it.
+        // Registered while the store is still locked, so a cancel that sees a run as running finds it. A card
+        // raised before a usage limit requeued the run is still its one card.
         let mut active = lock(&self.0.active);
         for r in &claimed.0 {
             let token = uuid::Uuid::new_v4().simple().to_string();
-            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], card: None, proposed: None, verdict: false, transcript: None, input: None });
+            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], card: r.card.clone(), proposed: None, verdict: false, transcript: None, input: None });
         }
         Ok(claimed)
     }
@@ -619,13 +620,6 @@ impl Office {
             self.sink().run_updated(r);
         }
         Ok(())
-    }
-
-    /// Writes into a run's open stdin without recording it as your message: for answers Omega Star
-    /// writes, such as a chore you did. `false` when the run no longer takes messages.
-    pub(super) fn tell(&self, run_id: &str, text: &str) -> bool {
-        let active = lock(&self.0.active);
-        active.get(run_id).and_then(|a| a.input.as_ref()).is_some_and(|i| i.send(claude::user_line(text)).is_ok())
     }
 
     /// Prepares files, spawns claude, streams its output into the transcript and the UI, and diffs
