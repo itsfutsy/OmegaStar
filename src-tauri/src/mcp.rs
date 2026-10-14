@@ -86,7 +86,7 @@ async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<
         "schedules" => office.my_schedules(&me),
         "schedule" => office.schedule_tool(&me, args),
         "unschedule" => office.unschedule_tool(&me, s("id")),
-        "notify" => office.notify_tool(&run_id, &me, s("message")),
+        "notify" => office.notify_tool(&run_id, &me, args),
         "catalog" => office.catalog_tool(),
         "propose_hire" => office.propose_hire_tool(&run_id, &me, args),
         "my_proposals" => office.my_proposals(&me),
@@ -130,9 +130,28 @@ fn tools() -> Value {
         },
         {
             "name": "notify",
-            "description": "Get the attention of the person you work for: sends a desktop notification now, and shows your message as the headline right above this run's report in their Inbox, so the report need not repeat it. Only for something that needs their decision or action; never for routine results.",
+            "description": "Ask the person you work for for something only they can give: a decision, an approval, or a chore. Sends a desktop notification now and puts your message, with the answer built in, at the top of this run's report in their Inbox. Add choices for a decision (up to four buttons, mark the one you recommend), items for a list they approve one by one, or chore for something only they can do. Your message says what you recommend and the safe default you will follow if they dismiss it; going ahead is never the default for spending, public posts, customer messages, deleting data, new vendors or payment details. Their answer comes back to you in this conversation as a short fixed message. One card per run. Never for updates or routine results: those belong in your report.",
             "inputSchema": obj(json!({
-                "message": { "type": "string", "description": "One or two sentences, written to them: what needs them and what you propose." }
+                "message": { "type": "string", "description": "One or two sentences, written to them: what needs them, what you recommend, and the safe default if they dismiss it. Never a code or password." },
+                "choices": {
+                    "type": "array", "maxItems": 4,
+                    "description": "2 to 4 buttons for one decision, e.g. [{\"label\": \"Not now\", \"recommended\": true}, {\"label\": \"Try A$5 a day\"}]. Mark exactly one recommended.",
+                    "items": obj(json!({
+                        "label": { "type": "string", "description": "A few words, e.g. 'Not now'." },
+                        "recommended": { "type": "boolean" }
+                    }), &["label"])
+                },
+                "items": {
+                    "type": "array", "maxItems": 10,
+                    "description": "Things to approve one by one, up to 10. Each gets a tick box and an optional note.",
+                    "items": obj(json!({
+                        "id": { "type": "string", "description": "A short id they and you can refer to, e.g. 'd1'." },
+                        "text": { "type": "string", "description": "One line: what it is and anything that decides it, e.g. how old the post it answers is." },
+                        "recommended": { "type": "boolean", "description": "true for the ones you would approve." }
+                    }), &["id", "text"])
+                },
+                "itemVerb": { "type": "string", "description": "What a tick means, one word, e.g. 'Post'. Default 'Approve'." },
+                "chore": { "type": "string", "description": "Something only they can do, as one of: 'chrome' (reconnect Claude in Chrome) or 'sign-in:<site>' (sign in to a site, e.g. 'sign-in:wise'). They press Done and every run waiting on it carries on. Your message names the one action, in plain words." }
             }), &["message"]),
         },
         {

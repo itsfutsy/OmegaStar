@@ -1,12 +1,13 @@
-import type { EmployeeView, NewAttachment, Run, Thread } from "../api/types";
+import type { CardReply, EmployeeView, NewAttachment, Run, Thread } from "../api/types";
 import { dateLong, firstName, relTime, timeOrDay, whenInline } from "../lib/format";
 import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openMember } from "../lib/router";
 import { toolName } from "../lib/rules";
-import { activityAt, didNotFinish, isStreak, lastFrom, lastReply, latestFinished, rowThreads, threadFocus } from "../lib/threads";
+import { activityAt, didNotFinish, isStreak, lastFrom, lastReply, latestFinished, openCard, rowCardOpen, rowThreads, threadFocus } from "../lib/threads";
 import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
+import { CardView } from "../components/conversation/CardView";
 import { lines } from "../components/conversation/RowHistory";
 import { DoneButton, SnoozeButton, ThreadView } from "../components/conversation/ThreadView";
 import type { Item } from "../components/conversation/useStatuses";
@@ -34,6 +35,8 @@ export type ItemActions = {
   reopen: () => void;
   /** Reply and mark it done in one go. */
   sendDone: (text: string, attachments: NewAttachment[]) => Promise<void>;
+  /** Answer the card on `run`, which moves the row to the Archive. */
+  answer: (run: Run, reply: CardReply) => Promise<void>;
 };
 
 /** One Inbox row: a thread collapsed to its digest, or open in place as the whole conversation. Its head carries
@@ -64,6 +67,9 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
   const streak = isStreak(t);
   const others = [...new Set(runsInRow.map((x) => x.root.employeeId))].filter((id) => id !== r.employeeId)
     .flatMap((id) => employees.find((x) => x.id === id) ?? []);
+  // A card waiting on you holds the row until you answer it, so Done steps aside.
+  const card = openCard(t);
+  const carded = rowCardOpen(t);
   return (
     <article className={`item ${open ? "item-open" : ""} ${status.unread ? "item-unread" : ""}`} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
       <div
@@ -89,6 +95,7 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
             <span>{title}</span>
           </span>}
           {!open && preview ? <span className="item-preview">{preview}</span> : null}
+          {!open && card ? <div className="item-card"><CardView run={card} e={e} onAnswer={(reply) => actions.answer(card, reply)} /></div> : null}
           {n > 0 || run.needsYou.length > 1 || (run.denials.length > 0 && run.needsYou.length > 0 && !done && !busy) || runsInRow.length > 1 ? (
             <span className="item-tags">
               {streak ? (
@@ -118,7 +125,7 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
           ) : (
             <>
               <SnoozeButton snoozedUntil={status.snoozedUntil} onSnooze={actions.snooze} onWake={actions.wake} />
-              <DoneButton name={who} task={r.kind.type === "task"} disabled={busy} onDone={actions.done} />
+              {carded ? null : <DoneButton name={who} task={r.kind.type === "task"} disabled={busy} onDone={actions.done} />}
             </>
           )}
           <button className="btn btn-ghost btn-sm btn-icon" title={`Open on ${who}'s panel`} aria-label={`Open on ${who}'s panel`} onClick={() => openMember(e.id, "chat", threadFocus(r.id))}>

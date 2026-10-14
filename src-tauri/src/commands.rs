@@ -236,6 +236,11 @@ pub async fn approve_blocked(office: O<'_>, run_id: String, rules: Vec<String>, 
 }
 
 #[tauri::command]
+pub async fn answer_card(office: O<'_>, run_id: String, answer: CardReply) -> Result<Vec<Run>> {
+    office.answer_card(&run_id, answer)
+}
+
+#[tauri::command]
 pub async fn open_asks(office: O<'_>) -> Result<Vec<Run>> {
     office.open_asks()
 }

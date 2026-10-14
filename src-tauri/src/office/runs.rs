@@ -289,7 +289,7 @@ impl Office {
         let mut active = lock(&self.0.active);
         for r in &claimed.0 {
             let token = uuid::Uuid::new_v4().simple().to_string();
-            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], proposed: None, verdict: false, transcript: None, input: None });
+            active.insert(r.id.clone(), Active { token, pid: None, cancelled: false, needs_you: vec![], card: None, proposed: None, verdict: false, transcript: None, input: None });
         }
         Ok(claimed)
     }
@@ -440,9 +440,13 @@ impl Office {
 
     async fn execute(self, mut run: Run) {
         let ended = self.drive(&run).await;
-        let (cancelled, needs_you, proposed, verdict) =
-            lock(&self.0.active).remove(&run.id).map(|a| (a.cancelled, a.needs_you, a.proposed, a.verdict)).unwrap_or_default();
+        let (cancelled, needs_you, card, proposed, verdict) =
+            lock(&self.0.active).remove(&run.id).map(|a| (a.cancelled, a.needs_you, a.card, a.proposed, a.verdict)).unwrap_or_default();
         run.needs_you.extend(needs_you);
+        // Before the limit requeue, so a card raised before the limit stopped the run survives it.
+        if card.is_some() {
+            run.card = card;
+        }
         // Added to what an attempt the usage limit stopped proposed, so nothing it proposed is lost.
         if let Some(p) = proposed.filter(|p| !p.trim().is_empty()) {
             run.proposed = Some(match run.proposed.take() {
@@ -523,6 +527,11 @@ impl Office {
         if let Err(e) = saved {
             log!("saving run {} failed: {e}", run.id);
         }
+        if run.card.as_ref().is_some_and(|c| c.is_open() && !matches!(c.ask, CardAsk::Chore { .. })) {
+            if let Err(e) = self.replace_older_cards(&run) {
+                log!("replacing the cards before run {} failed: {e}", run.id);
+            }
+        }
         if let RunKind::Scheduled { schedule_id, quiet, label, .. } = &run.kind {
             if threads::broke(&run) {
                 // A quiet routine that breaks is exactly what needs you: nobody reads its reports
@@ -584,7 +593,8 @@ impl Office {
                 let mut cleared = vec![];
                 for mut f in db.failures_of_schedule(schedule_id)? {
                     let in_streak = f.created_at < ok.created_at && since.is_none_or(|s| f.created_at > s);
-                    if in_streak && f.archived_at.is_none() && f.replied_at.is_none() {
+                    let open_card = f.card.as_ref().is_some_and(Card::is_open);
+                    if in_streak && f.archived_at.is_none() && f.replied_at.is_none() && !open_card {
                         f.archived_at = Some(now());
                         db.save_run(&f)?;
                         cleared.push(f);
@@ -597,6 +607,25 @@ impl Office {
             self.sink().run_updated(f);
         }
         Ok(())
+    }
+
+    /// A newer card closes the open decision and item cards it supersedes, so a routine never stacks them.
+    fn replace_older_cards(&self, newer: &Run) -> Result<()> {
+        let replaced = {
+            let db = self.db();
+            db.tx(|| replace_older_cards_in(&db, newer, now()))?
+        };
+        for r in &replaced {
+            self.sink().run_updated(r);
+        }
+        Ok(())
+    }
+
+    /// Writes into a run's open stdin without recording it as your message: for answers Omega Star
+    /// writes, such as a chore you did. `false` when the run no longer takes messages.
+    pub(super) fn tell(&self, run_id: &str, text: &str) -> bool {
+        let active = lock(&self.0.active);
+        active.get(run_id).and_then(|a| a.input.as_ref()).is_some_and(|i| i.send(claude::user_line(text)).is_ok())
     }
 
     /// Prepares files, spawns claude, streams its output into the transcript and the UI, and diffs
@@ -857,6 +886,35 @@ fn reset_for_requeue(run: &mut Run, changes: &[SkillChange]) {
     run.skill_changes.extend(changes.iter().cloned());
 }
 
+/// The open decision and item cards `newer` replaces, marked Replaced and saved: those of the same routine's
+/// earlier runs, which also leave the Inbox unless you replied to them, and those earlier in its thread,
+/// which stay. A due check's run replaces nothing of its routine. Call inside a transaction.
+fn replace_older_cards_in(db: &Store, newer: &Run, at: Ts) -> Result<Vec<Run>> {
+    let replaceable = |r: &Run| r.id != newer.id && r.card.as_ref().is_some_and(|c| c.is_open() && !matches!(c.ask, CardAsk::Chore { .. }));
+    let mut out: Vec<Run> = vec![];
+    if let (RunKind::Scheduled { schedule_id, .. }, None) = (&newer.kind, newer.kind.check_id()) {
+        for mut r in db.open_cards_of_schedule(schedule_id, newer.created_at)?.into_iter().filter(|r| replaceable(r)) {
+            if r.replied_at.is_none() {
+                r.archived_at = Some(at);
+            }
+            out.push(r);
+        }
+    }
+    let t = Office::thread_in(db, &newer.id)?;
+    for r in std::iter::once(t.root).chain(t.replies) {
+        if r.created_at < newer.created_at && replaceable(&r) && !out.iter().any(|o| o.id == r.id) {
+            out.push(r);
+        }
+    }
+    for r in &mut out {
+        if let Some(c) = r.card.as_mut() {
+            c.answer = Some(CardAnswer { at, how: AnswerHow::Replaced, text: String::new() });
+        }
+        db.save_run(r)?;
+    }
+    Ok(out)
+}
+
 /// An allow rule already covers the denied call, so the denial is not a block. Every tool is allowed in
 /// bypassPermissions, so no rule helps an autonomous employee either.
 fn covered(e: &Employee, rules: &[String], d: &Denial) -> bool {
@@ -1046,6 +1104,51 @@ mod tests {
         assert!(saved.denials.is_empty());
         assert_eq!(saved.skill_changes.len(), 1);
         assert_eq!(db.revisions(&e.id).unwrap().iter().filter(|r| r.run_id.as_deref() == Some(run.id.as_str())).count(), 1);
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_newer_routine_card_replaces_the_older_ones() {
+        let dir = std::env::temp_dir().join(format!("omegastar-cards-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let e = employee(Clearance::Supervised);
+        db.save_employee(&e).unwrap();
+        let items = || CardAsk::Items { verb: "Post".into(), items: vec![CardItem { id: "d1".into(), text: "Draft one".into(), recommended: true }] };
+        let card = |r: &mut Run, ask: CardAsk| r.card = Some(Card { message: "Post these?".into(), ask, answer: None });
+        let scheduled = |schedule: &str, ago: i64, ask: CardAsk, replied: bool| {
+            let at = now() - chrono::Duration::minutes(ago);
+            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: at, label: "Drafts".into(), quiet: true, model: None, effort: None };
+            let mut r = Run::new(&e.id, kind, "go".into(), at);
+            r.state = RunState::Succeeded;
+            r.ended_at = Some(at);
+            r.replied_at = replied.then_some(at);
+            card(&mut r, ask);
+            assert!(db.insert_run(&r, &r.id).unwrap());
+            r
+        };
+        let first = scheduled("s1", 60, items(), false);
+        let replied = scheduled("s1", 50, items(), true);
+        let chore = scheduled("s1", 40, CardAsk::Chore { subject: "chrome".into() }, false);
+        let newer = scheduled("s1", 10, items(), false);
+
+        let replaced = db.tx(|| replace_older_cards_in(&db, &newer, now())).unwrap();
+        assert_eq!(replaced.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec![first.id.as_str(), replied.id.as_str()]);
+        let saved = |r: &Run| db.run(&r.id).unwrap().unwrap().run;
+        let how = |r: &Run| saved(r).card.unwrap().answer.map(|a| (a.how, a.text));
+        assert_eq!(how(&first), Some((AnswerHow::Replaced, String::new())));
+        assert!(saved(&first).archived_at.is_some());
+        assert_eq!(how(&replied), Some((AnswerHow::Replaced, String::new())));
+        assert!(saved(&replied).archived_at.is_none(), "you replied to it, so it stays");
+        assert_eq!(how(&chore), None, "a chore is never replaced");
+        assert_eq!(how(&newer), None);
+
+        // A due check's runs share no routine.
+        let check = scheduled("check:c1", 30, items(), false);
+        let later = scheduled("check:c1", 5, items(), false);
+        assert!(db.tx(|| replace_older_cards_in(&db, &later, now())).unwrap().is_empty());
+        assert_eq!(how(&check), None);
         drop(db);
         let _ = fs::remove_dir_all(&dir);
     }

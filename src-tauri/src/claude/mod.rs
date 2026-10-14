@@ -512,7 +512,7 @@ mod tests {
         };
         assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
         assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);
-        assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false }, &e), ["--model", "opus", "--effort", "high"]);
+        assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false, card: false }, &e), ["--model", "opus", "--effort", "high"]);
     }
 
     #[test]

@@ -506,6 +506,30 @@ impl Store {
         )
     }
 
+    /// Finished runs waiting on a chore you have not done yet, oldest first.
+    pub fn open_chore_runs(&self, subject: &str) -> Result<Vec<Run>> {
+        self.runs_where(
+            "WHERE json_valid(data)
+               AND json_extract(data, '$.card.ask.type') = 'chore'
+               AND json_extract(data, '$.card.ask.subject') = ?
+               AND json_extract(data, '$.card.answer') IS NULL
+               AND state NOT IN ('queued', 'running')
+             ORDER BY created_at, rowid",
+            &[&subject],
+        )
+    }
+
+    /// A schedule's runs from before `before` with a decision or item card still open, oldest first.
+    pub fn open_cards_of_schedule(&self, schedule_id: &str, before: Ts) -> Result<Vec<Run>> {
+        self.runs_where(
+            "WHERE schedule_id = ? AND created_at < ? AND json_valid(data)
+               AND json_extract(data, '$.card.ask.type') IN ('choices', 'items')
+               AND json_extract(data, '$.card.answer') IS NULL
+             ORDER BY created_at, rowid",
+            &[&schedule_id, &ms(before)],
+        )
+    }
+
     // ---- human requests ----
 
     pub fn save_request(&self, r: &HumanRequest) -> Result<()> {
@@ -978,7 +1002,7 @@ INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data
         let report = run(&ada, RunKind::Manual, RunState::Succeeded);
         db.insert_run(&report, &report.id).unwrap();
         let reply = |prompt: &str, omega_wrote: bool| {
-            let mut r = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false }, prompt.into(), Utc::now());
+            let mut r = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false, card: false }, prompt.into(), Utc::now());
             r.omega_wrote = omega_wrote;
             db.insert_run(&r, &r.id).unwrap();
         };
@@ -1054,6 +1078,52 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn with_card(mut r: Run, ask: CardAsk, answered: bool) -> Run {
+        let answer = answered.then(|| CardAnswer { at: Utc::now(), how: AnswerHow::Tapped, text: "Chose: Not now.".into() });
+        r.card = Some(Card { message: "Needs you.".into(), ask, answer });
+        r
+    }
+
+    #[test]
+    fn open_cards_are_found_by_chore_and_by_schedule() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let chrome = || CardAsk::Chore { subject: "chrome".into() };
+        let choices = || CardAsk::Choices { choices: vec!["Not now".into(), "Go".into()], recommended: 0 };
+        let insert = |r: Run| {
+            assert!(db.insert_run(&r, &r.id).unwrap());
+            r
+        };
+        let waiting = insert(with_card(run(&ada, RunKind::Manual, RunState::Failed), chrome(), false));
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), chrome(), true));
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Queued), chrome(), false));
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), CardAsk::Chore { subject: "sign-in:wise".into() }, false));
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), choices(), false));
+        assert_eq!(ids(&db.open_chore_runs("chrome").unwrap()), ids(&[waiting]));
+
+        let at = |mins: i64| Utc::now() - chrono::Duration::minutes(mins);
+        let scheduled = |id: &str, mins: i64, ask: CardAsk, answered: bool| {
+            let kind = RunKind::Scheduled { schedule_id: id.into(), slot: at(mins), label: "Sweep".into(), quiet: true, model: None, effort: None };
+            let mut r = run(&ada, kind, RunState::Succeeded);
+            r.created_at = at(mins);
+            insert(with_card(r, ask, answered))
+        };
+        let older = scheduled("s1", 30, choices(), false);
+        let items = CardAsk::Items { verb: "Post".into(), items: vec![CardItem { id: "d1".into(), text: "Draft".into(), recommended: true }] };
+        let older_items = scheduled("s1", 20, items, false);
+        scheduled("s1", 15, choices(), true);
+        scheduled("s1", 12, chrome(), false);
+        scheduled("s2", 10, choices(), false);
+        let newer = scheduled("s1", 5, choices(), false);
+        let found = db.open_cards_of_schedule("s1", newer.created_at).unwrap();
+        assert_eq!(found.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), vec![older.id, older_items.id]);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// One of each kind of run. `i` makes its ids unique, since `insert_run` skips a second run of the
     /// same schedule slot or follow-up.
     fn every_kind(i: usize) -> Vec<RunKind> {
@@ -1070,7 +1140,8 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
             RunKind::Answered { asked_run_id: format!("asked-chat-{i}"), from: "e0".into(), task: true, chat: true },
             RunKind::FollowUp { request_id: format!("request-{i}"), person_id: person() },
             RunKind::Organize { imported: vec![], settled: false },
-            RunKind::Reply { to_run_id: format!("root-{i}"), label: "Manual run".into(), task: false },
+            RunKind::Reply { to_run_id: format!("root-{i}"), label: "Manual run".into(), task: false, card: false },
+            RunKind::Reply { to_run_id: format!("card-{i}"), label: "Sweep".into(), task: false, card: true },
             RunKind::Task { label: "Draft it".into(), from: None, context: String::new() },
             RunKind::HireDecided { proposal_id: format!("proposal-{i}"), approved: true },
             RunKind::Tidy { reason: TidyReason::Auto, signature: vec![], plan: None },

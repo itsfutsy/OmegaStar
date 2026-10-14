@@ -48,6 +48,18 @@ export function isStreak(t: Thread): boolean {
     && t.related.every((x) => x.root.kind.type === "scheduled" && x.root.kind.scheduleId === k.scheduleId && didNotFinish(x.root));
 }
 
+/** The run in a thread whose card waits on your answer, newest first. */
+export function openCard(t: Thread): Run | undefined {
+  return [...t.replies].reverse().concat(t.root).find((r) => r.card && !r.card.answer);
+}
+
+/** Some thread in an Inbox row has a card waiting on you, so the row cannot be marked done yet. */
+export const rowCardOpen = (t: Thread): boolean => rowThreads(t).some((x) => !!openCard(x));
+
+/** An Inbox row that is everyone waiting on the same chore. */
+export const isChoreRow = (t: Thread): boolean =>
+  t.related.length > 0 && rowThreads(t).some((x) => [x.root, ...x.replies].some((r) => r.card?.ask.type === "chore" && !r.card.answer));
+
 /** The conversation route's `focus` segment that selects a thread: `#/chat/<employee>/thread~<root run id>`. */
 export const threadFocus = (rootId: string): string => `thread~${rootId}`;
 export const parseThreadFocus = (focus: string | null): string | null =>
