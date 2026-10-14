@@ -355,6 +355,22 @@ pub fn write_recorded(path: &Path, skill: &str, text: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// The company page and what the employee owns, keyed like skill files, each only while it exists and is
+/// small enough to record. Kept apart from the skills snapshot: a run that should not change them has its
+/// change put back instead of recorded.
+pub fn guarded_snapshot(employee_dir: &Path) -> Snapshot {
+    let mut snap = Snapshot::new();
+    let files = [(COMPANY, COMPANY_FILE, employee_dir.parent()), (OWN, OWN_FILE, Some(employee_dir))];
+    for (skill, file, dir) in files {
+        let Some(path) = dir.map(|d| d.join(file)) else { continue };
+        let small = fs::metadata(&path).map(|m| m.is_file() && m.len() < SNAPSHOT_MAX_BYTES).unwrap_or(false);
+        if let (true, Ok(text)) = (small, fs::read_to_string(&path)) {
+            snap.insert((skill.to_string(), file.to_string()), text);
+        }
+    }
+    snap
+}
+
 pub struct FileChange {
     pub change: SkillChange,
     pub before: Option<String>,
@@ -686,5 +702,21 @@ mod tests {
             assert!(recorded_path(employee, skill, file).is_err(), "{skill}/{file}");
         }
         assert!(guarded(COMPANY) && guarded(OWN) && !guarded(NOTES) && !guarded("ada"));
+    }
+
+    #[test]
+    fn guarded_snapshot_reads_the_page_and_what_they_own() {
+        let root = temp_dir();
+        let employee = root.join("e1");
+        fs::create_dir_all(&employee).unwrap();
+        assert!(guarded_snapshot(&employee).is_empty(), "neither file exists yet");
+        fs::write(company_page_path(&root), "# Company page\n").unwrap();
+        fs::write(employee.join(OWN_FILE), "The weekly signups.\n").unwrap();
+        fs::write(employee.join(COMPANY_FILE), "# Handbook\n").unwrap();
+        let snap = guarded_snapshot(&employee);
+        assert_eq!(snap.len(), 2, "the employee's own handbook is not guarded");
+        assert_eq!(snap[&(COMPANY.to_string(), COMPANY_FILE.to_string())], "# Company page\n");
+        assert_eq!(snap[&(OWN.to_string(), OWN_FILE.to_string())], "The weekly signups.\n");
+        let _ = fs::remove_dir_all(&root);
     }
 }

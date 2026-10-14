@@ -1,8 +1,11 @@
 //! The run queue: enqueueing, claiming, gathering a snapshot, executing and cancelling runs.
 
 use super::*;
+use crate::cards;
 
 const EVENT_BATCH: Duration = Duration::from_millis(100);
+/// Told to a run whose Chrome dropped, with `{ceo}` filled in by `chrome_note`.
+const CHROME_NOTE: &str = "Omega Star: Chrome is not connected, so {ceo} has been asked to reconnect it. Do not ask {ceo} about it yourself. Carry on with what does not need Chrome. If the rest needs Chrome, finish with what you have and say what is left; you will be picked up again once it is back.";
 
 impl Office {
     pub(super) fn enqueue(&self, run: Run, session: String) -> Result<Run> {
@@ -311,6 +314,27 @@ impl Office {
         }
         self.sink().run_events(run_id, &[ev]);
         true
+    }
+
+    /// Writes into a run's open stdin without recording it as your message: for notes Omega Star writes,
+    /// such as Chrome dropping. `false` when the run no longer takes messages.
+    pub(super) fn tell(&self, run_id: &str, text: &str) -> bool {
+        let active = lock(&self.0.active);
+        active.get(run_id).and_then(|a| a.input.as_ref()).is_some_and(|i| i.send(claude::user_line(text)).is_ok())
+    }
+
+    /// Chrome dropped in a run: you get the one Chrome chore card (or the run joins the open one), and the run
+    /// hears that you were asked, so it carries on without Chrome instead of asking you itself.
+    fn chrome_down(&self, run: &Run, e: &Employee) {
+        let message = format!("Chrome isn't connected. {} is waiting. Open Chrome, check the Claude extension is on and signed in, then press Done.", e.name);
+        if let Err(err) = self.raise_chore(&run.id, cards::CHROME, &message) {
+            log!("run {}: asking you to reconnect Chrome failed: {err}", run.id);
+        }
+        let ceo = ceo_of(&self.db()).unwrap_or_else(|err| {
+            log!("run {}: could not read the company for the Chrome note: {err}", run.id);
+            "the person you work for".into()
+        });
+        self.tell(&run.id, &chrome_note(&ceo));
     }
 
     /// Appends a synthetic event to a live run's transcript and forwards it to the UI.
@@ -671,6 +695,7 @@ impl Office {
             // A tidy compacts notes too, so its changes to them are recorded and can be reverted.
             before.extend(own_skills::notes_snapshot(&notes_dir));
         }
+        let guarded_before = own_skills::guarded_snapshot(&snap.employee_dir);
 
         if lock(&self.0.active).get(&run.id).is_some_and(|a| a.cancelled) {
             return Err(AppError::conflict("cancelled before it started"));
@@ -730,6 +755,9 @@ impl Office {
                     let Ok(Some(line)) = line else { break };
                     let parsed = claude::parse_line(&line, &snap.employee_dir);
                     signals.observe(&parsed);
+                    if signals.chrome_down(&parsed.events) {
+                        self.chrome_down(run, &snap.employee);
+                    }
                     limited = parsed.limited.or(limited);
                     context = parsed.context.or(context);
                     claude_version = parsed.claude_version.clone().or(claude_version);
@@ -797,7 +825,54 @@ impl Office {
                 );
             }
         }
-        let changes = own_skills::diff(&before, &after);
+        let mut changes = own_skills::diff(&before, &after);
+        // Only a conversation with you may change the company page or what the employee owns; any other run
+        // that wrote one has it put back. Decided by what this run's own calls wrote, so a change made
+        // elsewhere meanwhile is never recorded as its own.
+        let mut guarded_after = own_skills::guarded_snapshot(&snap.employee_dir);
+        let mut transcript_text: Option<String> = None;
+        let mut recorded: Vec<(String, String)> = vec![];
+        let mut put_back = false;
+        for (skill, file) in [(own_skills::COMPANY, own_skills::COMPANY_FILE), (own_skills::OWN, own_skills::OWN_FILE)] {
+            let key = (skill.to_string(), file.to_string());
+            let (was, is) = (guarded_before.get(&key), guarded_after.get(&key));
+            let Ok(path) = own_skills::recorded_path(&snap.employee_dir, skill, file) else { continue };
+            if was == is {
+                continue;
+            }
+            let text = transcript_text.get_or_insert_with(|| fs::read_to_string(run_dir.join("transcript.jsonl")).unwrap_or_default());
+            let wrote = skills::wrote_file(text, &path, &snap.employee_dir);
+            if !skills::ceo_in(&run.kind) {
+                let who = (skill == own_skills::OWN).then_some(snap.employee.id.as_str());
+                let since = run.started_at.unwrap_or(run.created_at);
+                let seen = {
+                    let db = self.db();
+                    db.ceo_conversation_running(who).and_then(|talking| Ok((talking, db.revised_since(skill, file, who, since)?)))
+                };
+                // When the store cannot tell, nothing is put back: that could lose your own edit.
+                let (talking, revised) = seen.unwrap_or_else(|err| {
+                    log!("run {}: could not tell whether you were changing {skill}/{file}: {err}", run.id);
+                    (true, true)
+                });
+                let action = skills::guarded_action(wrote, talking, revised);
+                let putting_back = action == skills::GuardedAction::PutBack;
+                match self.put_back_guarded(run, &snap.employee, &key, was, is, action) {
+                    Ok(()) if putting_back => {
+                        put_back = true;
+                        continue;
+                    }
+                    Ok(()) => {}
+                    Err(err) => log!("run {}: putting back {skill}/{file} failed: {err}", run.id),
+                }
+            }
+            if wrote {
+                recorded.push(key);
+            }
+        }
+        if put_back {
+            guarded_after = own_skills::guarded_snapshot(&snap.employee_dir);
+        }
+        changes.extend(own_skills::diff(&guarded_before, &guarded_after).into_iter().filter(|c| recorded.iter().any(|(s, f)| *s == c.change.skill && *f == c.change.file)));
         let _ = fs::remove_file(&before_path);
         for c in &changes {
             let ev = RunEvent::SkillChanged { skill: c.change.skill.clone(), file: c.change.file.clone(), change: c.change.change };
@@ -944,6 +1019,10 @@ fn attachment_names<'a>(raw: impl IntoIterator<Item = &'a str>) -> Vec<String> {
         out.push(name);
     }
     out
+}
+
+fn chrome_note(ceo: &str) -> String {
+    CHROME_NOTE.replace("{ceo}", ceo)
 }
 
 fn append_line(file: &Mutex<File>, line: &str) {
