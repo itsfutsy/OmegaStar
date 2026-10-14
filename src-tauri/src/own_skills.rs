@@ -355,16 +355,16 @@ pub fn write_recorded(path: &Path, skill: &str, text: Option<&str>) -> Result<()
     Ok(())
 }
 
-/// The company page and what the employee owns, keyed like skill files, each only while it exists and is
-/// small enough to record. Kept apart from the skills snapshot: a run that should not change them has its
-/// change put back instead of recorded.
+/// The company page and what the employee owns, keyed like skill files, each only while it exists. No size
+/// cap: a page too large to read would look missing, and putting that back would delete it. Kept apart from
+/// the skills snapshot: a run that should not change them has its change put back instead of recorded.
 pub fn guarded_snapshot(employee_dir: &Path) -> Snapshot {
     let mut snap = Snapshot::new();
     let files = [(COMPANY, COMPANY_FILE, employee_dir.parent()), (OWN, OWN_FILE, Some(employee_dir))];
     for (skill, file, dir) in files {
         let Some(path) = dir.map(|d| d.join(file)) else { continue };
-        let small = fs::metadata(&path).map(|m| m.is_file() && m.len() < SNAPSHOT_MAX_BYTES).unwrap_or(false);
-        if let (true, Ok(text)) = (small, fs::read_to_string(&path)) {
+        let is_file = fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false);
+        if let (true, Ok(text)) = (is_file, fs::read_to_string(&path)) {
             snap.insert((skill.to_string(), file.to_string()), text);
         }
     }
@@ -717,6 +717,9 @@ mod tests {
         assert_eq!(snap.len(), 2, "the employee's own handbook is not guarded");
         assert_eq!(snap[&(COMPANY.to_string(), COMPANY_FILE.to_string())], "# Company page\n");
         assert_eq!(snap[&(OWN.to_string(), OWN_FILE.to_string())], "The weekly signups.\n");
+        let large = "- A line about the company.\n".repeat(SNAPSHOT_MAX_BYTES as usize / 10);
+        fs::write(company_page_path(&root), &large).unwrap();
+        assert_eq!(guarded_snapshot(&employee)[&(COMPANY.to_string(), COMPANY_FILE.to_string())], large, "a large page is not taken for a missing one");
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -117,6 +117,8 @@ struct Inner {
     account: Mutex<Option<(Ts, Option<Account>)>>,
     /// The Mac is in a full wake, not a Power Nap dark wake: background runs may start.
     awake: AtomicBool,
+    /// When you last saved the company page in You. The save writes no revision, so a run's guard asks here.
+    company_saved: Mutex<Option<Ts>>,
 }
 
 #[derive(Clone)]
@@ -169,6 +171,7 @@ impl Office {
             crashed,
             account: Mutex::new(None),
             awake: AtomicBool::new(true),
+            company_saved: Mutex::new(None),
         }));
         for mut run in office.recover()? {
             // The run never reached its end, where its sends are normally found.

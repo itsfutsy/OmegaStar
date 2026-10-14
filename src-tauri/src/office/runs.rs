@@ -658,6 +658,8 @@ impl Office {
             .create(true)
             .append(true)
             .open(run_dir.join("transcript.jsonl"))?;
+        // A run requeued after the usage limit appends to the same transcript; this attempt's lines start here.
+        let attempt_start = transcript.metadata().map(|m| m.len()).unwrap_or(0);
         let transcript = Arc::new(Mutex::new(transcript));
         let token = {
             let mut active = lock(&self.0.active);
@@ -827,8 +829,8 @@ impl Office {
         }
         let mut changes = own_skills::diff(&before, &after);
         // Only a conversation with you may change the company page or what the employee owns; any other run
-        // that wrote one has it put back. Decided by what this run's own calls wrote, so a change made
-        // elsewhere meanwhile is never recorded as its own.
+        // that wrote one has it put back, or only flagged when you changed it too, and never records it. Decided
+        // by what this attempt's own calls wrote, so a change made elsewhere meanwhile is never recorded as its own.
         let mut guarded_after = own_skills::guarded_snapshot(&snap.employee_dir);
         let mut transcript_text: Option<String> = None;
         let mut recorded: Vec<(String, String)> = vec![];
@@ -840,7 +842,7 @@ impl Office {
             if was == is {
                 continue;
             }
-            let text = transcript_text.get_or_insert_with(|| fs::read_to_string(run_dir.join("transcript.jsonl")).unwrap_or_default());
+            let text = transcript_text.get_or_insert_with(|| attempt_text(&run_dir.join("transcript.jsonl"), attempt_start));
             let wrote = skills::wrote_file(text, &path, &snap.employee_dir);
             if !skills::ceo_in(&run.kind) {
                 let who = (skill == own_skills::OWN).then_some(snap.employee.id.as_str());
@@ -854,16 +856,16 @@ impl Office {
                     log!("run {}: could not tell whether you were changing {skill}/{file}: {err}", run.id);
                     (true, true)
                 });
-                let action = skills::guarded_action(wrote, talking, revised);
+                // Saving the page in You writes no revision, so it is asked about here.
+                let saved = skill == own_skills::COMPANY && self.company_saved_since(since);
+                let action = skills::guarded_action(wrote, talking, revised || saved);
                 let putting_back = action == skills::GuardedAction::PutBack;
                 match self.put_back_guarded(run, &snap.employee, &key, was, is, action) {
-                    Ok(()) if putting_back => {
-                        put_back = true;
-                        continue;
-                    }
-                    Ok(()) => {}
+                    Ok(()) => put_back |= putting_back,
                     Err(err) => log!("run {}: putting back {skill}/{file} failed: {err}", run.id),
                 }
+                // A flagged change is not recorded either: undoing it would write over your own edit.
+                continue;
             }
             if wrote {
                 recorded.push(key);
@@ -893,6 +895,12 @@ impl Office {
         let (blocks, notes) = signals.sort_denials(denied, |d| covered(&snap.employee, &rules, d), !run.kind.is_conversation());
         Ok(Ended { outcome, exit, stderr, changes, limited, blocks, notes, context, claude_version })
     }
+}
+
+/// The transcript from byte `start` on: what one attempt of a run wrote. Empty when it cannot be read.
+fn attempt_text(path: &Path, start: u64) -> String {
+    let bytes = fs::read(path).unwrap_or_default();
+    String::from_utf8_lossy(bytes.get(start as usize..).unwrap_or_default()).into_owned()
 }
 
 /// What a run's process left behind.
@@ -1307,6 +1315,21 @@ mod tests {
         assert!(!requeue_for_limit(false, &Err(AppError::internal("could not start")), 0));
         assert!(hit_limit(false, &limited), "out of retries, it still holds the office");
         assert!(!hit_limit(true, &limited));
+    }
+
+    #[test]
+    fn a_retry_reads_only_its_own_attempt() {
+        let dir = std::env::temp_dir().join(format!("omegastar-attempt-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transcript.jsonl");
+        assert_eq!(attempt_text(&path, 0), "", "a missing transcript is empty");
+        fs::write(&path, "first attempt\n").unwrap();
+        let start = fs::metadata(&path).unwrap().len();
+        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut f, b"second attempt\n").unwrap();
+        assert_eq!(attempt_text(&path, start), "second attempt\n");
+        assert_eq!(attempt_text(&path, 0), "first attempt\nsecond attempt\n");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

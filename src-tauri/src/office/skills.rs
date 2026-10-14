@@ -69,7 +69,13 @@ impl Office {
     /// You edit the company page yourself. A plain write with no revision: you are its author.
     pub fn save_company_page(&self, text: &str) -> Result<CompanyPage> {
         fs::write(own_skills::company_page_path(&self.0.data_dir.join("employees")), text)?;
+        *lock(&self.0.company_saved) = Some(now());
         self.company_page()
+    }
+
+    /// You saved the company page in You at or after `since`, in this session.
+    pub(super) fn company_saved_since(&self, since: Ts) -> bool {
+        lock(&self.0.company_saved).is_some_and(|at| at >= since)
     }
 
     // ------------------------------------------------------------------ importing and organizing
@@ -635,6 +641,26 @@ fn undo(db: &Store, employee_dir: &Path, employee_id: &str, revs: &[SkillRevisio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoSink;
+    impl EventSink for NoSink {
+        fn org_changed(&self) {}
+        fn run_updated(&self, _run: &Run) {}
+        fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
+        fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    #[tokio::test]
+    async fn a_save_in_you_is_seen_by_a_runs_guard() {
+        let dir = std::env::temp_dir().join(format!("omegastar-page-{}", uuid::Uuid::new_v4()));
+        let office = Office::open(dir.clone(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap();
+        let started = now();
+        assert!(!office.company_saved_since(started), "nothing saved yet");
+        office.save_company_page("# Company page\n\n- Releases: Sam.\n").unwrap();
+        assert!(office.company_saved_since(started), "a run that started before the save counts it as your edit");
+        assert!(!office.company_saved_since(now() + chrono::Duration::seconds(1)), "a run that started after it does not");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn unchanged_since_compares_the_whole_file() {
