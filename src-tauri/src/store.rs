@@ -5,7 +5,7 @@ use crate::log::log;
 use crate::model::*;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -432,6 +432,46 @@ impl Store {
             "WHERE employee_id = ? AND lane = 'work' ORDER BY created_at DESC, rowid DESC LIMIT ?",
             &[&employee_id, &limit],
         )
+    }
+
+    /// An employee's finished runs created since `since`, both lanes, with their sessions, newest first.
+    pub fn finished_since(&self, employee_id: &str, since: Ts) -> Result<Vec<RunRecord>> {
+        let mut st = self.conn.prepare(
+            "SELECT data, session FROM runs WHERE employee_id = ?1 AND created_at >= ?2 AND state NOT IN ('queued', 'running')
+             ORDER BY created_at DESC, rowid DESC",
+        )?;
+        let v = readable("runs", st.query_map(params![employee_id, ms(since)], |r| Ok(RunRecord { run: from_row(r, 0)?, session: r.get(1)? }))?)?;
+        Ok(v)
+    }
+
+    /// When the last turn of a conversation ended: its newest finished run other than `except`.
+    pub fn last_turn_ended(&self, session: &str, except: &str) -> Result<Option<Ts>> {
+        Ok(self
+            .runs_where(
+                "WHERE session = ? AND id != ? AND state NOT IN ('queued', 'running') ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                &[&session, &except],
+            )?
+            .pop()
+            .and_then(|r| r.ended_at))
+    }
+
+    /// An employee's finished runs whose card you have not answered yet, oldest first.
+    pub fn open_cards(&self, employee_id: &str) -> Result<Vec<Run>> {
+        self.runs_where(
+            "WHERE employee_id = ? AND json_valid(data)
+               AND json_extract(data, '$.card.ask.type') IS NOT NULL
+               AND json_extract(data, '$.card.answer') IS NULL
+               AND state NOT IN ('queued', 'running')
+             ORDER BY created_at, rowid",
+            &[&employee_id],
+        )
+    }
+
+    /// The ids of runs that asked a colleague something or delegated work since `since`.
+    pub fn parents_since(&self, since: Ts) -> Result<HashSet<String>> {
+        let mut st = self.conn.prepare("SELECT DISTINCT parent_run_id FROM runs WHERE parent_run_id IS NOT NULL AND created_at >= ?")?;
+        let v = st.query_map([ms(since)], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(v)
     }
 
     pub fn active_runs_of(&self, employee_id: &str) -> Result<Vec<Run>> {
@@ -862,6 +902,52 @@ mod tests {
 
     fn ids(runs: &[Run]) -> BTreeSet<String> {
         runs.iter().map(|r| r.id.clone()).collect()
+    }
+
+    #[test]
+    fn the_opening_note_queries() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let at = |mins: i64| Utc::now() - chrono::Duration::minutes(mins);
+        let insert = |mut r: Run, mins: i64, session: &str| {
+            r.created_at = at(mins);
+            if r.state.is_finished() {
+                r.ended_at = Some(at(mins - 1));
+            }
+            assert!(db.insert_run(&r, session).unwrap());
+            r
+        };
+        let old = insert(run(&ada, RunKind::Chat, RunState::Succeeded), 120, "chat-1");
+        let newer = insert(run(&ada, RunKind::Chat, RunState::Failed), 60, "chat-1");
+        let now_turn = insert(run(&ada, RunKind::Chat, RunState::Running), 5, "chat-1");
+        let report = insert(run(&ada, RunKind::Manual, RunState::Succeeded), 30, "m1");
+        insert(run(&ada, RunKind::Manual, RunState::Queued), 2, "m2");
+
+        let found: Vec<(String, String)> = db.finished_since(&ada.id, at(90)).unwrap().into_iter().map(|r| (r.run.id, r.session)).collect();
+        assert_eq!(found, vec![(report.id.clone(), "m1".to_string()), (newer.id.clone(), "chat-1".to_string())]);
+        assert_eq!(db.finished_since(&ada.id, at(200)).unwrap().len(), 3);
+
+        assert_eq!(db.last_turn_ended("chat-1", &now_turn.id).unwrap(), newer.ended_at);
+        assert_eq!(db.last_turn_ended("chat-1", &newer.id).unwrap(), old.ended_at);
+        assert_eq!(db.last_turn_ended("m2", "x").unwrap(), None);
+
+        let choices = || CardAsk::Choices { choices: vec!["Not now".into(), "Go".into()], recommended: 0 };
+        let open = insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), choices(), false), 50, "c1");
+        let chore = insert(with_card(run(&ada, RunKind::Manual, RunState::Failed), CardAsk::Chore { subject: "chrome".into() }, false), 40, "c2");
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Succeeded), choices(), true), 45, "c3");
+        insert(with_card(run(&ada, RunKind::Manual, RunState::Running), choices(), false), 3, "c4");
+        assert_eq!(db.open_cards(&ada.id).unwrap().iter().map(|r| r.id.clone()).collect::<Vec<_>>(), vec![open.id, chore.id]);
+
+        let asker = insert(run(&ada, RunKind::Manual, RunState::Succeeded), 100, "a1");
+        insert(run(&ada, RunKind::Asked { parent_run_id: asker.id.clone(), asked_by: ada.id.clone(), task: false }, RunState::Succeeded), 20, "a2");
+        insert(run(&ada, RunKind::Delegated { parent_run_id: "long-ago".into() }, RunState::Succeeded), 300, "a3");
+        assert_eq!(db.parents_since(at(60)).unwrap(), HashSet::from([asker.id.clone()]));
+        assert_eq!(db.parents_since(at(400)).unwrap(), HashSet::from([asker.id, "long-ago".to_string()]));
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

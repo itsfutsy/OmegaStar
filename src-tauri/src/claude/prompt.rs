@@ -19,7 +19,10 @@ pub fn handbook(s: &Snapshot) -> String {
         Some((name, title)) => h += &format!("{ceo} reports to {name} ({title}). "),
         None => {}
     }
-    h += &format!("You report to {reports_to}. This file is your handbook: Omega Star rewrites it before every run.\n\n");
+    h += &format!(
+        "You report to {reports_to}. This file is your handbook. Omega Star keeps it up to date as the company changes. \
+What happened lately, and what is waiting, comes in a note at the top of your first message in each run.\n\n"
+    );
     if !e.objective.trim().is_empty() {
         h += &format!("**Objective.** {}\n\n", e.objective.trim());
     }
@@ -136,30 +139,6 @@ for a reply you record. `my_requests` lists what you are waiting on.\n\n"
         );
     }
 
-    if !s.waiting_on.is_empty() {
-        h += "## Waiting on people\n\n";
-        for (r, who) in &s.waiting_on {
-            let kind = r.kind.as_str();
-            let due = r.due_at.map(|d| format!(", due {}", d.format("%Y-%m-%d"))).unwrap_or_default();
-            h += &format!(
-                "- {kind} for {who}, asked {}{due}: {} (request id `{}`), {}\n",
-                r.created_at.format("%Y-%m-%d"),
-                clip(&one_line(&r.message), 300),
-                r.id,
-                watch_status(r)
-            );
-        }
-        h += "\n";
-    }
-
-    if !s.recent_work.is_empty() {
-        h += "## Recent work\n\n";
-        for (at, kind, state, summary) in &s.recent_work {
-            h += &format!("- {} ({kind}, {}): {}\n", at.with_timezone(&chrono::Local).format("%Y-%m-%d %-I:%M %P"), state.as_str(), clip(&one_line(summary), 600));
-        }
-        h += "\n";
-    }
-
     h += &format!(
         "## Schedules and notifications\n\n\
 Omega Star runs your recurring work, whether or not any Claude session is open. Claude Code's own cron, loop,\n\
@@ -184,17 +163,6 @@ remote-trigger and push-notification tools are not available to you: they would 
         h += "\n";
     }
 
-    if !s.checks.is_empty() {
-        let now = chrono::Utc::now();
-        h += "## Your open checks\n\nThings you set yourself to find out. Do the ones that are due, then close each with \
-`check_done(id, result)` and write the finding into the skill it belongs to.\n\n";
-        for c in &s.checks {
-            let state = if c.due_at <= now { "**due**".to_string() } else { format!("due {}", c.due_at.with_timezone(&chrono::Local).format("%Y-%m-%d")) };
-            h += &format!("- {state}: {} How: {} (check id `{}`)\n", clip(&one_line(&c.what), 300), clip(&one_line(&c.how), 400), c.id);
-        }
-        h += "\n";
-    }
-
     h += &format!(
         "## Hiring\n\n\
 You can propose a new agent for your area with the `omega` tool `propose_hire`. {ceo} decides: they review it in\n\
@@ -208,20 +176,6 @@ their Inbox, may change it, and approve or decline it. Their decision comes back
 - `my_proposals` lists yours; `withdraw_proposal(id)` takes one back. Never propose a role that is already waiting.\n\
 - In a conversation with {ceo}, propose with the tool, then tell them in a line that it is in their Inbox.\n\n"
     );
-    if !s.proposals.is_empty() {
-        h += "Your proposals waiting on a decision:\n\n";
-        for p in &s.proposals {
-            h += &format!(
-                "- {}, {}: proposed {} (proposal id `{}`)\n",
-                p.draft.name,
-                p.draft.title,
-                p.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d"),
-                p.id
-            );
-        }
-        h += "\n";
-    }
-
     h += &format!(
         "## Your report\n\n\
 When a run ends, your last message is your report. It goes to {ceo}'s Inbox unless the run says it goes to a colleague\n\
@@ -247,7 +201,7 @@ or your manager. Write it to that reader, as \"you\".\n\n\
     h
 }
 
-/// How a request the employee is waiting on stands, as their handbook says it.
+/// How a request the employee is waiting on stands, as their opening note says it.
 fn watch_status(r: &HumanRequest) -> &'static str {
     let Some(d) = &r.delivery else { return "**not recorded as sent**: call `sent` once you have sent it" };
     match (&d.locator, d.watch.as_ref().map(|w| &w.phase)) {
@@ -261,6 +215,11 @@ fn watch_status(r: &HumanRequest) -> &'static str {
 /// A moment on your local clock, the way a person writes it: "Tue 6 Oct 1:15 pm".
 fn local_time(t: Ts) -> String {
     t.with_timezone(&chrono::Local).format("%a %-d %b %-I:%M %P").to_string()
+}
+
+/// A day on your local calendar: "Tue 6 Oct".
+fn local_day(t: Ts) -> String {
+    t.with_timezone(&chrono::Local).format("%a %-d %b").to_string()
 }
 
 /// Where a delivered ask is, in words a run can act on.
@@ -326,11 +285,21 @@ Your skills are files under `{dir}`. The Skill tool reports them under `.claude{
         dir = dir.display(),
         sep = std::path::MAIN_SEPARATOR,
     );
+    if s.resume {
+        // A resumed session keeps the system prompt it started with, so the frame goes in the message.
+        return format!("{who}\n");
+    }
+    format!("{who}\n\n{}\n", frame(s, run))
+}
+
+/// What this run is and how to do it, by its kind: in the system prompt of a new session, and at the
+/// top of the first message of a resumed one.
+pub fn frame(s: &Snapshot, run: &Run) -> String {
     let autonomous = "Nobody is watching: work autonomously, do not ask questions you could answer yourself, and \
 finish with a report as your handbook's \"Your report\" describes. Before the report, run the retrospective from \
 `omega-skill-craft`: if this run exposed a gap or a correction, make the smallest skill edit that would have prevented \
 it; otherwise change nothing. The retrospective is for you: leave it out of the report.";
-    let frame = match &run.kind {
+    match &run.kind {
         RunKind::Chat => format!(
             "You are talking with {}, the {} of {} and the person you work for. Every procedure, preference or \
 correction they teach you becomes a skill edit, now, not a promise: update the right skill before your reply ends, \
@@ -415,8 +384,212 @@ the same time as your other work, so do only this: anything else you are doing c
             s.company.ceo_name
         ),
         RunKind::ReplyCheck { .. } | RunKind::Nudge { .. } | RunKind::Unanswered { .. } => watch_frame(s, run, autonomous),
+    }
+}
+
+/// A run's first message: its prompt, under a note Omega Star wrote when there is one. A resumed session
+/// keeps the system prompt it started with, so the note carries the run's frame too, except on a chat turn.
+/// The note is never stored in `run.prompt`, which holds only what the run was asked.
+pub fn first_message(s: &Snapshot, run: &Run) -> String {
+    let body = if run.limit_retries > 0 && s.resume {
+        LIMIT_RETRY_NOTE.to_string()
+    } else {
+        with_attachments(&run.prompt, &attachments_dir(&s.employee_dir, &run.id), &run.attachments)
     };
-    format!("{who}\n\n{frame}\n")
+    let parts: Vec<String> =
+        [(s.resume && !matches!(run.kind, RunKind::Chat)).then(|| frame(s, run)), opening_note(s, run)].into_iter().flatten().collect();
+    if parts.is_empty() {
+        return body;
+    }
+    format!(
+        "<omega-star>\nOmega Star wrote this note. It is not a message from {}.\n\n{}\n</omega-star>\n\n{body}",
+        s.company.ceo_name,
+        parts.join("\n\n")
+    )
+}
+
+const WORK_LINES: usize = 12;
+const TEAM_LINES: usize = 8;
+const NOTE_LINES: usize = 8;
+
+fn ended(r: &Run) -> Ts {
+    r.ended_at.unwrap_or(r.created_at)
+}
+
+/// The schedule and label of a quiet routine's run that succeeded without flagging anything.
+fn quiet_success(r: &Run) -> Option<(&str, &str)> {
+    match &r.kind {
+        RunKind::Scheduled { schedule_id, label, quiet: true, .. } if r.state == RunState::Succeeded && r.needs_you.is_empty() => {
+            Some((schedule_id, label))
+        }
+        _ => None,
+    }
+}
+
+/// How a finished run ended: the start and end of its report, or why it did not finish, and what it raised.
+fn result(r: &Run) -> String {
+    let mut t = if r.state == RunState::Succeeded {
+        r.summary.as_deref().filter(|s| !s.trim().is_empty()).map(|s| ends(s, 150)).unwrap_or_else(|| "no report".into())
+    } else {
+        format!("did not finish: {}", clip(&one_line(r.error.as_deref().unwrap_or(r.state.as_str())), 150))
+    };
+    if let Some(raised) = r.needs_you.first() {
+        t += &format!(" (you raised: {})", clip(&one_line(raised), 120));
+    }
+    t
+}
+
+/// One line per run with its time, `line` writing each; a quiet routine's successful unflagged runs
+/// fold into one line per schedule at the newest one's time, led by `lead`. A run is said to reach
+/// someone when it is one of `parents`: it asked or delegated something.
+fn run_lines<'a>(runs: impl Iterator<Item = &'a Run>, lead: &str, parents: &HashSet<String>, line: impl Fn(&Run) -> String) -> Vec<(Ts, String)> {
+    let mut lines = vec![];
+    let mut folds: Vec<(&str, &str, Vec<&Run>)> = vec![];
+    for r in runs {
+        match quiet_success(r) {
+            Some((id, label)) => match folds.iter_mut().find(|f| f.0 == id) {
+                Some(f) => f.2.push(r),
+                None => folds.push((id, label, vec![r])),
+            },
+            None => lines.push((ended(r), line(r))),
+        }
+    }
+    for (_, label, runs) in folds {
+        let newest = *runs.iter().max_by_key(|r| ended(r)).expect("a fold has a run");
+        if runs.len() == 1 {
+            lines.push((ended(newest), line(newest)));
+            continue;
+        }
+        let oldest = runs.iter().map(|r| ended(r)).min().expect("a fold has a run");
+        let reached = runs.iter().filter(|r| parents.contains(&r.id)).count();
+        let reach = if reached == 0 { "none reached anyone".to_string() } else { format!("{reached} reached someone") };
+        let latest = clip(&one_line(newest.summary.as_deref().unwrap_or("no report")), 140);
+        lines.push((
+            ended(newest),
+            format!("{lead}{label}: {} quiet runs since {}, {reach}. Latest ({}): {latest}", runs.len(), local_day(oldest), local_time(ended(newest))),
+        ));
+    }
+    lines
+}
+
+/// Lines newest first, at most `max`, then how many were left out.
+fn newest_first(mut lines: Vec<(Ts, String)>, max: usize) -> Vec<String> {
+    lines.sort_by(|a, b| b.0.cmp(&a.0));
+    let left = lines.len().saturating_sub(max);
+    let mut v: Vec<String> = lines.into_iter().take(max).map(|(_, l)| l).collect();
+    if left > 0 {
+        v.push(format!("({left} older {} left out)", if left == 1 { "entry" } else { "entries" }));
+    }
+    v
+}
+
+/// The note at the top of a run's first message: the time, what waits, what the employee did lately,
+/// what their team finished, what else is running and which notes changed. With `since`, only what is
+/// new since then. `None` when the run gets no note, and for a quiet routine with nothing new, so its
+/// first message stays the same from run to run.
+fn opening_note(s: &Snapshot, run: &Run) -> Option<String> {
+    let o = s.opening.as_ref()?;
+    let ceo = &s.company.ceo_name;
+    let since = o.since.is_some();
+    let new = |t: Ts| o.since.map_or(true, |since| t > since);
+    let mut sections: Vec<(String, Vec<String>)> = vec![];
+
+    let mut waiting = vec![];
+    for c in o.checks.iter().filter(|c| c.due_at <= o.now && new(c.due_at)) {
+        waiting.push(format!("Check due {}: {} (check id `{}`). `my_checks` has how.", local_day(c.due_at), clip(&one_line(&c.what), 300), c.id));
+    }
+    let later = o.checks.iter().filter(|c| c.due_at > o.now).count();
+    if !since && later > 0 {
+        waiting.push(if later == 1 { "1 more open check is not due yet.".to_string() } else { format!("{later} more open checks are not due yet.") });
+    }
+    for (at, message) in o.cards.iter().filter(|(at, _)| new(*at)) {
+        waiting.push(format!("Card to {ceo} since {}, not answered yet: {}", local_time(*at), clip(&one_line(message), 300)));
+    }
+    for (r, who) in o.waiting_on.iter().filter(|(r, _)| new(r.created_at)) {
+        let kind = r.kind.as_str();
+        let kind = kind[..1].to_uppercase() + &kind[1..];
+        let sent = r.delivery.as_ref().map_or(r.created_at, |d| d.sent_at);
+        let due = r.due_at.map(|d| format!(", due {}", local_day(d))).unwrap_or_default();
+        waiting.push(format!(
+            "{kind} to {who}, sent {}{due}: {} (request id `{}`), {}",
+            local_day(sent),
+            clip(&one_line(&r.message), 300),
+            r.id,
+            watch_status(r)
+        ));
+    }
+    for p in o.proposals.iter().filter(|p| new(p.created_at)) {
+        waiting.push(format!(
+            "Hire proposal for {}, {}, waiting on {ceo} since {} (proposal id `{}`)",
+            p.draft.name,
+            p.draft.title,
+            local_day(p.created_at),
+            p.id
+        ));
+    }
+    sections.push((if since { "Waiting, new since your last turn here:" } else { "Waiting:" }.into(), waiting));
+
+    let what = |r: &Run| match &r.kind {
+        RunKind::Chat | RunKind::Answered { chat: true, .. } => format!("chat with {ceo}"),
+        RunKind::Reply { label, task: false, .. } => format!("reply in your thread on '{label}'"),
+        RunKind::Reply { label, task: true, .. } | RunKind::Task { label, .. } => format!("your task '{label}'"),
+        k => kind_label(k),
+    };
+    let wrote = |r: &Run| if r.omega_wrote { "Omega Star".to_string() } else { ceo.clone() };
+    let work = run_lines(o.work.iter(), "", &o.parents, |r| {
+        let said = if r.kind.is_conversation() { format!(" {}: \"{}\" You:", wrote(r), clip(&one_line(&r.prompt), 160)) } else { String::new() };
+        format!("{}, {}:{said} {}", local_time(ended(r)), what(r), result(r))
+    });
+    let title = if since {
+        "What you did elsewhere since your last turn here, newest first."
+    } else {
+        "What you have been doing, last 7 days, newest first. Each line keeps how the report began and how it ended."
+    };
+    sections.push((title.into(), newest_first(work, WORK_LINES)));
+
+    let mut team = vec![];
+    let mut names: Vec<&str> = vec![];
+    for (name, _) in &o.team {
+        if !names.contains(&name.as_str()) {
+            names.push(name);
+        }
+    }
+    for name in names {
+        let runs = o.team.iter().filter(|(n, _)| n == name).map(|(_, r)| r);
+        team.extend(run_lines(runs, &format!("{name}, "), &o.parents, |r| format!("{name}, {} ({}): {}", kind_label(&r.kind), local_time(ended(r)), result(r))));
+    }
+    sections.push((format!("From your team since your last {}:", if since { "turn here" } else { "run" }), newest_first(team, TEAM_LINES)));
+
+    let running = o
+        .running
+        .iter()
+        .map(|r| {
+            let said = if r.kind.is_conversation() {
+                format!(": {} {} \"{}\"", wrote(r), if r.omega_wrote { "wrote" } else { "said" }, clip(&one_line(&r.prompt), 150))
+            } else {
+                String::new()
+            };
+            format!("{}, started {}{said}", what(r), local_time(r.started_at.unwrap_or(r.created_at)))
+        })
+        .collect();
+    sections.push(("Also running now, in your other conversations. Do not repeat what they do outside, such as sending, posting or paying:".into(), running));
+
+    let mut notes: Vec<String> = o.notes.iter().take(NOTE_LINES).map(|(file, at)| format!("`workspace/{file}` ({})", local_time(*at))).collect();
+    if o.notes.len() > NOTE_LINES {
+        notes.push(format!("+{} more", o.notes.len() - NOTE_LINES));
+    }
+    sections.push((format!("Your notes changed {}:", if since { "since then" } else { "this week" }), notes));
+
+    let now = format!("Now: {}.", o.now.with_timezone(&chrono::Local).format("%A %-d %B %Y, %-I:%M %P"));
+    let sections: Vec<String> = sections
+        .into_iter()
+        .filter(|(_, lines)| !lines.is_empty())
+        .map(|(title, lines)| format!("{title}\n{}", lines.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n")))
+        .collect();
+    if sections.is_empty() && since && matches!(run.kind, RunKind::Scheduled { quiet: true, .. }) {
+        return None;
+    }
+    Some(std::iter::once(now).chain(sections).collect::<Vec<_>>().join("\n\n"))
 }
 
 /// How to answer in a conversation with the CEO outside the ongoing chat: a thread on a report, or a
@@ -512,9 +685,6 @@ fn tidy_frame(s: &Snapshot, reason: TidyReason) -> String {
             }
             b += "\n";
         }
-    }
-    if !s.checks.is_empty() {
-        b += "Your open checks are in your handbook.\n\n";
     }
 
     let steps = if reason == TidyReason::Approved {
