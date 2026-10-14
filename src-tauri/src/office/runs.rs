@@ -450,6 +450,12 @@ impl Office {
                 None => p,
             });
         }
+        // Held before the run is saved back to the queue, so no pump claims it straight into the limit,
+        // and held too when it is out of retries, so other queued runs do not start into it.
+        if hit_limit(cancelled, &ended) {
+            let reset = ended.as_ref().ok().and_then(|e| e.limited);
+            self.hold_until(reset.unwrap_or_else(|| now() + chrono::Duration::minutes(15)));
+        }
         if requeue_for_limit(cancelled, &ended, run.limit_retries) {
             if let Ok(e) = ended {
                 self.requeue_after_limit(run, e);
@@ -544,8 +550,8 @@ impl Office {
         self.sink().org_changed();
     }
 
-    /// Puts a run the usage limit stopped back in the queue with what it changed so far, and holds the
-    /// office until the limit resets.
+    /// Puts a run the usage limit stopped back in the queue with what it changed so far. `execute` has
+    /// already held the office until the limit resets.
     fn requeue_after_limit(&self, mut run: Run, e: Ended) {
         let changes: Vec<SkillChange> = e.changes.iter().map(|c| c.change.clone()).collect();
         reset_for_requeue(&mut run, &changes);
@@ -564,7 +570,6 @@ impl Office {
             Ok(resumes) => log!("requeued {} after the usage limit (attempt {}, resumes {resumes})", run.id, run.limit_retries),
             Err(err) => log!("requeueing run {} after the usage limit failed: {err}", run.id),
         }
-        self.hold_until(e.limited.unwrap_or_else(|| now() + chrono::Duration::minutes(15)));
         self.sink().run_updated(&run);
         self.sink().org_changed();
     }
@@ -815,11 +820,12 @@ enum Gate {
 }
 
 /// The office-wide holds on a queued run, in order: the usage limit holds every run (a chat would fail
-/// the same way); routines wait for the right account (conversations do not); a tidy waits while its
-/// employee is talking with you, so it never tidies a skill the conversation is still changing; and a
-/// dark wake starts no background work. Pure.
+/// the same way); work you are not in waits for the right account; a tidy waits while its employee is
+/// talking with you, so it never tidies a skill the conversation is still changing; and a dark wake
+/// starts no work you are not in. A report coming back as a chat turn is not you: nobody may be
+/// watching when it lands. Pure.
 fn gate(kind: &RunKind, held: bool, account_ok: bool, talking: bool, awake: bool) -> Gate {
-    let background = !kind.is_conversation();
+    let background = !matches!(kind, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. });
     if held || (background && !account_ok) || (matches!(kind, RunKind::Tidy { .. }) && talking) || (background && !awake) {
         Gate::Skip
     } else {
@@ -827,9 +833,14 @@ fn gate(kind: &RunKind, held: bool, account_ok: bool, talking: bool, awake: bool
     }
 }
 
+/// The usage limit stopped the run, and you did not. Pure.
+fn hit_limit(cancelled: bool, ended: &Result<Ended>) -> bool {
+    !cancelled && matches!(ended, Ok(Ended { outcome: Some(o), .. }) if !o.ok && o.limit)
+}
+
 /// A run the usage limit stopped goes back to the queue, up to three times. Pure.
 fn requeue_for_limit(cancelled: bool, ended: &Result<Ended>, retries: u32) -> bool {
-    !cancelled && retries < 3 && matches!(ended, Ok(Ended { outcome: Some(o), .. }) if !o.ok && o.limit)
+    retries < 3 && hit_limit(cancelled, ended)
 }
 
 /// A run back in the queue after the usage limit: as if it never started, keeping what it changed.
@@ -983,6 +994,10 @@ mod tests {
         assert_eq!(gate(&RunKind::Chat, false, true, false, false), Gate::Claim);
         assert_eq!(gate(&tidy, false, true, true, true), Gate::Skip);
         assert_eq!(gate(&tidy, false, true, false, true), Gate::Claim);
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true };
+        assert_eq!(gate(&came, false, false, false, true), Gate::Skip);
+        assert_eq!(gate(&came, false, true, false, false), Gate::Skip);
+        assert_eq!(gate(&came, false, true, false, true), Gate::Claim);
     }
 
     #[test]
@@ -995,6 +1010,8 @@ mod tests {
         assert!(!requeue_for_limit(true, &limited, 0));
         assert!(!requeue_for_limit(false, &ended(Some(outcome(true, "success", "Done.", false)), ""), 0));
         assert!(!requeue_for_limit(false, &Err(AppError::internal("could not start")), 0));
+        assert!(hit_limit(false, &limited), "out of retries, it still holds the office");
+        assert!(!hit_limit(true, &limited));
     }
 
     #[test]

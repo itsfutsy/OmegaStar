@@ -755,7 +755,7 @@ pub(super) fn source_chain(db: &Store, ceo: &str, from: &str) -> Result<SourceCh
         break;
     }
     if chain.sender.is_empty() {
-        chain.sender = "the colleague who sent it".into();
+        chain.sender = "the sender".into();
     }
     Ok(chain)
 }
@@ -1062,8 +1062,9 @@ before you finish. Otherwise finish now: Omega Star starts a new run for you whe
         fs::write(dir.join("transcript.jsonl"), lines.join("\n") + "\n").unwrap();
     }
 
-    fn source(o: &Office0, from: &Run) -> String {
-        source_text(&source_chain(&o.db, "Pat", &from.id).unwrap(), &o.dir.join("runs"))
+    /// Where the hand-off `r` began, as the run being prepared for it is told: walked from its upstream.
+    fn source(o: &Office0, r: &Run) -> String {
+        source_text(&source_chain(&o.db, "Pat", r.upstream().unwrap()).unwrap(), &o.dir.join("runs"))
     }
 
     #[test]
@@ -1071,6 +1072,7 @@ before you finish. Otherwise finish now: Omega Star starts a new run for you whe
         let o = office();
         let ada = employee(&o.db, "Ada", None);
         let bo = employee(&o.db, "Bo", Some(&ada.id));
+        let cy = employee(&o.db, "Cy", None);
         let chat = Some(ada.chat_session.as_str());
         let turn = |prompt: &str, ago: i64| run(&o.db, &ada, RunKind::Chat, prompt, RunState::Succeeded, ago, chat);
         turn("First, hello.", 50);
@@ -1084,9 +1086,17 @@ before you finish. Otherwise finish now: Omega Star starts a new run for you whe
 
         let d = run(&o.db, &bo, delegated(&delegating), "Count the stock.", RunState::Running, 30, None);
         steer(&o, &d, &["Use last week's sheet."]);
-        let text = source(&o, &d);
         assert_eq!(
-            text,
+            source(&o, &d),
+            "This began in Pat's chat with Ada. Pat's last messages there, oldest first:\n\
+> \"Second, the plan.\"\n\
+> \"Third, the budget.\"\n\
+> \"Fourth, get Bo to count the stock. Only the warehouse.\""
+        );
+        // Bo asks Cy on: what Pat wrote into Bo's run on the way comes with it.
+        let a = run(&o.db, &cy, asked(&d, false), "Where is last week's sheet?", RunState::Running, 20, None);
+        assert_eq!(
+            source(&o, &a),
             "This began in Pat's chat with Ada. Pat's last messages there, oldest first:\n\
 > \"Second, the plan.\"\n\
 > \"Third, the budget.\"\n\
@@ -1126,7 +1136,10 @@ quotes them:\n> \"Pat approved what was blocked: - Bash: npm publish\""
         assert_eq!(from(&bare), "This began when Pat started a run for Ada from the app, with no instructions.");
 
         let lost = run(&o.db, &bo, RunKind::Delegated { parent_run_id: "gone".into() }, "Count the stock.", RunState::Running, 0, None);
-        assert_eq!(source(&o, &lost), "Where this began is no longer on record, so treat it as Bo's own request.");
+        assert_eq!(source(&o, &lost), "Where this began is no longer on record, so treat it as the sender's own request.");
+        let cy = employee(&o.db, "Cy", None);
+        let on = run(&o.db, &cy, asked(&lost, false), "Which stock?", RunState::Running, 0, None);
+        assert_eq!(source(&o, &on), "Where this began is no longer on record, so treat it as Bo's own request.");
     }
 
     #[test]

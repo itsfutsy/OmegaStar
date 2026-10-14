@@ -362,7 +362,8 @@ pub fn merge_outcome(prev: Outcome, next: Outcome) -> Outcome {
 }
 
 /// How a stored run ended, from its transcript: every result segment merged. `None` when the run did
-/// not end its turn (it was killed mid-turn).
+/// not end its turn (it was killed mid-turn). A run the usage limit put back in the queue appends each
+/// attempt to the same transcript, so a new session's init opens a turn the earlier result did not end.
 pub fn transcript_outcome(transcript: &str, home: &Path) -> Option<Outcome> {
     let mut outcome: Option<Outcome> = None;
     let mut ended = false;
@@ -380,6 +381,7 @@ pub fn transcript_outcome(transcript: &str, home: &Path) -> Option<Outcome> {
                 }
             }
             Some("assistant" | "user") => ended = false,
+            Some("system") if v["subtype"] == "init" => ended = false,
             _ => {}
         }
     }
@@ -672,6 +674,12 @@ mod tests {
         // A sub-agent still finishing after the final result does not reopen the turn.
         let nested = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"done"}]},"parent_tool_use_id":"toolu_sub"}"#;
         assert!(transcript_outcome(&format!("{MULTI_RESULT}\n{nested}"), home()).is_some());
+        // A retry after the usage limit that stopped before its first message has not ended.
+        let status = r#"{"type":"system","subtype":"status","status":"requesting"}"#;
+        assert!(transcript_outcome(&format!("{LIMIT}\n{INIT}\n{status}"), home()).is_none());
+        let retried = transcript_outcome(&format!("{LIMIT}\n{INIT}\n{MULTI_RESULT}"), home()).expect("an outcome");
+        assert!(!retried.limit);
+        assert_eq!(retried.turns, 6, "both attempts' turns");
     }
 
     #[test]

@@ -247,11 +247,17 @@ pub fn report_label(kind: &RunKind) -> String {
 }
 
 /// One turn of a conversation as a task's context quotes it: what you said, then the
-/// employee's answer, or `pending` while it is still coming.
+/// employee's answer, or `pending` while it is still coming. A message Omega Star wrote is never
+/// quoted as yours.
 fn exchange(ceo: &str, r: &Run, pending: &str) -> String {
     let mut text = String::new();
     if !r.prompt.trim().is_empty() {
-        text += &format!("- {ceo}: {}\n", clip(&one_line(&r.prompt), 300));
+        let who = match &r.kind {
+            RunKind::Answered { .. } => "A colleague's report came back".to_string(),
+            _ if r.omega_wrote => format!("Omega Star, from what {ceo} did in the app"),
+            _ => ceo.to_string(),
+        };
+        text += &format!("- {who}: {}\n", clip(&one_line(&r.prompt), 300));
     }
     match r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(s) => text += &format!("- You: {}\n", clip(&one_line(s), 400)),
@@ -326,4 +332,29 @@ pub fn task_label(text: &str, files: &[String]) -> String {
     }
     let mut chars = label.chars();
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_never_quotes_omega_stars_words_as_yours() {
+        let at = chrono::Utc::now();
+        let mut turn = Run::new("e1", RunKind::Chat, "Count the stock.".into(), at);
+        turn.summary = Some("On it.".into());
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true };
+        let mut answered = Run::new("e1", came, "Bo answered your question. Their answer: 40 boxes.".into(), at);
+        answered.omega_wrote = true;
+        answered.summary = Some("Bo counted 40 boxes.".into());
+        let reply = RunKind::Reply { to_run_id: "r2".into(), label: "Manual run".into(), task: false };
+        let mut tap = Run::new("e1", reply, "Pat approved what was blocked.".into(), at);
+        tap.omega_wrote = true;
+        assert_eq!(
+            context("Pat", &[turn, answered, tap]),
+            "- Pat: Count the stock.\n- You: On it.\n\
+- A colleague's report came back: Bo answered your question. Their answer: 40 boxes.\n- You: Bo counted 40 boxes.\n\
+- Omega Star, from what Pat did in the app: Pat approved what was blocked.\n- You: (still working on this in that conversation)\n"
+        );
+    }
 }
