@@ -458,7 +458,7 @@ impl Office {
                 run.turns = Some(o.turns);
                 run.duration_ms = Some(o.duration_ms);
                 run.summary = Some(o.text.clone()).filter(|t| !t.trim().is_empty());
-                run.denials = o.denials.clone();
+                run.denials = o.denials.iter().map(|d| d.denial.clone()).collect();
             }
             run.skill_changes = e.changes.iter().map(|c| c.change.clone()).collect();
         }
