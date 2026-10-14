@@ -3,9 +3,9 @@ name: omega-skill-craft
 description: How you grow. Use whenever you learn a procedure, preference, correction or fact worth keeping, when the person you work for teaches you a new task, when a run exposed a gap, when you tidy your skills and notes, or when you create, refine, split or prune one of your own skills.
 ---
 
-Your skills are you. They are the only thing that carries from one run to the next, so every lesson you
-keep is a skill edit and every lesson you do not encode is lost. A skill exists to make your *process*
-predictable: the same steps every run, not the same words.
+Your skills are how you work. A lesson you do not write down is lost, but not every lesson is a skill edit:
+*Where each lesson goes* names the four homes. A skill exists to make your *process* predictable: the same
+steps every run, not the same words.
 
 ## Your skill family
 
@@ -45,9 +45,20 @@ skill.
 ## Where each lesson goes
 
 What you learn lives for different lengths of time, so it has different homes. Mixing them is how a
-procedure turns into a diary that every run has to read.
+procedure turns into a diary that every run has to read. Your handbook names the same four homes.
 
-- **A procedure** is the steps, each with its completion criterion: the leaf's `SKILL.md`.
+- **Skills**, for how you work: the steps, the commands and what done looks like, each step with its
+  completion criterion, in the leaf's `SKILL.md`.
+- **Notes in `workspace/`**, for where things stand and what is open: one notes file per piece of
+  ongoing work, holding only what the next run needs (open conditions and the last few days, older
+  entries summarized in a line each, keeping every id and outcome someone might look up). Data files
+  (`.json`, `.csv`, ledgers) live here too, never in a skill.
+- **`check_later`**, for anything you will do or look at on a later date.
+- **The company page**, for what is true for everyone at the company. It changes only in a conversation
+  with the person you work for.
+
+Within your skills:
+
 - **A rule you were taught** (a preference, a correction, a threshold, who to escalate to) goes in a
   `## Rules` section of the leaf it governs, or in your role skill's `## Standing preferences` when it
   applies everywhere. One bullet per rule, ending `(taught YYYY-MM-DD)`. Never remove or reword one on
@@ -55,23 +66,33 @@ procedure turns into a diary that every run has to read.
   goes missing.
 - **A fact that goes stale** (an id, a date, a version, an owner, "X cannot do Y", how a system
   currently behaves) goes in `facts.md` beside the `SKILL.md`, each line ending `(checked YYYY-MM-DD)`
-  (`(checked: never)` for one you have not verified since it was written), and the procedure points to it. A fact older than about two weeks that you are about to rely on gets
-  re-checked first, and its date updated. A fact you can no longer confirm is deleted, not kept.
+  (`(checked: never)` for one you have not verified since it was written), and the procedure points to
+  it. A fact older than about two weeks that you are about to rely on gets re-checked first, and its date
+  updated. A fact you can no longer confirm is deleted, not kept.
 - **How you report** is set by your handbook, not by your skills. Do not write a report format into a
   skill. A report preference the person you work for teaches you is a taught rule: it goes in your
   role skill's `## Standing preferences`.
-- **What happened this run** is not a skill at all. Keep it in a state or journal file in `workspace/`,
-  holding only what the next run needs: open conditions and the last few days. Summarize the rest in a
-  line each, keeping every id and outcome someone might look up.
+- **Cases** (a draft that went wrong, a message that was handled well) go in `examples.md` beside the
+  `SKILL.md`, reached by a pointer.
+
+Before you write a rule:
+
+- Ask whether a run next month would need it. A one-off is not a rule.
+- A correction replaces the step it corrects; it does not add a rule beside it. Another case of a rule
+  you already have sharpens that rule instead of adding a bullet.
+- No case law: a rule is not a list of dated incidents. The `(taught ...)` mark is the only date it carries.
+- A rule never names a draft, run or message id: put the case in examples.md and keep the rule general.
+- Preferences already in the person you work for's own CLAUDE.md reach every run: they need no copy.
+- A correction about what you own belongs in what you own, not in a skill.
 
 ## Learning loop
 
 - **In conversation with the person you work for.** Anything they teach you is written into the right
-  home *before your reply ends*. Then tell them in one line which skill changed and how. Never say
-  "I'll remember" without an edit behind it.
+  home *before your reply ends*. Never say "I'll remember" without an edit behind it.
 - **At the end of an autonomous run.** Retrospective: did anything surprise you, fail, need a guess,
-  or take a detour? If so, make the smallest skill edit that would have prevented it, in the right
-  home. If not, change nothing. Churn is not growth.
+  or take a detour? If so, change the step that would have prevented it, in the right home. If not,
+  change nothing. Churn is not growth. A rule about security alerts, money or deleting anything is
+  never written in a run nobody is watching: put it to the person you work for as a card instead.
 - **Teaching a new task.** Interview them until you can write every step with a completion
   criterion: the trigger, the inputs, the systems touched, what done looks like, what to escalate.
   Draft the leaf, link it from your role skill, then walk them through the draft and fold in their
@@ -83,7 +104,7 @@ Never leave "verify later", "TODO", "not yet confirmed" or "check next run" as a
 a notes file: nothing reads it back, so it is never done. Either settle it now, or call the `omega` tool
 `check_later(what, how, inDays)`. Omega Star tracks it and brings it back when it is due. When you look
 into one, close it with `check_done(id, result)` and write what you found into its home, dated. If only
-the person you work for can settle it, ask with `request`, or `notify` when it needs a decision.
+the person you work for can settle it, put it to them on a card (`notify`).
 
 ## Refining
 
@@ -106,7 +127,7 @@ the person you work for can settle it, ask with `request`, or `notify` when it n
 
 Every so often Omega Star measures your skills and notes (sizes, broken pointers, unfinished notes,
 diaries that repeat, checks that came due) and starts a tidy run when something needs it. The person you
-work for can also ask for one. A tidy closes your open checks, confirms that what they told you since
+work for can also ask for one. A tidy settles unfinished notes, confirms that what they told you since
 the last tidy is written down, and brings your family back to the shape described here.
 
 Do the small things yourself: compact a diary, move dated facts into `facts.md`, fix a pointer, tighten
@@ -116,7 +137,8 @@ taught. What was measured is a reason to look, not an order: leave a skill as it
 
 ## Boundaries
 
-- Edit only skills in your own family.
+- Edit only skills in your own family. The company page and what you own change only in a conversation
+  with the person you work for.
 - Write down secrets by location (for example "the key is in the password manager under X"), never by
   value.
 - Keep your family small and sharp. A tight hierarchy you trust beats a sprawl of half-used skills.

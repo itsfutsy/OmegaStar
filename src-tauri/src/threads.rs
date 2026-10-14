@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 /// Turns a new task is told about from the conversation it started in.
 const CONTEXT_TURNS: usize = 8;
+/// How far back a new task is told about that conversation: older turns are likely about something else.
+const CONTEXT_WINDOW: chrono::Duration = chrono::Duration::hours(2);
 /// A task's name, cut from your first message.
 const TASK_LABEL_CHARS: usize = 48;
 
@@ -265,23 +267,31 @@ pub fn report_label(kind: &RunKind) -> String {
     }
 }
 
-/// One turn of a conversation as a task's context quotes it: what you said, then the
-/// employee's answer, or `pending` while it is still coming. A message Omega Star wrote is never
-/// quoted as yours.
-fn exchange(ceo: &str, r: &Run, pending: &str) -> String {
+/// A moment on your local clock, as a task's context labels a turn: "2:15 pm".
+fn clock(t: Ts) -> String {
+    t.with_timezone(&chrono::Local).format("%-I:%M %P").to_string()
+}
+
+/// One turn of a conversation as a task's context quotes it, each line labelled with its time: what
+/// you said at `asked`, then the employee's answer, or `pending` while it is still coming. A message
+/// Omega Star wrote is never quoted as yours.
+fn exchange(ceo: &str, r: &Run, asked: &str, pending: &str) -> String {
     let mut text = String::new();
     if !r.prompt.trim().is_empty() {
         let who = match &r.kind {
-            RunKind::Answered { .. } => "A colleague's report came back".to_string(),
+            RunKind::Answered { .. } => "a colleague's report came back".to_string(),
             _ if r.omega_wrote => format!("Omega Star, from what {ceo} did in the app"),
             _ => ceo.to_string(),
         };
-        text += &format!("- {who}: {}\n", clip(&one_line(&r.prompt), 300));
+        text += &format!("- {asked}, {who}: {}\n", clip(&one_line(&r.prompt), 300));
     }
+    let answered = r.ended_at.map(clock).unwrap_or_else(|| asked.to_string());
     match r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-        Some(s) => text += &format!("- You: {}\n", clip(&one_line(s), 400)),
-        None if r.state.is_finished() => text += &format!("- You: (your reply did not finish: {})\n", r.error.as_deref().unwrap_or("no report")),
-        None => text += &format!("- You: ({pending})\n"),
+        Some(s) => text += &format!("- {answered}, you: {}\n", clip(&one_line(s), 400)),
+        None if r.state.is_finished() => {
+            text += &format!("- {answered}, you: (your reply did not finish: {})\n", r.error.as_deref().unwrap_or("no report"))
+        }
+        None => text += &format!("- {answered}, you: ({pending})\n"),
     }
     text
 }
@@ -296,19 +306,22 @@ fn first_line(s: &str) -> String {
         .unwrap_or_default()
 }
 
-/// What a task you start mid-conversation is told about that conversation: its newest turns, oldest
-/// first, each clipped. `runs` is the conversation in order; a report opening it is quoted as one.
-pub fn context(ceo: &str, runs: &[Run]) -> String {
-    let skipped = runs.len().saturating_sub(CONTEXT_TURNS);
+/// What a task you start mid-conversation is told about that conversation: its turns from the last
+/// two hours, at most the newest few, oldest first, each clipped and labelled with its time. `runs` is
+/// the conversation in order; a report opening it is quoted as one.
+pub fn context(ceo: &str, runs: &[Run], now: Ts) -> String {
+    let recent: Vec<&Run> = runs.iter().filter(|r| now - r.created_at <= CONTEXT_WINDOW).collect();
+    let skipped = recent.len().saturating_sub(CONTEXT_TURNS);
     let mut text = String::new();
     if skipped > 0 {
         text += &format!("- ({skipped} earlier {} omitted)\n", if skipped == 1 { "turn" } else { "turns" });
     }
-    for r in runs.iter().skip(skipped) {
+    for r in recent.into_iter().skip(skipped) {
+        let at = clock(r.created_at);
         if r.kind.is_conversation() {
-            text += &exchange(ceo, r, "still working on this in that conversation");
+            text += &exchange(ceo, r, &at, "still working on this in that conversation");
         } else if let Some(s) = r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            text += &format!("- Your report: {}\n", clip(&one_line(s), 400));
+            text += &format!("- {}, your report: {}\n", clock(r.ended_at.unwrap_or(r.created_at)), clip(&one_line(s), 400));
         }
     }
     text
@@ -422,20 +435,43 @@ mod tests {
     #[test]
     fn context_never_quotes_omega_stars_words_as_yours() {
         let at = chrono::Utc::now();
+        let t = clock(at);
         let mut turn = Run::new("e1", RunKind::Chat, "Count the stock.".into(), at);
         turn.summary = Some("On it.".into());
+        turn.ended_at = Some(at);
         let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true };
         let mut answered = Run::new("e1", came, "Bo answered your question. Their answer: 40 boxes.".into(), at);
         answered.omega_wrote = true;
         answered.summary = Some("Bo counted 40 boxes.".into());
+        answered.ended_at = Some(at);
         let reply = RunKind::Reply { to_run_id: "r2".into(), label: "Manual run".into(), task: false, card: false };
         let mut tap = Run::new("e1", reply, "Pat approved what was blocked.".into(), at);
         tap.omega_wrote = true;
         assert_eq!(
-            context("Pat", &[turn, answered, tap]),
-            "- Pat: Count the stock.\n- You: On it.\n\
-- A colleague's report came back: Bo answered your question. Their answer: 40 boxes.\n- You: Bo counted 40 boxes.\n\
-- Omega Star, from what Pat did in the app: Pat approved what was blocked.\n- You: (still working on this in that conversation)\n"
+            context("Pat", &[turn, answered, tap], at),
+            format!(
+                "- {t}, Pat: Count the stock.\n- {t}, you: On it.\n\
+- {t}, a colleague's report came back: Bo answered your question. Their answer: 40 boxes.\n- {t}, you: Bo counted 40 boxes.\n\
+- {t}, Omega Star, from what Pat did in the app: Pat approved what was blocked.\n- {t}, you: (still working on this in that conversation)\n"
+            )
         );
+    }
+
+    #[test]
+    fn context_keeps_only_the_last_two_hours() {
+        let now = chrono::Utc::now();
+        let turn = |mins: i64, said: &str| {
+            let at = now - chrono::Duration::minutes(mins);
+            let mut r = Run::new("e1", RunKind::Chat, said.into(), at);
+            r.state = RunState::Succeeded;
+            r.ended_at = Some(at);
+            r.summary = Some("Done.".into());
+            r
+        };
+        let text = context("Pat", &[turn(180, "Book the venue."), turn(30, "Order the chairs.")], now);
+        assert!(!text.contains("Book the venue."), "{text}");
+        let at = clock(now - chrono::Duration::minutes(30));
+        assert!(text.starts_with(&format!("- {at}, Pat: Order the chairs.\n- {at}, you: Done.\n")), "{text}");
+        assert_eq!(context("Pat", &[turn(180, "Book the venue.")], now), "");
     }
 }
