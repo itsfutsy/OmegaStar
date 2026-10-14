@@ -67,20 +67,22 @@ impl Office {
         }
         let ceo = ceo_of(&db)?;
         db.tx(|| {
-            for e in db.employees()? {
-                self.seed_review(&db, &e, &ceo)?;
+            for (nth, e) in db.employees()?.iter().enumerate() {
+                self.seed_review(&db, e, &ceo, nth)?;
             }
             db.set_reviews_seeded()
         })
     }
 
-    /// Adds `e`'s weekly review, Monday 7 am. It counts from now, so it never fires for a slot already past.
-    pub(super) fn seed_review(&self, db: &Store, e: &Employee, ceo: &str) -> Result<()> {
+    /// Adds `e`'s weekly review on Monday: 7 am for the first employee, then ten minutes later for each one
+    /// after (`nth`), up to 7:50, so the team does not all start at once. It counts from now, so it never
+    /// fires for a slot already past.
+    pub(super) fn seed_review(&self, db: &Store, e: &Employee, ceo: &str, nth: usize) -> Result<()> {
         let s = Schedule {
             id: uuid::Uuid::new_v4().to_string(),
             employee_id: e.id.clone(),
             label: "Weekly review".into(),
-            cron: "0 7 * * 1".into(),
+            cron: format!("{} 7 * * 1", nth % 6 * 10),
             instruction: review_instruction(ceo),
             enabled: true,
             misfire: Misfire::CatchUp,
@@ -295,9 +297,9 @@ fn review_instruction(ceo: &str) -> String {
 1. Measure your number with a command you can rerun, and compare it with last week. If you have no number yet, pick one that shows your objective moving.
 2. For each routine, decide to keep it, reshape it or stop it, and change your own schedules to match.
 3. Act on the biggest lever your remit allows, or put the decision to {ceo} as a card with your recommendation.
-4. Close every open check with check_done, or close it and set a new check_later for the day it can be settled.
+4. Close every check that is due or overdue with check_done, or close it and set a new check_later for the day it can be settled. Leave checks that are not due yet.
 5. Remove each blocker you hit twice: fix it, hand it to a colleague, or raise one chore card.
-6. Check your skills and routing rules against the current team, and remove any rule your runs wrote this week that a run next month would not need. Leave every rule {ceo} taught you (marked taught or confirmed) as it is: to merge or drop one, record it with propose_changes.
+6. Check your skills and routing rules against the current team, and remove any rule your runs wrote this week that a run next month would not need. Leave every rule {ceo} taught you (marked taught or confirmed) as it is: to merge or drop one, put it to {ceo} on a card with your recommendation.
 7. Read what-you-own.md in your folder. If it is empty or out of date, write the version you propose there: the number you answer for, your limits, and what you decide alone. Omega Star puts the file back and shows {ceo} your version: only they set it.
 End with at most three lines. The first opens with your number."
     )
@@ -374,7 +376,11 @@ fn review_brief(db: &Store, e: &Employee, ceo: &str, since: Ts) -> Result<String
             rules.push(format!("- `{}` {}: \"{}\" ({}, {when})", rev.change.skill, rev.change.file, quote(&line), threads::report_label(&run.kind)));
         }
     }
-    rules.truncate(40);
+    if rules.len() > RULES_LISTED {
+        let more = rules.len() - RULES_LISTED;
+        rules.truncate(RULES_LISTED);
+        rules.push(format!("({more} more left out)"));
+    }
     if !rules.is_empty() {
         sections.push(format!(
             "Rules your runs wrote with nobody watching:\n{}\n\nKeep a rule only if a run next month needs it. A rule about security alerts, \
@@ -389,16 +395,27 @@ money or deleting anything should have been a card: remove it and raise the card
     Ok(format!("## What Omega Star counted since {}\n\n{}", day(since), sections.join("\n\n")))
 }
 
+/// How many rule lines a weekly review's brief lists.
+const RULES_LISTED: usize = 40;
+
 /// The lines a revision added: lines of `after` not in `before`, trimmed, leaving out blank lines,
-/// headings and anything shorter than four words. Pure.
+/// headings, anything shorter than four words, and records rather than rules: table rows and lines that
+/// open with a date, as a log's entries do. Pure.
 fn added_rule_lines(before: &str, after: &str) -> Vec<String> {
     let old: HashSet<&str> = before.lines().map(str::trim).collect();
+    let record = |l: &str| l.starts_with('|') || dated(l.trim_start_matches(['-', '*', ' ']));
     after
         .lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#') && !old.contains(l) && l.split_whitespace().count() >= 4)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !record(l) && !old.contains(l) && l.split_whitespace().count() >= 4)
         .map(String::from)
         .collect()
+}
+
+/// `l` opens with an ISO date, such as `2026-10-14`. Pure.
+fn dated(l: &str) -> bool {
+    let b = l.as_bytes();
+    b.len() >= 10 && b[..10].iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
 }
 
 #[cfg(test)]
@@ -481,6 +498,8 @@ mod tests {
             vec!["Archive security alerts from the bank without asking.", "Move spend over 50 to the shared sheet."]
         );
         assert!(added_rule_lines(after, after).is_empty());
+        let log = "| Handle | Followed on |\n| @ada | 2026-10-12 sent a hello |\n- 2026-10-12 followed @ada after her launch post\n2026-10-13: followed @bo, replied to his thread\nFollow back anyone who replies twice in a week.\n";
+        assert_eq!(added_rule_lines("", log), vec!["Follow back anyone who replies twice in a week."], "log and table lines are records, not rules");
     }
 
     #[test]
@@ -559,6 +578,12 @@ mod tests {
         assert!(brief.contains("- `ops` SKILL.md: \"Archive security alerts without asking anyone.\" (Inbox sweep, "), "{brief}");
         assert!(brief.ends_with("remove it and raise the card now."));
         assert!(!brief.contains('\u{2014}'));
+        let many: String = (1..=45).map(|i| format!("Reply to thread number {i} within the hour.\n")).collect();
+        let more = SkillRevision { id: uuid::Uuid::new_v4().to_string(), before: Some("# Ops\n".into()), after: Some(format!("# Ops\n{many}")), ..rev.clone() };
+        db.insert_revision(&ada.id, &more).unwrap();
+        let long = review_brief(&db, &ada, "Pat", since).unwrap();
+        assert_eq!(long.matches("\n- `ops` SKILL.md: ").count(), RULES_LISTED);
+        assert!(long.contains("\n(6 more left out)\n"), "{long}");
 
         let mut d = check(&bo.id, "Did signups move", t + chrono::Duration::days(1));
         d.created_at = t;
@@ -633,6 +658,7 @@ mod tests {
         assert!(r.review && r.enabled && !r.quiet);
         assert_eq!((r.label.as_str(), r.cron.as_str()), ("Weekly review", "0 7 * * 1"));
         assert_eq!(r.instruction, review_instruction("Pat"));
+        assert!(!r.instruction.contains("propose_changes"), "a review cannot propose: only a tidy can");
 
         // Re-timing keeps it the review.
         let draft = ScheduleDraft {

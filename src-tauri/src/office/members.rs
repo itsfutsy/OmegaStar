@@ -120,7 +120,7 @@ impl Office {
             own_skills::scaffold_role_skill(&skills_dir, &e, &granted)?;
             own_skills::install_craft(&skills_dir)?;
             Self::save_org(&db, &before, &after)?;
-            self.seed_review(&db, &e, &ceo_of(&db)?)?;
+            self.seed_review(&db, &e, &ceo_of(&db)?, db.employees()?.len().saturating_sub(1))?;
             e
         };
         if !picked.is_empty() {
