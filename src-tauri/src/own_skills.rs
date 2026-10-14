@@ -174,10 +174,37 @@ pub(crate) fn skill_dirs(skills_dir: &Path) -> Vec<(String, PathBuf)> {
     v
 }
 
+/// Folders a skill's scripts fill with dependencies and caches, and data files they write: neither is
+/// what the employee wrote, so snapshots leave them out.
+const UNRECORDED_DIRS: [&str; 5] = ["node_modules", "__pycache__", ".cache", ".venv", ".git"];
+const UNRECORDED_EXTS: [&str; 3] = ["json", "jsonl", "csv"];
+
+/// The files of a skill worth recording: `skill_files` without UNRECORDED_DIRS and data files.
+fn recorded_files(skill_dir: &Path) -> Vec<(String, PathBuf)> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let p = e.path();
+            if p.is_dir() {
+                if !UNRECORDED_DIRS.contains(&name.as_str()) {
+                    walk(&p, &r, out);
+                }
+            } else if !Path::new(&name).extension().map(|x| UNRECORDED_EXTS.iter().any(|u| x.eq_ignore_ascii_case(u))).unwrap_or(false) {
+                out.push((r, p));
+            }
+        }
+    }
+    let mut v = vec![];
+    walk(skill_dir, "", &mut v);
+    v.sort();
+    v
+}
+
 pub fn snapshot(skills_dir: &Path) -> Snapshot {
     let mut snap = Snapshot::new();
     for (skill, dir) in skill_dirs(skills_dir).into_iter().filter(|(s, _)| s != CRAFT_NAME) {
-        for (file, path) in skill_files(&dir) {
+        for (file, path) in recorded_files(&dir) {
             let small = fs::metadata(&path).map(|m| m.len() < SNAPSHOT_MAX_BYTES).unwrap_or(false);
             if let (true, Ok(text)) = (small, fs::read_to_string(&path)) {
                 snap.insert((skill.clone(), file), text);
