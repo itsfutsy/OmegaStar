@@ -4,7 +4,7 @@ import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openMember } from "../lib/router";
 import { toolName } from "../lib/rules";
-import { activityAt, didNotFinish, isStreak, isTeamWeek, lastFrom, lastReply, latestFinished, openCard, rowCardOpen, rowThreads, threadFocus } from "../lib/threads";
+import { activityAt, didNotFinish, isStreak, isTeamWeek, lastFrom, lastReply, latestFinished, openCard, rowThreads, threadFocus } from "../lib/threads";
 import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
 import { CardView } from "../components/conversation/CardView";
@@ -78,9 +78,13 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
   const teamWeek = isTeamWeek(t);
   const others = [...new Set(runsInRow.map((x) => x.root.employeeId))].filter((id) => id !== r.employeeId)
     .flatMap((id) => employees.find((x) => x.id === id) ?? []);
-  // A card waiting on you holds the row until you answer it, so Done steps aside.
-  const card = openCard(t);
-  const carded = rowCardOpen(t);
+  // Every card in the row waiting on you, each with the employee who raised it; a chore shows once, since Done
+  // answers everyone waiting on it. A card holds the row until you answer it, so Done steps aside.
+  const cards = runsInRow.flatMap((x) => openCard(x) ?? []).filter((c, i, all) => {
+    const ask = c.card?.ask;
+    return ask?.type !== "chore" || all.findIndex((o) => o.card?.ask.type === "chore" && o.card.ask.subject === ask.subject) === i;
+  });
+  const carded = cards.length > 0;
   return (
     <article className={`item ${open ? "item-open" : ""} ${status.unread ? "item-unread" : ""}`} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
       <div
@@ -105,13 +109,17 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
             <span>{teamWeek ? teamNames(runsInRow, employees) : title}</span>
           </span>}
           {!open && preview ? <span className="item-preview">{preview}</span> : null}
-          {!open && card ? <div className="item-card"><CardView run={card} e={e} onAnswer={(reply) => actions.answer(card, reply)} /></div> : null}
+          {open ? null : cards.map((c) => (
+            <div key={c.id} className="item-card">
+              <CardView run={c} e={employees.find((x) => x.id === c.employeeId) ?? e} onAnswer={(reply) => actions.answer(c, reply)} />
+            </div>
+          ))}
           {n > 0 || run.needsYou.length > 1 || (run.denials.length > 0 && run.needsYou.length > 0 && !done && !busy) || runsInRow.length > 1 ? (
             <span className="item-tags">
               {streak ? (
                 <span className="item-tag-err"><Icon name="alert" size={11} /> Failed {runsInRow.length} times in a row since {timeOrDay(runsInRow[0].root.createdAt)}</span>
               ) : runsInRow.length > 1 ? (
-                <span title="Everything this hand-off set off, in one row">{others.length ? `With ${others.map((x) => firstName(x.name)).join(", ")} · ` : ""}{runsInRow.length} runs</span>
+                <span title={teamWeek ? "The team's reviews this week, in one row" : "Everything this hand-off set off, in one row"}>{others.length ? `With ${others.map((x) => firstName(x.name)).join(", ")} · ` : ""}{runsInRow.length} runs</span>
               ) : null}
               {n > 0 ? (
                 <span className={busy ? "item-tag-live" : ""}>
