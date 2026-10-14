@@ -12,7 +12,7 @@ pub use stream::*;
 
 use crate::model::*;
 use serde_json::{json, Value};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -74,15 +74,30 @@ pub fn locate(override_path: Option<&str>) -> Option<PathBuf> {
     found.or_else(|| fallback_locations().into_iter().find(|p| p.is_file()))
 }
 
-/// A child process with no console window and the login shell's PATH.
+/// A child process with no console window, the login shell's PATH and none of the inherited
+/// Anthropic credentials or provider settings, so a run always uses the signed-in account.
 pub(crate) fn command(program: &Path) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(program);
     if let Some(p) = child_path() {
         c.env("PATH", p);
     }
+    let names: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
+    for n in scrubbed_vars(names.iter().map(OsString::as_os_str)) {
+        c.env_remove(n);
+    }
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c
+}
+
+/// The inherited variables a child must not see: Anthropic keys, base URLs and tokens, and the
+/// switches to another provider. Network proxy variables and CLAUDE_CONFIG_DIR stay.
+fn scrubbed_vars<'a>(names: impl Iterator<Item = &'a OsStr>) -> Vec<OsString> {
+    const EXACT: [&str; 3] = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "AWS_BEARER_TOKEN_BEDROCK"];
+    names
+        .filter(|n| n.to_str().is_some_and(|n| n.starts_with("ANTHROPIC_") || n.starts_with("CLAUDE_CODE_USE_") || EXACT.contains(&n)))
+        .map(OsStr::to_os_string)
+        .collect()
 }
 
 async fn capture(program: &Path, args: &[&str]) -> Option<String> {
@@ -492,5 +507,15 @@ mod tests {
         assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
         assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);
         assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false }, &e), ["--model", "opus", "--effort", "high"]);
+    }
+
+    #[test]
+    fn runs_lose_inherited_anthropic_settings_but_keep_the_network() {
+        let names = [
+            "PATH", "HOME", "CLAUDE_CONFIG_DIR", "SHELL", "HTTPS_PROXY", "no_proxy",
+            "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
+        ];
+        let scrubbed = scrubbed_vars(names.iter().map(OsStr::new));
+        assert_eq!(scrubbed, ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"]);
     }
 }
