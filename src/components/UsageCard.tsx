@@ -68,6 +68,8 @@ export function UsageCard() {
   const known = !!usage?.observedAt;
   const checked = usage?.observedAt ? `Checked ${relTime(usage.observedAt, now)}` : "Not checked yet";
   const held = usage?.heldUntil && Date.parse(usage.heldUntil) > now ? new Date(usage.heldUntil) : null;
+  // A hold from the 7-day limit can end days away, so another day is named.
+  const heldDay = held && held.toDateString() !== new Date(now).toDateString() ? `${held.toLocaleDateString(undefined, { weekday: "short" })} ` : "";
   return (
     <>
       <div className="usage" aria-label="Claude usage limits">
@@ -79,7 +81,7 @@ export function UsageCard() {
         </div>
         <Window label="5-hour" w={five} now={now} known={known} />
         <Window label="7-day" w={week} now={now} known={known} />
-        {held ? <div className="usage-note usage-note-warn">Work starts again at {clockHM(held.getHours(), held.getMinutes())}, when the limit resets.</div> : null}
+        {held ? <div className="usage-note usage-note-warn">Work starts again {heldDay}at {clockHM(held.getHours(), held.getMinutes())}, when the limit resets.</div> : null}
         {usage?.accountIssue ? <AccountIssue message={usage.accountIssue.message} signedInAs={usage.accountIssue.signedInAs} /> : null}
       </div>
       <button className="usage-mini" onClick={refresh} data-tip={`5-hour ${pct(five)} · 7-day ${pct(week)}`} aria-label={`Claude usage: 5-hour ${pct(five)}, 7-day ${pct(week)}. Refresh`}>

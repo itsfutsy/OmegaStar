@@ -11,7 +11,15 @@ const imageCode = (path: string) => `<code data-image-path="${esc(path)}">${esc(
 // DOMPurify drops file: hrefs and a bare /Users/... href would resolve inside the webview.
 const OPEN_PATH = /^(\/|~\/)\S+$/;
 const pathAttrs = (path: string) => `class="md-path" data-open-path="${esc(path)}" title="Open"`;
-const linkPath = (href: string) => (href.startsWith("file://") ? href.slice(7) : /^(\/|~\/)/.test(href) ? href : null);
+// A file URL is percent-encoded (a space is %20); a bare path is taken as written.
+const decoded = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+const linkPath = (href: string) => (href.startsWith("file://") ? decoded(href.slice(7)) : /^(\/|~\/)/.test(href) ? href : null);
 
 const md = new Marked({ gfm: true, breaks: false, async: false });
 md.use({

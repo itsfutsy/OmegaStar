@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, OwnSkill, Run, SkillHealth, SkillRevision, StagedImport } from "../../api/types";
-import { firstName, relTime, runKindLabel } from "../../lib/format";
+import { firstName, recordedName, relTime, runKindLabel, skillsChanged } from "../../lib/format";
 import { refreshOrg, useCatalog } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import { openChat, openMember, openRun } from "../../lib/router";
@@ -180,9 +180,10 @@ function groupHistory(history: SkillRevision[]): SkillRevision[][] {
 }
 
 function TimelineGroup({ revs, run, name }: { revs: SkillRevision[]; run: Run | undefined; name: string }) {
-  const skillCount = new Set(revs.map((r) => r.skill)).size;
+  // Notes, the company page and what they own are not skills: they are named, not counted.
+  const skillCount = new Set(revs.map((r) => r.skill).filter((n) => recordedName(n) === n)).size;
   const added = revs.filter((r) => r.change === "added").length;
-  const title = run?.kind.type === "organize" ? runKindLabel(run.kind) : `Changed ${skillCount} ${skillCount === 1 ? "skill" : "skills"}`;
+  const title = run?.kind.type === "organize" ? runKindLabel(run.kind) : skillsChanged(revs).label;
   const who = run ? (run.kind.type === "chat" ? "Learned in chat" : runKindLabel(run.kind)) : "During a run";
   const revert = async () => {
     if (!revs[0].runId) return;
@@ -201,7 +202,7 @@ function TimelineGroup({ revs, run, name }: { revs: SkillRevision[]; run: Run | 
         <button className="tl-group-main" onClick={() => revs[0].runId && openRun(revs[0].runId)}>
           <span className="tl-top">
             <span>{title}</span>
-            <span className="tl-lines mono num">{revs.length} files · {skillCount} skills</span>
+            <span className="tl-lines mono num">{revs.length} files{skillCount ? ` · ${skillCount} ${skillCount === 1 ? "skill" : "skills"}` : ""}</span>
           </span>
           <span className="tl-sub">{who === title ? "" : `${who} · `}{added} added · {relTime(revs[0].at)}</span>
         </button>
@@ -247,7 +248,9 @@ export function TimelineItem({ r, run, onOpen }: { r: SkillRevision; run: Run | 
       <span className="tl-dot" />
       <button className="tl-body" onClick={onOpen}>
         <span className="tl-top">
-          <span>{verb} <span className="mono tl-skill">{r.skill}{r.file !== "SKILL.md" ? `/${r.file}` : ""}</span></span>
+          <span>{verb} {recordedName(r.skill) === r.skill
+            ? <span className="mono tl-skill">{r.skill}{r.file !== "SKILL.md" ? `/${r.file}` : ""}</span>
+            : <>{recordedName(r.skill)} <span className="mono tl-skill">{r.file}</span></>}</span>
           <span className="tl-lines mono num">
             {stats.added ? <span className="tl-add">+{stats.added}</span> : null}
             {stats.removed ? <span className="tl-del">−{stats.removed}</span> : null}
