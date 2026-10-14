@@ -93,6 +93,8 @@ pub fn reaches_you(r: &Run, quiet_chain: bool, top: bool) -> bool {
     match r.kind {
         // Work handed to a colleague reports to whoever asked, unless it breaks on the way.
         RunKind::Asked { .. } | RunKind::Delegated { .. } => broke(r),
+        // A weekly review reaches you whoever the employee reports to.
+        RunKind::Scheduled { review: true, .. } => true,
         _ => top,
     }
 }
@@ -221,6 +223,14 @@ pub fn chore_key(row: &Row) -> Option<String> {
         Some(c @ Card { ask: CardAsk::Chore { subject }, .. }) if c.is_open() => Some(format!("chore:{subject}")),
         _ => None,
     })
+}
+
+/// `review@<year>-W<week>` for a weekly review, from its slot's local ISO week, so one week's reviews
+/// across the team share a row.
+pub fn review_week(r: &Run) -> Option<String> {
+    let RunKind::Scheduled { slot, review: true, .. } = &r.kind else { return None };
+    let iso = chrono::Datelike::iso_week(&slot.with_timezone(&chrono::Local));
+    Some(format!("review@{}-W{:02}", iso.year(), iso.week()))
 }
 
 /// A row as you see it: the thread it is about, with its other threads in `related`, oldest first.
@@ -417,6 +427,21 @@ mod tests {
         };
         let merged = merge_rows(vec![row(failed("s1")), row(failed("s2")), row(failed("s1"))], streak);
         assert_eq!(merged.iter().map(|r| r.members.len()).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_review_reaches_you_whoever_its_employee_reports_to() {
+        // Wednesday noon UTC falls in the same ISO week in every time zone.
+        let slot = "2026-10-14T12:00:00Z".parse::<Ts>().unwrap();
+        let kind = |review: bool| RunKind::Scheduled { schedule_id: "s1".into(), slot, label: "Weekly review".into(), quiet: false, model: None, effort: None, review };
+        let mut review = Run::new("e2", kind(true), "go".into(), slot);
+        review.state = RunState::Succeeded;
+        assert!(reaches_you(&review, false, false), "a second-level employee's review");
+        let mut routine = review.clone();
+        routine.kind = kind(false);
+        assert!(!reaches_you(&routine, false, false));
+        assert_eq!(review_week(&review).as_deref(), Some("review@2026-W42"));
+        assert_eq!(review_week(&routine), None);
     }
 
     #[test]
