@@ -1071,6 +1071,36 @@ mod tests {
         assert!(due_answers(&o.db, &parent).unwrap().is_empty());
     }
 
+    struct NoSink;
+    impl EventSink for NoSink {
+        fn org_changed(&self) {}
+        fn run_updated(&self, _run: &Run) {}
+        fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
+        fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    #[tokio::test]
+    async fn reports_come_home_when_a_run_is_lost_at_startup() {
+        let o = office();
+        let ada = employee(&o.db, "Ada", None);
+        let bo = employee(&o.db, "Bo", Some(&ada.id));
+        // Ada was waiting on Bo's report when the app quit; Bo's own hand-off to Cy was lost with it.
+        let parent = run(&o.db, &ada, RunKind::Manual, "Plan the launch.", RunState::Running, 30, None);
+        let child = run(&o.db, &bo, delegated(&parent), "Count the stock.", RunState::Succeeded, 20, None);
+        let cy = employee(&o.db, "Cy", Some(&bo.id));
+        let asker = run(&o.db, &bo, RunKind::Manual, "Price the stock.", RunState::Succeeded, 25, None);
+        let lost = run(&o.db, &cy, delegated(&asker), "Check the prices.", RunState::Running, 20, None);
+
+        let office = Office::open(o.dir.clone(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap();
+        assert!(delivered(&o.db, &child), "the lost manager still gets the report that waited for it");
+        assert!(delivered(&o.db, &lost), "the lost hand-off reports back to who handed it over");
+        let answered: Vec<Run> = o.db.runs_in_state(RunState::Queued).unwrap();
+        let to = |id: &str| answered.iter().find(|r| matches!(&r.kind, RunKind::Answered { asked_run_id, .. } if asked_run_id == id)).map(|r| r.employee_id.clone());
+        assert_eq!(to(&child.id), Some(ada.id.clone()));
+        assert_eq!(to(&lost.id), Some(bo.id.clone()));
+        drop(office);
+    }
+
     #[test]
     fn a_report_waits_for_its_manager_to_finish() {
         let o = office();

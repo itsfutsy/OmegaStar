@@ -178,6 +178,10 @@ impl Office {
             if let Err(e) = office.capture_deliveries(&run.id, true) {
                 log!("run {}: finding the requests it sent failed: {e}", run.id);
             }
+            // A lost run still hands on the reports that waited for it, and reports back to whoever handed it over.
+            if let Err(e) = office.deliver_answers(&run) {
+                log!("delivering answers after run {} failed: {e}", run.id);
+            }
             if run.state == RunState::Lost {
                 continue;
             }
@@ -190,9 +194,6 @@ impl Office {
             }
             if let Err(e) = office.surface_thread(&run) {
                 log!("surfacing the thread after run {} failed: {e}", run.id);
-            }
-            if let Err(e) = office.deliver_answers(&run) {
-                log!("delivering answers after run {} failed: {e}", run.id);
             }
         }
         if let Err(e) = office.seed_reviews() {
