@@ -14,6 +14,7 @@
 .copycmd code { font-size: var(--t-sm); color: var(--ink); }
 .set-note { display: block; margin-top: 2px; color: var(--muted); }
 .set-err { color: var(--err); }
+.set-warn { color: var(--warn); }
 .set-select { width: auto; min-width: 104px; height: 30px; font-size: var(--t-sm); }
 .set-hours { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .set-days { display: flex; gap: 4px; }
