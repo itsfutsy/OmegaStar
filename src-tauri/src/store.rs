@@ -792,6 +792,35 @@ impl Store {
             })
             .optional()?)
     }
+
+    /// A conversation with you is working: a chat, task or reply, of one employee or of anyone. A report
+    /// coming back as a chat turn is not one.
+    pub fn ceo_conversation_running(&self, employee_id: Option<&str>) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM runs WHERE state = 'running' AND json_valid(data) AND json_extract(data, '$.kind.type') IN ('chat', 'task', 'reply')
+                   AND (?1 IS NULL OR employee_id = ?1) LIMIT 1",
+                [employee_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The file was recorded as changed since `since`, by one employee or by anyone.
+    pub fn revised_since(&self, skill: &str, file: &str, employee_id: Option<&str>, since: Ts) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM skill_revisions WHERE json_extract(data, '$.skill') = ?1 AND json_extract(data, '$.file') = ?2
+                   AND (?3 IS NULL OR employee_id = ?3) AND at >= ?4 LIMIT 1",
+                params![skill, file, employee_id, ms(since)],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
 }
 
 #[cfg(test)]
@@ -1256,6 +1285,42 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
             .collect();
         assert!(differ.is_empty(), "the query and reaches_you differ on {differ:#?}");
         assert!(!want.is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_conversation_with_you_is_found_while_it_runs() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let (ada, bo) = (employee("Ada", None), employee("Bo", None));
+        db.save_employee(&ada).unwrap();
+        db.save_employee(&bo).unwrap();
+        let insert = |r: Run| assert!(db.insert_run(&r, &r.id).unwrap());
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: bo.id.clone(), task: false, chat: true };
+        insert(run(&ada, came, RunState::Running));
+        insert(run(&ada, RunKind::Chat, RunState::Succeeded));
+        insert(run(&ada, RunKind::Manual, RunState::Running));
+        assert!(!db.ceo_conversation_running(None).unwrap(), "a report coming back as a chat turn is not you");
+        insert(run(&bo, RunKind::Task { label: "Draft it".into(), from: None, context: String::new() }, RunState::Running));
+        assert!(db.ceo_conversation_running(None).unwrap());
+        assert!(db.ceo_conversation_running(Some(&bo.id)).unwrap());
+        assert!(!db.ceo_conversation_running(Some(&ada.id)).unwrap());
+
+        let start = Utc::now();
+        let revise = |e: &Employee, skill: &str, file: &str, at| {
+            let change = SkillChange { skill: skill.into(), file: file.into(), change: ChangeKind::Modified };
+            let rev = SkillRevision { change, id: uuid::Uuid::new_v4().to_string(), run_id: None, at, before: None, after: Some("x".into()) };
+            db.insert_revision(&e.id, &rev).unwrap();
+        };
+        revise(&ada, "@company", "CLAUDE.md", start - chrono::Duration::minutes(5));
+        revise(&ada, "@own", "what-you-own.md", start + chrono::Duration::minutes(1));
+        assert!(!db.revised_since("@company", "CLAUDE.md", None, start).unwrap(), "changed before the run started");
+        assert!(db.revised_since("@own", "what-you-own.md", Some(&ada.id), start).unwrap());
+        assert!(!db.revised_since("@own", "what-you-own.md", Some(&bo.id), start).unwrap());
+        revise(&bo, "@company", "CLAUDE.md", start + chrono::Duration::minutes(2));
+        assert!(db.revised_since("@company", "CLAUDE.md", None, start).unwrap());
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

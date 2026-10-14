@@ -309,6 +309,52 @@ impl Office {
         }
     }
 
+    /// Handles a run that changed the company page or what its employee owns while you were not in it:
+    /// `PutBack` writes `before` back (`None` removes the file), and both `PutBack` and `FlagOnly` show you
+    /// what it tried in one headline. `Leave` does nothing.
+    pub(super) fn put_back_guarded(
+        &self,
+        run: &Run,
+        e: &Employee,
+        key: &(String, String),
+        before: Option<&String>,
+        now: Option<&String>,
+        action: GuardedAction,
+    ) -> Result<()> {
+        let (skill, file) = (key.0.as_str(), key.1.as_str());
+        let put_back = match action {
+            GuardedAction::Leave => return Ok(()),
+            GuardedAction::PutBack => true,
+            GuardedAction::FlagOnly => false,
+        };
+        if put_back {
+            let path = own_skills::recorded_path(&self.employee_dir(&e.id), skill, file)?;
+            own_skills::write_recorded(&path, skill, before.map(String::as_str))?;
+        }
+        let name = &e.name;
+        let parts: Vec<String> = if skill == own_skills::COMPANY {
+            let (added, removed) = line_changes(before.map(String::as_str), now.map(String::as_str));
+            let head = if put_back {
+                format!("{name} tried to change the company page in a run nobody was watching, so it was put back.")
+            } else {
+                format!("{name} changed the company page in a run nobody was watching while you were also changing it, so it was not put back.")
+            };
+            let tail = if put_back { format!("If you want this, tell {name} in a chat or edit the page in You.") } else { "Check the page in You.".to_string() };
+            let added = (!added.is_empty()).then(|| format!("It added: \"{added}\""));
+            let removed = (!removed.is_empty()).then(|| format!("It removed: \"{removed}\""));
+            [Some(head), added, removed, Some(tail)].into_iter().flatten().collect()
+        } else {
+            let text = claude::clip(&claude::one_line(now.map(String::as_str).unwrap_or_default()), 500);
+            if put_back {
+                vec![format!("{name} proposes what they own: \"{text}\" It was put back until you agree. To use it, edit What {name} owns on their profile, or tell them in a chat.")]
+            } else {
+                vec![format!("{name} changed what they own in a run nobody was watching while you were also changing it, so it was not put back: \"{text}\" Check it on their profile.")]
+            }
+        };
+        self.flag(&run.id, parts.join(" "));
+        Ok(())
+    }
+
     /// A finished tidy goes to your Inbox when it proposes changes, and for an employee's first few
     /// tidies, so you see what one does before you stop looking.
     pub(super) fn review_tidy(&self, run: &mut Run) {
@@ -459,6 +505,79 @@ fn mentions(text: &str, name: &str) -> bool {
     })
 }
 
+/// The CEO is in this conversation. Not is_conversation(): an Answered chat turn starts from a colleague's report.
+pub(super) fn ceo_in(kind: &RunKind) -> bool {
+    matches!(kind, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. })
+}
+
+/// The run's own top-level calls wrote `path`: a Write, Edit or MultiEdit of it (a relative path is taken from
+/// `employee_dir`), or a shell command naming it in full or as the run's working directory sees it. Calls that
+/// came back as errors do not count. Pure.
+pub(super) fn wrote_file(transcript: &str, path: &Path, employee_dir: &Path) -> bool {
+    let target = lexical(path);
+    let edited = ["Write", "Edit", "MultiEdit"]
+        .into_iter()
+        .flat_map(|tool| claude::office_calls(transcript, tool))
+        .any(|input| input["file_path"].as_str().is_some_and(|f| lexical(&employee_dir.join(f)) == target));
+    if edited {
+        return true;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let near = if path.parent() == Some(employee_dir) { name } else { format!("../{name}") };
+    let full = path.to_string_lossy();
+    claude::office_calls(transcript, "Bash")
+        .iter()
+        .filter_map(|input| input["command"].as_str())
+        .any(|c| c.contains(full.as_ref()) || c.contains(&near))
+}
+
+/// `p` with `.` and `..` resolved without touching the disk.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// What happens to a guarded file a run changed while you were not in it.
+#[derive(Debug, PartialEq)]
+pub(super) enum GuardedAction {
+    /// The run did not write it: someone else did, and their run or editor records it.
+    Leave,
+    PutBack,
+    /// Shown to you but kept: putting it back could lose your own edit.
+    FlagOnly,
+}
+
+/// Decides by what this run did, not by what else is running. Pure.
+pub(super) fn guarded_action(wrote: bool, ceo_talking: bool, revised_since_start: bool) -> GuardedAction {
+    match (wrote, ceo_talking || revised_since_start) {
+        (false, _) => GuardedAction::Leave,
+        (true, true) => GuardedAction::FlagOnly,
+        (true, false) => GuardedAction::PutBack,
+    }
+}
+
+/// (added, removed): the lines only `now` has and the lines only `before` has, trimmed, without blank lines and
+/// headings, each joined with "; " and clipped to 500 characters. Pure.
+fn line_changes(before: Option<&str>, now: Option<&str>) -> (String, String) {
+    fn lines(t: Option<&str>) -> Vec<&str> {
+        t.unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect()
+    }
+    fn only(xs: &[&str], ys: &[&str]) -> String {
+        claude::clip(&xs.iter().filter(|x| !ys.contains(x)).copied().collect::<Vec<_>>().join("; "), 500)
+    }
+    let (b, n) = (lines(before), lines(now));
+    (only(&n, &b), only(&b, &n))
+}
+
 /// Writes `text` to a recorded file (`None` deletes it) and records the change. `None` when the file
 /// already holds it.
 fn record(db: &Store, employee_dir: &Path, employee_id: &str, skill: &str, file: &str, text: Option<&str>) -> Result<Option<SkillRevision>> {
@@ -564,5 +683,70 @@ mod tests {
         let page_rev = run_revs.iter().find(|r| r.change.skill == own_skills::COMPANY).unwrap();
         assert!(!safe_to_undo(&employee_dir, page_rev).unwrap(), "revert_revision refuses it too");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    fn call(id: &str, tool: &str, input: Value) -> String {
+        json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": id, "name": tool, "input": input }] } }).to_string()
+    }
+
+    fn result(id: &str, error: bool) -> String {
+        json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": id, "is_error": error, "content": "done" }] } }).to_string()
+    }
+
+    #[test]
+    fn wrote_file_reads_the_runs_own_calls() {
+        let employee_dir = Path::new("/office/employees/e1");
+        let page = Path::new("/office/employees/CLAUDE.md");
+        let own = Path::new("/office/employees/e1/what-you-own.md");
+        let wrote = |lines: &[String], path: &Path| wrote_file(&lines.join("\n"), path, employee_dir);
+
+        let write = [call("t1", "Write", json!({ "file_path": "/office/employees/CLAUDE.md", "content": "x" })), result("t1", false)];
+        assert!(wrote(&write, page));
+        assert!(!wrote(&write, own));
+        let edit = [call("t1", "Edit", json!({ "file_path": "../CLAUDE.md", "old_string": "a", "new_string": "b" })), result("t1", false)];
+        assert!(wrote(&edit, page), "a relative path is taken from the employee's folder");
+        let bash = [call("t1", "Bash", json!({ "command": "cat >> ../CLAUDE.md <<'EOF'\n- A line.\nEOF" })), result("t1", false)];
+        assert!(wrote(&bash, page));
+        let own_bash = [call("t1", "Bash", json!({ "command": "printf 'The signups.' > what-you-own.md" })), result("t1", false)];
+        assert!(wrote(&own_bash, own));
+
+        let failed = [call("t1", "Write", json!({ "file_path": "/office/employees/CLAUDE.md", "content": "x" })), result("t1", true)];
+        assert!(!wrote(&failed, page), "a write that errored changed nothing");
+        let handbook = [
+            call("t1", "Edit", json!({ "file_path": "CLAUDE.md", "old_string": "a", "new_string": "b" })),
+            result("t1", false),
+            call("t2", "Edit", json!({ "file_path": "/office/employees/e1/CLAUDE.md", "old_string": "a", "new_string": "b" })),
+            result("t2", false),
+        ];
+        assert!(!wrote(&handbook, page), "the employee's own CLAUDE.md is not the company page");
+    }
+
+    #[test]
+    fn guarded_action_puts_back_only_what_this_run_wrote_alone() {
+        assert_eq!(guarded_action(false, false, false), GuardedAction::Leave);
+        assert_eq!(guarded_action(false, true, true), GuardedAction::Leave);
+        assert_eq!(guarded_action(true, false, false), GuardedAction::PutBack);
+        assert_eq!(guarded_action(true, true, false), GuardedAction::FlagOnly);
+        assert_eq!(guarded_action(true, false, true), GuardedAction::FlagOnly);
+    }
+
+    #[test]
+    fn line_changes_quote_added_and_removed_lines() {
+        let before = "# Company page\n\n## Who to ask\n\n- Releases: Sam.\n";
+        assert_eq!(line_changes(Some(before), Some(&format!("{before}- Billing: Kim.\n- Copy: Lee.\n"))), ("- Billing: Kim.; - Copy: Lee.".into(), String::new()));
+        assert_eq!(line_changes(Some(before), Some("# Company page\n\n## Who to ask\n")), (String::new(), "- Releases: Sam.".into()));
+        assert_eq!(line_changes(Some(before), Some("# Company\n\n## Ask\n\n- Releases: Kim.\n")), ("- Releases: Kim.".into(), "- Releases: Sam.".into()));
+        assert_eq!(line_changes(None, Some("# Page\n## Decisions\n")), (String::new(), String::new()), "headings are skipped");
+    }
+
+    #[test]
+    fn only_chats_tasks_and_replies_have_you_in_them() {
+        let scheduled = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
+        assert!(!ceo_in(&RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true }));
+        assert!(!ceo_in(&scheduled));
+        assert!(!ceo_in(&RunKind::Delegated { parent_run_id: "r1".into() }));
+        assert!(ceo_in(&RunKind::Chat));
+        assert!(ceo_in(&RunKind::Task { label: "Draft it".into(), from: None, context: String::new() }));
+        assert!(ceo_in(&RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: false }));
     }
 }
