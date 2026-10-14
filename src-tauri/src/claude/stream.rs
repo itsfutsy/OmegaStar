@@ -369,15 +369,14 @@ pub fn transcript_outcome(transcript: &str, home: &Path) -> Option<Outcome> {
     for line in transcript.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
         match v["type"].as_str() {
+            _ if is_nested(&v) => {}
             Some("result") => {
                 ended = true;
-                if !is_nested(&v) {
-                    if let Some(next) = parse_line(line, home).outcome {
-                        outcome = Some(match outcome {
-                            Some(prev) => merge_outcome(prev, next),
-                            None => next,
-                        });
-                    }
+                if let Some(next) = parse_line(line, home).outcome {
+                    outcome = Some(match outcome {
+                        Some(prev) => merge_outcome(prev, next),
+                        None => next,
+                    });
                 }
             }
             Some("assistant" | "user") => ended = false,
@@ -670,6 +669,9 @@ mod tests {
         assert!(transcript_outcome(&format!("{MULTI_RESULT}\n{{\"type\":\"assistant\",\"mess"), home()).is_some());
         let cut = format!("{INIT}\n{}\n{{\"type\":\"resu", MULTI_RESULT.lines().next().unwrap());
         assert!(transcript_outcome(&cut, home()).is_none());
+        // A sub-agent still finishing after the final result does not reopen the turn.
+        let nested = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"done"}]},"parent_tool_use_id":"toolu_sub"}"#;
+        assert!(transcript_outcome(&format!("{MULTI_RESULT}\n{nested}"), home()).is_some());
     }
 
     #[test]

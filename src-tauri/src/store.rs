@@ -523,12 +523,12 @@ impl Store {
 
     /// Open requests Omega Star is watching for a reply, oldest first.
     pub fn watched_requests(&self) -> Result<Vec<HumanRequest>> {
-        self.requests_where("WHERE state = 'open' AND json_extract(data, '$.delivery.watch.phase.type') = 'watching'", &[])
+        self.requests_where("WHERE state = 'open' AND json_valid(data) AND json_extract(data, '$.delivery.watch.phase.type') = 'watching'", &[])
     }
 
     /// The requests a run made, oldest first.
     pub fn requests_of_run(&self, run_id: &str) -> Result<Vec<HumanRequest>> {
-        self.requests_where("WHERE json_extract(data, '$.runId') = ?", &[&run_id])
+        self.requests_where("WHERE json_valid(data) AND json_extract(data, '$.runId') = ?", &[&run_id])
     }
 
     fn requests_where(&self, clause: &str, p: &[&dyn rusqlite::ToSql]) -> Result<Vec<HumanRequest>> {
@@ -541,7 +541,7 @@ impl Store {
     pub fn active_run_for(&self, request_id: &str, kind: &str) -> Result<Option<Run>> {
         Ok(self
             .runs_where(
-                "WHERE state IN ('queued', 'running') AND json_extract(data, '$.kind.type') = ? AND json_extract(data, '$.kind.requestId') = ? LIMIT 1",
+                "WHERE state IN ('queued', 'running') AND json_valid(data) AND json_extract(data, '$.kind.type') = ? AND json_extract(data, '$.kind.requestId') = ? LIMIT 1",
                 &[&kind, &request_id],
             )?
             .into_iter()
@@ -553,7 +553,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT 1 FROM runs WHERE json_extract(data, '$.kind.type') = ? AND json_extract(data, '$.kind.requestId') = ? LIMIT 1",
+                "SELECT 1 FROM runs WHERE json_valid(data) AND json_extract(data, '$.kind.type') = ? AND json_extract(data, '$.kind.requestId') = ? LIMIT 1",
                 [kind, request_id],
                 |_| Ok(()),
             )
@@ -602,7 +602,7 @@ impl Store {
 
     /// An employee's Tidy runs, newest first.
     pub fn tidy_runs(&self, employee_id: &str) -> Result<Vec<Run>> {
-        self.runs_where("WHERE employee_id = ? AND json_extract(data, '$.kind.type') = 'tidy' ORDER BY created_at DESC, rowid DESC", &[&employee_id])
+        self.runs_where("WHERE employee_id = ? AND json_valid(data) AND json_extract(data, '$.kind.type') = 'tidy' ORDER BY created_at DESC, rowid DESC", &[&employee_id])
     }
 
     /// What you told this employee since `since`, in chat, tasks and Inbox replies: (when, your words),
@@ -610,7 +610,7 @@ impl Store {
     pub fn taught_since(&self, employee_id: &str, since: Option<Ts>, limit: usize) -> Result<Vec<(Ts, String)>> {
         let mut st = self.conn.prepare(
             "SELECT created_at, json_extract(data, '$.prompt') FROM runs
-             WHERE employee_id = ?1 AND created_at > ?2 AND json_extract(data, '$.kind.type') IN ('chat', 'reply', 'task')
+             WHERE employee_id = ?1 AND created_at > ?2 AND json_valid(data) AND json_extract(data, '$.kind.type') IN ('chat', 'reply', 'task')
              ORDER BY created_at DESC, rowid DESC LIMIT ?3",
         )?;
         let rows = st.query_map(params![employee_id, since.map(ms).unwrap_or(0), limit as i64], |r| {
@@ -697,7 +697,7 @@ impl Store {
 
     /// Drops the briefs about a thread that no chat turn has read yet: the thread came back to the Inbox.
     pub fn drop_unread_briefs(&self, root_run_id: &str) -> Result<usize> {
-        Ok(self.conn.execute("DELETE FROM briefs WHERE consumed_at IS NULL AND json_extract(data, '$.rootRunId') = ?", [root_run_id])?)
+        Ok(self.conn.execute("DELETE FROM briefs WHERE consumed_at IS NULL AND json_valid(data) AND json_extract(data, '$.rootRunId') = ?", [root_run_id])?)
     }
 
     /// Marks briefs as read by a chat turn launched at `at`.
@@ -865,6 +865,7 @@ mod tests {
             raw(&db, &ada, &id, state.as_str(), &id, "not json");
         }
 
+        let queued_id = queued.id.clone();
         let both = ids(&[queued.clone(), done.clone()]);
         assert_eq!(ids(&db.recent_runs(None, 100).unwrap()), both);
         let records: Vec<Run> = db.records_in_state(RunState::Queued).unwrap().into_iter().map(|r| r.run).collect();
@@ -877,6 +878,24 @@ mod tests {
         assert!(db.open_tasks(&ada.id).unwrap().is_empty());
         assert!(db.conversation_runs().unwrap().is_empty());
         assert!(db.open_asks().unwrap().is_empty());
+        // So do the reply watch and Tidy.
+        assert!(!db.has_run_for("req-1", "nudge").unwrap());
+        assert!(db.active_run_for("req-1", "nudge").unwrap().is_none());
+        assert!(db.tidy_runs(&ada.id).unwrap().is_empty());
+        assert!(db.taught_since(&ada.id, None, 10).unwrap().is_empty());
+        let now = ms(Utc::now());
+        db.conn
+            .execute(
+                "INSERT INTO requests(id, person_id, employee_id, state, created_at, data) VALUES ('req-1', 'p1', ?1, 'open', ?2, 'not json')",
+                params![ada.id, now],
+            )
+            .unwrap();
+        db.conn
+            .execute("INSERT INTO briefs(id, employee_id, session, created_at, data) VALUES ('b1', ?1, 's1', ?2, 'not json')", params![ada.id, now])
+            .unwrap();
+        assert!(db.watched_requests().unwrap().is_empty());
+        assert!(db.requests_of_run(&queued_id).unwrap().is_empty());
+        assert_eq!(db.drop_unread_briefs("root-1").unwrap(), 0);
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

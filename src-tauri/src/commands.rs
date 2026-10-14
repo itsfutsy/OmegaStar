@@ -173,7 +173,10 @@ fn report_path(path: &str) -> Result<std::path::PathBuf> {
 #[tauri::command]
 pub async fn open_report_path(app: AppHandle, path: String) -> Result<()> {
     // Resolved, so a link named like a document cannot point at a program.
-    let full = std::fs::canonicalize(report_path(&path)?).map_err(|_| AppError::not_found(format!("Nothing is at {path} any more")))?;
+    let full = std::fs::canonicalize(report_path(&path)?).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => AppError::not_found(format!("Nothing is at {path} any more")),
+        _ => AppError::internal(format!("Could not open {path}: {e}")),
+    })?;
     let done = if opens_directly(&full, full.is_dir()) {
         app.opener().open_path(full.to_string_lossy(), None::<&str>)
     } else {
