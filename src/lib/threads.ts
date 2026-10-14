@@ -48,6 +48,12 @@ export function isStreak(t: Thread): boolean {
     && t.related.every((x) => x.root.kind.type === "scheduled" && x.root.kind.scheduleId === k.scheduleId && didNotFinish(x.root));
 }
 
+/** An Inbox row that is a week of weekly reviews, everyone's in one row. */
+export function isTeamWeek(t: Thread): boolean {
+  const k = t.root.kind;
+  return k.type === "scheduled" && !!k.review;
+}
+
 /** The run in a thread whose card waits on your answer, newest first. */
 export function openCard(t: Thread): Run | undefined {
   return [...t.replies].reverse().concat(t.root).find((r) => r.card && !r.card.answer);

@@ -115,10 +115,11 @@ impl Office {
                     Due::Nothing => {}
                     Due::Fire(slot) => {
                         db.set_last_slot(&s.id, slot)?;
-                        if db.schedule_has_queued_run(&s.id)? || db.employee(&s.employee_id)?.is_none() {
+                        if db.schedule_has_queued_run(&s.id)? {
                             continue;
                         }
-                        let prompt = if s.instruction.trim().is_empty() { DEFAULT_PROMPT.to_string() } else { s.instruction.clone() };
+                        let Some(e) = db.employee(&s.employee_id)? else { continue };
+                        let prompt = slot_prompt(&db, &s, &e, slot)?;
                         let kind = RunKind::Scheduled { schedule_id: s.id.clone(), slot, label: s.label.clone(), quiet: s.quiet, model: s.model.clone(), effort: s.effort, review: s.review };
                         let run = Run::new(&s.employee_id, kind, prompt, now);
                         if db.insert_run(&run, &run.id)? {
@@ -302,6 +303,104 @@ End with at most three lines. The first opens with your number."
     )
 }
 
+/// The instruction a schedule's run at `slot` is given. A weekly review keeps its stored instruction, so
+/// an employee's own edit of it stands, and gets what Omega Star counted over the week before it.
+fn slot_prompt(db: &Store, s: &Schedule, e: &Employee, slot: Ts) -> Result<String> {
+    if !s.review {
+        return Ok(if s.instruction.trim().is_empty() { DEFAULT_PROMPT.to_string() } else { s.instruction.clone() });
+    }
+    let ceo = ceo_of(db)?;
+    let instruction = if s.instruction.trim().is_empty() { review_instruction(&ceo) } else { s.instruction.clone() };
+    let brief = review_brief(db, e, &ceo, slot - chrono::Duration::days(7))?;
+    Ok(if brief.is_empty() { instruction } else { format!("{instruction}\n\n{brief}") })
+}
+
+/// What Omega Star counted for `e`'s weekly review since `since`: their routines, open checks, cards still
+/// waiting on `ceo`, and the rules their runs wrote with nobody watching. A section with nothing in it is
+/// left out, and with nothing at all the brief is empty.
+fn review_brief(db: &Store, e: &Employee, ceo: &str, since: Ts) -> Result<String> {
+    let at = now();
+    let day = |t: Ts| t.with_timezone(&Local).format("%A %-d %B").to_string();
+    let ago = |t: Ts| match (at - t).num_days() {
+        n if n <= 0 => "today".to_string(),
+        1 => "1 day ago".to_string(),
+        n => format!("{n} days ago"),
+    };
+    let quote = |s: &str| claude::clip(&claude::one_line(s), 200);
+    let mut sections = vec![];
+
+    let routines: Vec<String> = db
+        .routine_counts(&e.id, since)?
+        .into_iter()
+        .map(|c| {
+            let runs = if c.runs == 1 { "1 run".to_string() } else { format!("{} runs", c.runs) };
+            if c.quiet {
+                format!("- {} (quiet): {runs}, {} reached someone, {} failed", c.label, c.reached, c.failed)
+            } else {
+                format!("- {}: {runs}, each reported to {ceo}", c.label)
+            }
+        })
+        .collect();
+    if !routines.is_empty() {
+        sections.push(format!("Your routines:\n{}", routines.join("\n")));
+    }
+
+    let checks: Vec<String> = db
+        .checks(&e.id, Some(CheckState::Open))?
+        .into_iter()
+        .map(|c| format!("- \"{}\": set {}, due {}", quote(&c.what), ago(c.created_at), day(c.due_at)))
+        .collect();
+    if !checks.is_empty() {
+        sections.push(format!("Your open checks:\n{}", checks.join("\n")));
+    }
+
+    let cards: Vec<String> = db
+        .open_cards(&e.id)?
+        .into_iter()
+        .filter_map(|r| {
+            let at = r.ended_at.unwrap_or(r.created_at);
+            r.card.map(|c| format!("- \"{}\": raised {}", quote(&c.message), ago(at)))
+        })
+        .collect();
+    if !cards.is_empty() {
+        sections.push(format!("Your cards still waiting on {ceo}:\n{}", cards.join("\n")));
+    }
+
+    let mut rules = vec![];
+    for (rev, run) in db.unattended_revisions(&e.id, since)? {
+        let Some(after) = rev.after.as_deref().filter(|_| rev.change.file.ends_with(".md")) else { continue };
+        for line in added_rule_lines(rev.before.as_deref().unwrap_or(""), after) {
+            let when = rev.at.with_timezone(&Local).format("%A");
+            rules.push(format!("- `{}` {}: \"{}\" ({}, {when})", rev.change.skill, rev.change.file, quote(&line), threads::report_label(&run.kind)));
+        }
+    }
+    rules.truncate(40);
+    if !rules.is_empty() {
+        sections.push(format!(
+            "Rules your runs wrote with nobody watching:\n{}\n\nKeep a rule only if a run next month needs it. A rule about security alerts, \
+money or deleting anything should have been a card: remove it and raise the card now.",
+            rules.join("\n")
+        ));
+    }
+
+    if sections.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("## What Omega Star counted since {}\n\n{}", day(since), sections.join("\n\n")))
+}
+
+/// The lines a revision added: lines of `after` not in `before`, trimmed, leaving out blank lines,
+/// headings and anything shorter than four words. Pure.
+fn added_rule_lines(before: &str, after: &str) -> Vec<String> {
+    let old: HashSet<&str> = before.lines().map(str::trim).collect();
+    after
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !old.contains(l) && l.split_whitespace().count() >= 4)
+        .map(String::from)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +470,130 @@ mod tests {
         let text = review_instruction("Pat");
         assert!(text.contains("put the decision to Pat as a card"));
         assert!(!text.contains('\u{2014}') && !check_prompt(&check("ada", "x", now()), "Pat").contains('\u{2014}'));
+    }
+
+    #[test]
+    fn added_rule_lines_are_new_lines_that_read_as_rules() {
+        let before = "# Ops\n\nAlways check the queue first.\n";
+        let after = "# Ops\n\n  Always check the queue first.  \n## Alerts\nSkip it.\n\n  Archive security alerts from the bank without asking.\nMove spend over 50 to the shared sheet.\n";
+        assert_eq!(
+            added_rule_lines(before, after),
+            vec!["Archive security alerts from the bank without asking.", "Move spend over 50 to the shared sheet."]
+        );
+        assert!(added_rule_lines(after, after).is_empty());
+    }
+
+    #[test]
+    fn the_review_brief_lists_only_what_there_is() {
+        let dir = std::env::temp_dir().join(format!("omegastar-brief-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        db.set_company(&Company { name: "Acme".into(), ceo_name: "Pat".into(), ..Company::unset() }).unwrap();
+        let hire = |slug: &str| {
+            let e = Employee {
+                id: uuid::Uuid::new_v4().to_string(),
+                slug: slug.into(),
+                name: slug.into(),
+                title: "Tester".into(),
+                description: String::new(),
+                objective: String::new(),
+                manager_id: None,
+                skills: SkillGrant { builtins: false, keys: vec![] },
+                clearance: Clearance::Supervised,
+                allow_rules: vec![],
+                model: None,
+                effort: None,
+                browser: false,
+                auto_tidy: false,
+                workspaces: vec![],
+                hue: 0,
+                chat_session: format!("chat-{slug}"),
+                hired_at: now(),
+            };
+            db.save_employee(&e).unwrap();
+            e
+        };
+        let (ada, bo) = (hire("ada"), hire("bo"));
+        let t = now();
+        let since = t - chrono::Duration::days(7);
+        let finished = |e: &Employee, kind: RunKind, hours: i64| {
+            let mut r = Run::new(&e.id, kind, "go".into(), t - chrono::Duration::hours(hours));
+            r.state = RunState::Succeeded;
+            r.ended_at = Some(r.created_at);
+            r
+        };
+        let sweep = |hours: i64| RunKind::Scheduled {
+            schedule_id: "s1".into(),
+            slot: t - chrono::Duration::hours(hours),
+            label: "Inbox sweep".into(),
+            quiet: true,
+            model: None,
+            effort: None,
+            review: false,
+        };
+        let routine = finished(&ada, sweep(30), 30);
+        assert!(db.insert_run(&routine, &routine.id).unwrap());
+        let mut carded = finished(&ada, sweep(50), 50);
+        carded.needs_you = vec!["Boost the post?".into()];
+        carded.card = Some(Card { message: "Boost the post?".into(), ask: CardAsk::Choices { choices: vec!["Not now".into(), "Go".into()], recommended: 0 }, answer: None });
+        assert!(db.insert_run(&carded, &carded.id).unwrap());
+        let mut c = check(&ada.id, "Did the fix hold", t + chrono::Duration::days(2));
+        c.created_at = t - chrono::Duration::days(3);
+        db.save_check(&c).unwrap();
+        let change = SkillChange { skill: "ops".into(), file: "SKILL.md".into(), change: ChangeKind::Modified };
+        let rev = SkillRevision {
+            change,
+            id: uuid::Uuid::new_v4().to_string(),
+            run_id: Some(routine.id.clone()),
+            at: t - chrono::Duration::hours(29),
+            before: Some("# Ops\n".into()),
+            after: Some("# Ops\nArchive security alerts without asking anyone.\n".into()),
+        };
+        db.insert_revision(&ada.id, &rev).unwrap();
+
+        let brief = review_brief(&db, &ada, "Pat", since).unwrap();
+        assert!(brief.starts_with(&format!("## What Omega Star counted since {}\n\nYour routines:\n", since.with_timezone(&Local).format("%A %-d %B"))));
+        assert!(brief.contains("- Inbox sweep (quiet): 2 runs, 1 reached someone, 0 failed\n"), "{brief}");
+        assert!(brief.contains("Your open checks:\n- \"Did the fix hold\": set 3 days ago, due "), "{brief}");
+        assert!(brief.contains("Your cards still waiting on Pat:\n- \"Boost the post?\": raised 2 days ago"), "{brief}");
+        assert!(brief.contains("- `ops` SKILL.md: \"Archive security alerts without asking anyone.\" (Inbox sweep, "), "{brief}");
+        assert!(brief.ends_with("remove it and raise the card now."));
+        assert!(!brief.contains('\u{2014}'));
+
+        let mut d = check(&bo.id, "Did signups move", t + chrono::Duration::days(1));
+        d.created_at = t;
+        db.save_check(&d).unwrap();
+        let only_checks = review_brief(&db, &bo, "Pat", since).unwrap();
+        assert!(only_checks.contains("- \"Did signups move\": set today"));
+        for absent in ["Your routines:", "Your cards", "Rules your runs wrote", "Keep a rule"] {
+            assert!(!only_checks.contains(absent), "{absent} in {only_checks}");
+        }
+        db.save_check(&Check { state: CheckState::Done, ..d }).unwrap();
+        assert_eq!(review_brief(&db, &bo, "Pat", since).unwrap(), "");
+
+        let review = |instruction: &str| Schedule {
+            id: "r1".into(),
+            employee_id: bo.id.clone(),
+            label: "Weekly review".into(),
+            cron: "0 7 * * 1".into(),
+            instruction: instruction.into(),
+            enabled: true,
+            misfire: Misfire::CatchUp,
+            quiet: false,
+            model: None,
+            effort: None,
+            review: true,
+            next_fire: None,
+        };
+        assert_eq!(slot_prompt(&db, &review("Count the signups."), &bo, t).unwrap(), "Count the signups.", "the employee's own edit stands");
+        assert_eq!(slot_prompt(&db, &review(" "), &bo, t).unwrap(), review_instruction("Pat"));
+        let with_brief = slot_prompt(&db, &review(" "), &ada, t).unwrap();
+        assert!(with_brief.starts_with(&format!("{}\n\n## What Omega Star counted since ", review_instruction("Pat"))));
+        let routine_schedule = Schedule { review: false, ..review(" ") };
+        assert_eq!(slot_prompt(&db, &routine_schedule, &ada, t).unwrap(), DEFAULT_PROMPT);
+
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -64,7 +64,10 @@ impl Office {
         let rows = threads::file(&starts, db.conversation_runs()?, |id| run_of(db, id), &top);
         let cache = std::cell::RefCell::new(HashMap::new());
         let rows = threads::merge_rows(rows, |row| {
-            threads::chore_key(row).or_else(|| row.members.first().and_then(|(t, _)| Self::streak_of(db, &cache, &t.root)))
+            let lead = row.members.first().map(|(t, _)| &t.root);
+            threads::chore_key(row)
+                .or_else(|| lead.and_then(threads::review_week))
+                .or_else(|| lead.and_then(|r| Self::streak_of(db, &cache, r)))
         });
         let mut out: Vec<Thread> = rows.into_iter().filter_map(|r| threads::present(r, archive)).collect();
         if archive {
@@ -75,8 +78,9 @@ impl Office {
         Ok(out)
     }
 
-    /// Every thread in the row `root` (a thread's root) is filed under, oldest first: its hand-off, and
-    /// for a schedule's failure the rest of that run of failures.
+    /// Every thread in the row `root` (a thread's root) is filed under, oldest first: its hand-off, for a
+    /// schedule's failure the rest of that run of failures, and for a weekly review the team's other
+    /// reviews that week.
     fn row_of(db: &Store, root: &Run) -> Result<Vec<Thread>> {
         let top = Self::top_ids(&db.employees()?);
         let conversation = db.conversation_runs()?;
@@ -85,13 +89,17 @@ impl Office {
         let mut starts = vec![root.clone()];
         let first = threads::file(&starts, conversation.clone(), lookup, &top).into_iter().next().and_then(|r| r.members.into_iter().next());
         if let Some((t, _)) = first {
-            if let (Some(key), RunKind::Scheduled { schedule_id, .. }) = (Self::streak_of(db, &cache, &t.root), &t.root.kind) {
+            if let Some(week) = threads::review_week(&t.root) {
+                let same = |r: &Run| r.id != t.root.id && threads::review_week(r).as_ref() == Some(&week);
+                starts.extend(db.review_runs(t.root.created_at - chrono::Duration::days(8))?.into_iter().filter(same));
+            } else if let (Some(key), RunKind::Scheduled { schedule_id, .. }) = (Self::streak_of(db, &cache, &t.root), &t.root.kind) {
                 let same = |f: &Run| f.id != t.root.id && Self::streak_of(db, &cache, f).as_ref() == Some(&key);
                 starts.extend(db.failures_of_schedule(schedule_id)?.into_iter().filter(same));
             }
         }
         let rows = threads::merge_rows(threads::file(&starts, conversation, lookup, &top), |row| {
-            row.members.first().and_then(|(t, _)| Self::streak_of(db, &cache, &t.root))
+            let lead = row.members.first().map(|(t, _)| &t.root);
+            lead.and_then(threads::review_week).or_else(|| lead.and_then(|r| Self::streak_of(db, &cache, r)))
         });
         Ok(rows.into_iter().next().map(|r| r.members.into_iter().map(|(t, _)| t).collect()).unwrap_or_default())
     }
@@ -473,6 +481,57 @@ mod tests {
         assert_eq!(answer.text, claude::clip(&long, 300));
         assert!(db.run(&working.id).unwrap().unwrap().run.card.unwrap().is_open(), "a run still working keeps its card");
         assert!(db.tx(|| answer_typed(&db, &report.id, "Again.", now())).unwrap().is_empty());
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_weeks_reviews_share_one_row() {
+        let dir = std::env::temp_dir().join(format!("omegastar-team-week-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let hire = |slug: &str, manager: Option<&Employee>| {
+            let e = Employee { slug: slug.into(), name: slug.into(), chat_session: format!("chat-{slug}"), manager_id: manager.map(|m| m.id.clone()), ..tester() };
+            db.save_employee(&e).unwrap();
+            e
+        };
+        let ada = hire("ada", None);
+        let bo = hire("bo", Some(&ada));
+        let cy = hire("cy", None);
+        // Wednesdays at noon UTC, in ISO weeks 41 and 42 in every time zone.
+        let (this_week, next_week) = ("2026-10-07T12:00:00Z".parse::<Ts>().unwrap(), "2026-10-14T12:00:00Z".parse::<Ts>().unwrap());
+        let review = |e: &Employee, slot: Ts, state: RunState| {
+            let kind = RunKind::Scheduled { schedule_id: format!("review-{}", e.slug), slot, label: "Weekly review".into(), quiet: false, model: None, effort: None, review: true };
+            let mut r = Run::new(&e.id, kind, "Review your week.".into(), slot);
+            r.state = state;
+            r.ended_at = Some(slot);
+            r.summary = Some("Signups 40, up 5.".into());
+            assert!(db.insert_run(&r, &r.id).unwrap());
+            r
+        };
+        let a = review(&ada, this_week, RunState::Succeeded);
+        let b = review(&bo, this_week, RunState::Succeeded);
+        let c = review(&cy, this_week, RunState::Failed);
+        let later = review(&ada, next_week, RunState::Succeeded);
+
+        let ids = |t: &Thread| -> HashSet<String> { std::iter::once(t).chain(&t.related).map(|x| x.root.id.clone()).collect() };
+        let week: HashSet<String> = [&a, &b, &c].iter().map(|r| r.id.clone()).collect();
+        let rows = Office::rows(&db, false).unwrap();
+        assert_eq!(rows.len(), 2, "the second week is a row of its own");
+        assert_eq!(ids(&rows[0]), HashSet::from([later.id.clone()]));
+        assert_eq!(ids(&rows[1]), week, "the failed review is in the team's row, not a streak");
+
+        let row = Office::row_of(&db, &b).unwrap();
+        assert_eq!(row.iter().map(|t| t.root.id.clone()).collect::<HashSet<_>>(), week, "a second-level employee's review leads to the whole week");
+        for t in row {
+            let mut r = t.root;
+            r.archived_at = Some(now());
+            db.save_run(&r).unwrap();
+        }
+        let rows = Office::rows(&db, false).unwrap();
+        assert_eq!(rows.iter().map(ids).collect::<Vec<_>>(), vec![HashSet::from([later.id.clone()])]);
+        let archived = Office::rows(&db, true).unwrap();
+        assert_eq!(archived.iter().map(ids).collect::<Vec<_>>(), vec![week]);
         drop(db);
         let _ = fs::remove_dir_all(&dir);
     }

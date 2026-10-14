@@ -4,7 +4,7 @@ import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openMember } from "../lib/router";
 import { toolName } from "../lib/rules";
-import { activityAt, didNotFinish, isStreak, lastFrom, lastReply, latestFinished, openCard, rowCardOpen, rowThreads, threadFocus } from "../lib/threads";
+import { activityAt, didNotFinish, isStreak, isTeamWeek, lastFrom, lastReply, latestFinished, openCard, rowCardOpen, rowThreads, threadFocus } from "../lib/threads";
 import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
 import { CardView } from "../components/conversation/CardView";
@@ -24,6 +24,15 @@ function digest(t: Thread): { run: Run; title: string; preview: string } {
   if (ls.length) return { run, title: ls[0], preview: ls.slice(1).join(" ") };
   const failed = didNotFinish(run);
   return { run, title: failed ? (run.id === t.root.id ? "This run didn't finish" : "This reply didn't finish") : "No report", preview: run.error ?? "" };
+}
+
+/** A team week's title: the first names of everyone in it, as "Aura, Mace, Cynthia and 3 more". */
+function teamNames(threads: Thread[], employees: EmployeeView[]): string {
+  const names = [...new Set(threads.map((x) => x.root.employeeId))]
+    .flatMap((id) => employees.find((x) => x.id === id) ?? [])
+    .map((x) => firstName(x.name));
+  if (names.length > 3) return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "";
 }
 
 /** What an Inbox row can do to its thread. */
@@ -65,6 +74,8 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
   // The rest of the row: a hand-off's other runs, or a schedule's earlier failures.
   const runsInRow = rowThreads(t);
   const streak = isStreak(t);
+  // A week of the team's reviews reads as the team's, not as one employee's.
+  const teamWeek = isTeamWeek(t);
   const others = [...new Set(runsInRow.map((x) => x.root.employeeId))].filter((id) => id !== r.employeeId)
     .flatMap((id) => employees.find((x) => x.id === id) ?? []);
   // A card waiting on you holds the row until you answer it, so Done steps aside.
@@ -86,13 +97,12 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
         ) : <Avatar name={e.name} hue={e.hue} size={30} presence={busy ? "working" : undefined} />}
         <div className="item-main">
           <span className="item-context">
-            <b>{e.name}</b>
-            <span className="muted"> · {context}</span>
+            {teamWeek ? <b>Your team's week</b> : <><b>{e.name}</b><span className="muted"> · {context}</span></>}
           </span>
           {open ? null : <span className="item-title">
             {run.needsYou.length ? <Icon name="bell" size={13} className="item-bell" /> : null}
             {failed ? <Icon name="alert" size={13} className="item-failed" /> : null}
-            <span>{title}</span>
+            <span>{teamWeek ? teamNames(runsInRow, employees) : title}</span>
           </span>}
           {!open && preview ? <span className="item-preview">{preview}</span> : null}
           {!open && card ? <div className="item-card"><CardView run={card} e={e} onAnswer={(reply) => actions.answer(card, reply)} /></div> : null}

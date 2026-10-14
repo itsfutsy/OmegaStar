@@ -99,6 +99,15 @@ pub struct RunRecord {
     pub session: String,
 }
 
+/// One routine's finished runs over a stretch of time (`Store::routine_counts`).
+pub struct RoutineCount {
+    pub label: String,
+    pub quiet: bool,
+    pub runs: u32,
+    pub reached: u32,
+    pub failed: u32,
+}
+
 #[derive(Default)]
 pub struct RequestFilter {
     pub person_id: Option<String>,
@@ -501,6 +510,56 @@ impl Store {
         self.reports(roots, flagged, None, "json_extract(data, '$.archivedAt') IS NULL", "created_at DESC, rowid DESC")
     }
 
+    /// Finished weekly reviews created since `since`, oldest first: the runs one team week's row gathers.
+    pub fn review_runs(&self, since: Ts) -> Result<Vec<Run>> {
+        self.runs_where(
+            "WHERE schedule_id IS NOT NULL AND json_valid(data) AND json_extract(data, '$.kind.review') = 1
+               AND created_at >= ? AND state NOT IN ('queued', 'running')
+             ORDER BY created_at, rowid",
+            &[&ms(since)],
+        )
+    }
+
+    /// An employee's finished routine runs since `since`, one count per schedule, busiest first. Reviews
+    /// and due checks are not routines. A run reached someone when it notified you or handed work to a colleague.
+    pub fn routine_counts(&self, employee_id: &str, since: Ts) -> Result<Vec<RoutineCount>> {
+        let mut st = self.conn.prepare(
+            "SELECT MAX(json_extract(r.data, '$.kind.label')), MAX(COALESCE(json_extract(r.data, '$.kind.quiet'), 0)), COUNT(*),
+               SUM(COALESCE(json_array_length(r.data, '$.needsYou'), 0) > 0 OR EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = r.id)),
+               SUM(r.state IN ('failed', 'lost'))
+             FROM runs r
+             WHERE r.employee_id = ?1 AND r.schedule_id IS NOT NULL AND r.schedule_id NOT LIKE 'check:%' AND r.created_at >= ?2
+               AND r.state NOT IN ('queued', 'running') AND json_valid(r.data)
+               AND COALESCE(json_extract(r.data, '$.kind.review'), 0) = 0
+             GROUP BY r.schedule_id ORDER BY 3 DESC",
+        )?;
+        let rows = st.query_map(params![employee_id, ms(since)], |r| {
+            Ok(RoutineCount {
+                label: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                quiet: r.get::<_, i64>(1)? != 0,
+                runs: r.get(2)?,
+                reached: r.get(3)?,
+                failed: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Skill revisions since `since` that an employee's runs made with nobody watching (not in a conversation
+    /// with you, a tidy or an organize), each with its run, newest first. Pseudo-skills like the company page
+    /// are left out: Omega Star guards those.
+    pub fn unattended_revisions(&self, employee_id: &str, since: Ts) -> Result<Vec<(SkillRevision, Run)>> {
+        let mut st = self.conn.prepare(
+            "SELECT r.data, runs.data FROM skill_revisions r JOIN runs ON runs.id = r.run_id
+             WHERE r.employee_id = ?1 AND r.at >= ?2 AND json_valid(r.data) AND json_valid(runs.data)
+               AND json_extract(runs.data, '$.kind.type') NOT IN ('chat', 'task', 'reply', 'tidy', 'organize')
+               AND json_extract(r.data, '$.skill') NOT LIKE '@%'
+             ORDER BY r.at DESC",
+        )?;
+        let v = readable("skill_revisions", st.query_map(params![employee_id, ms(since)], |r| Ok((from_row(r, 0)?, from_row(r, 1)?)))?)?;
+        Ok(v)
+    }
+
     /// The same runs once archived: the most recently archived `limit`, newest first.
     pub fn archived_root_runs(&self, employee_ids: &[String], limit: u32) -> Result<Vec<Run>> {
         self.reports(employee_ids, employee_ids, Some(limit), "json_extract(data, '$.archivedAt') IS NOT NULL", "json_extract(data, '$.archivedAt') DESC, rowid DESC")
@@ -525,7 +584,8 @@ impl Store {
                           AND json_valid(data)
                           AND (COALESCE(json_array_length(data, '$.needsYou'), 0) > 0
                                OR (COALESCE(json_array_length(data, '$.denials'), 0) > 0 AND json_extract(data, '$.kind.type') IS NOT 'tidy')
-                               OR (parent_run_id IS NOT NULL AND state IN ('failed', 'lost')))))
+                               OR (parent_run_id IS NOT NULL AND state IN ('failed', 'lost'))
+                               OR json_extract(data, '$.kind.review') = 1)))
                  AND state NOT IN ('queued', 'running')
                  AND NOT (json_extract(data, '$.kind.type') = 'nudge' AND state = 'cancelled')
                  AND NOT ((COALESCE(json_extract(data, '$.kind.quiet'), 0) = 1 OR json_extract(data, '$.kind.type') IN ('tidy', 'nudge'))
@@ -1310,6 +1370,7 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
             RunKind::Chat,
             RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false, model: None, effort: None, review: false },
             RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true, model: None, effort: None, review: false },
+            RunKind::Scheduled { schedule_id: format!("review-{i}"), slot, label: "Weekly review".into(), quiet: false, model: None, effort: None, review: true },
             RunKind::Delegated { parent_run_id: format!("parent-{i}") },
             RunKind::Asked { parent_run_id: format!("parent-{i}"), asked_by: "e0".into(), task: false },
             RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false, chat: false },
@@ -1371,6 +1432,72 @@ CREATE INDEX IF NOT EXISTS briefs_by_session ON briefs(employee_id, session, cre
             .collect();
         assert!(differ.is_empty(), "the query and reaches_you differ on {differ:#?}");
         assert!(!want.is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_weekly_review_counts() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let (ada, bo) = (employee("Ada", None), employee("Bo", Some("x")));
+        db.save_employee(&ada).unwrap();
+        db.save_employee(&bo).unwrap();
+        let at = |hours: i64| Utc::now() - chrono::Duration::hours(hours);
+        let since = at(24 * 7);
+        let insert = |e: &Employee, kind: RunKind, state: RunState, hours: i64| {
+            let mut r = run(e, kind, state);
+            r.created_at = at(hours);
+            assert!(db.insert_run(&r, &r.id).unwrap());
+            r
+        };
+        let scheduled = |id: &str, label: &str, quiet: bool, review: bool, hours: i64| RunKind::Scheduled {
+            schedule_id: id.into(),
+            slot: at(hours),
+            label: label.into(),
+            quiet,
+            model: None,
+            effort: None,
+            review,
+        };
+        insert(&ada, scheduled("s1", "Sweep", true, false, 1), RunState::Succeeded, 1);
+        let mut notified = run(&ada, scheduled("s1", "Sweep", true, false, 2), RunState::Succeeded);
+        notified.created_at = at(2);
+        notified.needs_you = vec!["Look at this.".into()];
+        assert!(db.insert_run(&notified, &notified.id).unwrap());
+        let asker = insert(&ada, scheduled("s1", "Sweep", true, false, 3), RunState::Succeeded, 3);
+        insert(&bo, RunKind::Asked { parent_run_id: asker.id.clone(), asked_by: ada.id.clone(), task: false }, RunState::Succeeded, 3);
+        insert(&ada, scheduled("s1", "Sweep", true, false, 4), RunState::Failed, 4);
+        insert(&ada, scheduled("s1", "Sweep", true, false, 300), RunState::Succeeded, 300);
+        insert(&ada, scheduled("s1", "Sweep", true, false, 0), RunState::Queued, 0);
+        insert(&ada, scheduled("s2", "Post", false, false, 5), RunState::Succeeded, 5);
+        insert(&ada, scheduled("r1", "Weekly review", false, true, 6), RunState::Succeeded, 6);
+        insert(&ada, scheduled("check:c1", "Check: Did it hold", true, false, 7), RunState::Succeeded, 7);
+        insert(&bo, scheduled("s3", "Bo's sweep", true, false, 8), RunState::Succeeded, 8);
+
+        let counts: Vec<(String, bool, u32, u32, u32)> =
+            db.routine_counts(&ada.id, since).unwrap().into_iter().map(|c| (c.label, c.quiet, c.runs, c.reached, c.failed)).collect();
+        assert_eq!(counts, vec![("Sweep".to_string(), true, 4, 2, 1), ("Post".to_string(), false, 1, 0, 0)]);
+
+        let delegated = insert(&ada, RunKind::Delegated { parent_run_id: "p1".into() }, RunState::Succeeded, 10);
+        let chat = insert(&ada, RunKind::Chat, RunState::Succeeded, 10);
+        let tidy = insert(&ada, RunKind::Tidy { reason: TidyReason::Auto, signature: vec![], plan: None }, RunState::Succeeded, 10);
+        let revise = |r: &Run, skill: &str, hours: i64| {
+            let change = SkillChange { skill: skill.into(), file: "SKILL.md".into(), change: ChangeKind::Modified };
+            let rev = SkillRevision { change, id: uuid::Uuid::new_v4().to_string(), run_id: Some(r.id.clone()), at: at(hours), before: None, after: Some("x".into()) };
+            db.insert_revision(&ada.id, &rev).unwrap();
+            rev.id
+        };
+        let older = revise(&delegated, "ops", 9);
+        revise(&chat, "ops", 8);
+        revise(&tidy, "ops", 7);
+        revise(&delegated, "@company", 6);
+        let newer = revise(&asker, "ops", 2);
+        revise(&delegated, "ops", 400);
+        let found: Vec<(String, String)> = db.unattended_revisions(&ada.id, since).unwrap().into_iter().map(|(rev, r)| (rev.id, r.id)).collect();
+        assert_eq!(found, vec![(newer, asker.id.clone()), (older, delegated.id.clone())]);
+        assert!(db.unattended_revisions(&bo.id, since).unwrap().is_empty());
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
