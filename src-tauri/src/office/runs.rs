@@ -93,10 +93,11 @@ impl Office {
         let mut run = {
             let db = self.db();
             let e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
-            let context = threads::context(&ceo_of(&db)?, &db.chat_runs(&e.id, &e.chat_session)?);
+            let at = now();
+            let context = threads::context(&ceo_of(&db)?, &db.chat_runs(&e.id, &e.chat_session)?, at);
             let from = (!context.is_empty()).then(|| "your chat".to_string());
             let names: Vec<String> = attachments.iter().map(|a| a.name.clone()).collect();
-            Run::new(&e.id, RunKind::Task { label: threads::task_label(text, &names), from, context }, text.to_string(), now())
+            Run::new(&e.id, RunKind::Task { label: threads::task_label(text, &names), from, context }, text.to_string(), at)
         };
         self.attach(&mut run, &files)?;
         let session = run.id.clone();
