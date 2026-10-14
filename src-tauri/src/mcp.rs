@@ -117,7 +117,7 @@ fn tools() -> Value {
                 "label": { "type": "string", "description": "Short name, e.g. 'Inbox watch'." },
                 "cron": { "type": "string", "description": "Five-field cron in this computer's local time, e.g. '*/10 * * * *' or '0 8 * * 1-5'." },
                 "instruction": { "type": "string", "description": "What you do each time it fires. Keep it short; the how lives in your skills." },
-                "quiet": { "type": "boolean", "description": "true: a run's report reaches the person you work for only if the run calls notify or fails. Use for frequent watches. Default false: every report lands in their Inbox." },
+                "quiet": { "type": "boolean", "description": "true: a run's report reaches anyone only if the run calls notify or fails. Use for frequent watches. Default false: every report goes where your handbook's Your report section says." },
                 "enabled": { "type": "boolean" },
                 "model": { "type": "string", "description": "Optional. The model this routine runs on, e.g. 'haiku' for a frequent, simple check. Leave it out to use your usual model; pass 'default' to go back to it." },
                 "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "default"], "description": "Optional. How hard this routine thinks: 'low' for a quick check, 'high' or more for research. 'default' goes back to your usual effort." }
