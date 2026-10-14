@@ -989,8 +989,8 @@ INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data
         vec![
             RunKind::Manual,
             RunKind::Chat,
-            RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false },
-            RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true },
+            RunKind::Scheduled { schedule_id: format!("loud-{i}"), slot, label: "Sweep".into(), quiet: false, model: None, effort: None },
+            RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true, model: None, effort: None },
             RunKind::Delegated { parent_run_id: format!("parent-{i}") },
             RunKind::Asked { parent_run_id: format!("parent-{i}"), asked_by: "e0".into(), task: false },
             RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false },
