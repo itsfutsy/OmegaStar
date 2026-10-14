@@ -167,6 +167,7 @@ ul, ol { margin: 0; }
 .md th { font-weight: 500; color: var(--muted); }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .md a { text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 2px; }
+.md .md-path { cursor: pointer; text-decoration: underline; }
 .md-img { display: block; max-width: 100%; height: auto; max-height: 360px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; cursor: zoom-in; }
 
 /* ------------------------------------------------ misc */
