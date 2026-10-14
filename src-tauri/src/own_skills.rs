@@ -214,6 +214,19 @@ pub fn snapshot(skills_dir: &Path) -> Snapshot {
     snap
 }
 
+/// Keeps a snapshot on disk (a JSON list of [skill, file, text]), so a run's edits can still be
+/// recorded after a crash.
+pub fn save_snapshot(path: &Path, s: &Snapshot) -> std::io::Result<()> {
+    let rows: Vec<[&str; 3]> = s.iter().map(|((skill, file), text)| [skill.as_str(), file.as_str(), text.as_str()]).collect();
+    fs::write(path, serde_json::to_string(&rows)?)
+}
+
+/// A snapshot `save_snapshot` wrote; `None` when it is missing or unreadable.
+pub fn load_snapshot(path: &Path) -> Option<Snapshot> {
+    let rows: Vec<[String; 3]> = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    Some(rows.into_iter().map(|[skill, file, text]| ((skill, file), text)).collect())
+}
+
 /// The name a tidy's changes to an employee's notes (top-level markdown in `workspace/`) are recorded
 /// under, so they can be reviewed and reverted like skill edits. Not a folder, so never a skill name.
 pub const NOTES: &str = "@workspace";

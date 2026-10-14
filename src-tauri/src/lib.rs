@@ -10,6 +10,7 @@ mod model;
 mod office;
 mod org;
 mod own_skills;
+mod power;
 mod reader;
 mod schedule;
 mod store;
@@ -281,6 +282,7 @@ pub fn run() {
             commands::open_backup_dir,
             commands::usage_limits,
             commands::refresh_usage,
+            commands::use_signed_in_account,
             commands::check_update,
             commands::install_update,
         ])

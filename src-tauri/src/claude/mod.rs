@@ -323,6 +323,10 @@ fn model_args(kind: &RunKind, e: &Employee) -> Vec<String> {
     args
 }
 
+/// The first message of a run that goes again after the usage limit stopped it: the conversation it
+/// resumes already holds the message it was answering.
+pub const LIMIT_RETRY_NOTE: &str = "Omega Star: the usage limit stopped you before you could answer. It has reset now, so carry on with the message above.";
+
 pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     let e = &s.employee;
     let settings_path = s.run_dir.join("settings.json");
@@ -356,7 +360,11 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
         args,
         cwd: s.employee_dir.clone(),
         env: vec![("MCP_TOOL_TIMEOUT".into(), "900000".into())],
-        stdin: with_attachments(&run.prompt, &attachments_dir(&s.employee_dir, &run.id), &run.attachments),
+        stdin: if run.limit_retries > 0 && s.resume {
+            LIMIT_RETRY_NOTE.to_string()
+        } else {
+            with_attachments(&run.prompt, &attachments_dir(&s.employee_dir, &run.id), &run.attachments)
+        },
         files: vec![
             (s.employee_dir.join("CLAUDE.md"), handbook(s)),
             (settings_path, serde_json::to_string_pretty(&s.settings).unwrap()),

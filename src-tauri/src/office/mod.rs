@@ -31,6 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -58,6 +59,9 @@ const WATCH_EVERY: Duration = Duration::from_secs(60);
 const ACCOUNT_EVERY: Duration = Duration::from_secs(60);
 /// In the data dir while the app runs: a launch that finds it knows the last session did not quit cleanly.
 pub(crate) const RUNNING_MARKER: &str = "omega.running";
+/// In a run's folder while it works: its employee's skills as they were when it started, so a run the
+/// app lost can still have its edits recorded.
+const BEFORE_SNAPSHOT: &str = "before.json";
 const DEFAULT_PROMPT: &str = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
 pub fn default_data_dir() -> PathBuf {
@@ -85,6 +89,9 @@ struct Active {
     input: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
+/// Lock order: the store mutex (`Office::db()`) comes first. Never call `db()` while holding `usage`,
+/// `account` or `active`; a function that needs both takes the store first, or releases the other
+/// lock before taking the store. No subprocess runs while the store mutex is held.
 struct Inner {
     data_dir: PathBuf,
     db: Mutex<Store>,
@@ -106,6 +113,8 @@ struct Inner {
     crashed: bool,
     /// The last `claude auth status` and when it was checked; `None` until the first check.
     account: Mutex<Option<(Ts, Option<Account>)>>,
+    /// The Mac is in a full wake, not a Power Nap dark wake: background runs may start.
+    awake: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -138,6 +147,7 @@ impl Office {
             log!("could not write {RUNNING_MARKER}: {e}");
         }
         let store = Store::open(&data_dir.join("office.db"))?;
+        let held_until = store.held_until().ok().flatten().filter(|t| *t > now());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
         let office = Office(Arc::new(Inner {
@@ -148,18 +158,35 @@ impl Office {
             active: Mutex::new(HashMap::new()),
             mcp_port: port,
             finished: tokio::sync::watch::channel(0).0,
-            usage: Mutex::new(UsageLimits::default()),
+            usage: Mutex::new(UsageLimits { held_until, ..UsageLimits::default() }),
             probing: tokio::sync::Mutex::new(()),
             backing_up: tokio::sync::Mutex::new(()),
             watching: tokio::sync::Mutex::new(()),
             build,
             crashed,
             account: Mutex::new(None),
+            awake: AtomicBool::new(true),
         }));
-        for run_id in office.recover()? {
+        for mut run in office.recover()? {
             // The run never reached its end, where its sends are normally found.
-            if let Err(e) = office.capture_deliveries(&run_id, true) {
-                log!("run {run_id}: finding the requests it sent failed: {e}");
+            if let Err(e) = office.capture_deliveries(&run.id, true) {
+                log!("run {}: finding the requests it sent failed: {e}", run.id);
+            }
+            if run.state == RunState::Lost {
+                continue;
+            }
+            // Finished from its transcript: what a run's end normally does.
+            if matches!(run.kind, RunKind::Tidy { .. }) && run.state == RunState::Succeeded {
+                office.review_tidy(&mut run);
+                if let Err(e) = office.db().save_run(&run) {
+                    log!("saving run {} failed: {e}", run.id);
+                }
+            }
+            if let Err(e) = office.surface_thread(&run) {
+                log!("surfacing the thread after run {} failed: {e}", run.id);
+            }
+            if let Err(e) = office.deliver_answers(&run) {
+                log!("delivering answers after run {} failed: {e}", run.id);
             }
         }
         office.0.rt.spawn(crate::mcp::serve(listener, office.clone()));
@@ -174,6 +201,11 @@ impl Office {
             let mut every = tokio::time::interval(TICK);
             loop {
                 every.tick().await; // the first tick completes immediately
+                // Read here, off any lock, so claiming runs never waits for ioreg.
+                let awake = tokio::task::spawn_blocking(crate::power::full_wake).await.unwrap_or(true);
+                if office.0.awake.swap(awake, Ordering::Relaxed) != awake {
+                    log!("{}", if awake { "full wake: background runs can start" } else { "dark wake: background runs wait" });
+                }
                 if let Err(e) = office.tick(now()) {
                     log!("scheduler tick failed: {e}");
                 }
@@ -278,20 +310,92 @@ impl Office {
         own_skills::skills_dir(&self.employee_dir(employee_id))
     }
 
-    /// Marks the runs a previous session left running as lost, and returns their ids.
-    fn recover(&self) -> Result<Vec<String>> {
+    /// Settles the runs a previous session left running: a run whose transcript ends in a result is
+    /// finished from it, the rest are lost. Either way the skill edits since its start are recorded
+    /// when its snapshot survived. Returns the runs.
+    fn recover(&self) -> Result<Vec<Run>> {
+        let lost = if self.0.crashed { "Omega Star closed unexpectedly while this run was in progress." } else { "Omega Star stopped while this run was in progress." };
         let db = self.db();
-        let mut lost = vec![];
+        let mut settled = vec![];
         for mut r in db.runs_in_state(RunState::Running)? {
-            r.state = RunState::Lost;
-            r.ended_at = Some(now());
-            r.error = Some(if self.0.crashed { "Omega Star closed unexpectedly while this run was in progress." } else { "Omega Star stopped while this run was in progress." }.into());
-            db.save_run(&r)?;
-            lost.push(r.id);
+            let run_dir = self.run_dir(&r.id);
+            let home = self.employee_dir(&r.employee_id);
+            let path = run_dir.join("transcript.jsonl");
+            let transcript = fs::read_to_string(&path).unwrap_or_default();
+            let supervised = db.employee(&r.employee_id)?.is_some_and(|e| e.clearance == Clearance::Supervised);
+            let before_path = run_dir.join(BEFORE_SNAPSHOT);
+            let skills = own_skills::load_snapshot(&before_path).map(|before| {
+                let mut after = own_skills::snapshot(&own_skills::skills_dir(&home));
+                if matches!(r.kind, RunKind::Tidy { .. }) {
+                    after.extend(own_skills::notes_snapshot(&home.join("workspace")));
+                }
+                (before, after)
+            });
+            let left = Leftover {
+                transcript: &transcript,
+                home: &home,
+                supervised,
+                modified: fs::metadata(&path).and_then(|m| m.modified()).ok().map(Ts::from),
+                now: now(),
+                stderr_tail: fs::read_to_string(run_dir.join("stderr.log")).ok().and_then(|s| runs::stderr_tail(&s)),
+                skills,
+            };
+            let changes = settle(&mut r, left, lost);
+            db.tx(|| {
+                for fc in changes {
+                    db.insert_revision(&r.employee_id, &own_skills::revision(fc, Some(r.id.clone()), now()))?;
+                }
+                db.save_run(&r)
+            })?;
+            let _ = fs::remove_file(&before_path);
+            settled.push(r);
         }
-        db.lose_unreadable_running(now(), "Omega Star stopped while this run was in progress.")?;
-        Ok(lost)
+        db.lose_unreadable_running(now(), lost)?;
+        Ok(settled)
     }
+}
+
+/// What a run the last session left running left behind, read by `recover`.
+struct Leftover<'a> {
+    transcript: &'a str,
+    /// The employee's folder, which the transcript's paths are relative to.
+    home: &'a Path,
+    supervised: bool,
+    /// When the transcript was last written.
+    modified: Option<Ts>,
+    now: Ts,
+    stderr_tail: Option<String>,
+    /// The skills as the run started and as they are now, when its snapshot survived.
+    skills: Option<(own_skills::Snapshot, own_skills::Snapshot)>,
+}
+
+/// Finishes a run from its transcript when its turn had ended, or marks it lost with `lost`, and returns
+/// the skill edits it made. Pure.
+fn settle(run: &mut Run, left: Leftover<'_>, lost: &str) -> Vec<own_skills::FileChange> {
+    match claude::transcript_outcome(left.transcript, left.home) {
+        Some(o) => {
+            let (state, error) = runs::state_of(&o, left.stderr_tail);
+            let ended = left.modified.unwrap_or(left.now);
+            run.state = state;
+            run.error = error;
+            run.ended_at = Some(ended);
+            run.duration_ms = run.started_at.map(|s| (ended - s).num_milliseconds().max(0) as u64);
+            run.turns = Some(o.turns);
+            run.summary = Some(o.text).filter(|t| !t.trim().is_empty());
+            run.denials = if left.supervised { o.denials.into_iter().map(|d| d.denial).collect() } else { vec![] };
+            let text = |call: &Value, key: &str| call[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+            run.needs_you = claude::office_calls(left.transcript, "mcp__omega__notify").iter().filter_map(|c| text(c, "message")).collect();
+            run.proposed = claude::office_calls(left.transcript, "mcp__omega__propose_changes").last().and_then(|c| text(c, "plan"));
+        }
+        None => {
+            run.state = RunState::Lost;
+            run.ended_at = Some(left.now);
+            run.error = Some(lost.into());
+        }
+    }
+    let changes = left.skills.map(|(before, after)| own_skills::diff(&before, &after)).unwrap_or_default();
+    run.skill_changes.extend(changes.iter().map(|c| c.change.clone()));
+    changes
 }
 
 /// The watch of a delivered request.
@@ -322,4 +426,91 @@ fn find_member<'a, T>(items: &'a [T], key: &str, f: impl Fn(&T) -> (&String, Opt
         let (id, slug, name) = f(x);
         id.to_lowercase() == k || slug.map(|s| s.to_lowercase() == k).unwrap_or(false) || name.to_lowercase() == k
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOST: &str = "Omega Star stopped while this run was in progress.";
+
+    fn home() -> &'static Path {
+        Path::new("/tmp/office/employees/tester")
+    }
+
+    fn assistant(text: &str) -> String {
+        json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "model": "claude-sonnet-4-5", "content": [{ "type": "text", "text": text }] } }).to_string()
+    }
+
+    fn notify(id: &str, message: &str) -> String {
+        json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "model": "claude-sonnet-4-5", "content": [{ "type": "tool_use", "id": id, "name": "mcp__omega__notify", "input": { "message": message } }] } }).to_string()
+    }
+
+    fn result(text: &str, turns: u32) -> String {
+        json!({ "type": "result", "subtype": "success", "is_error": false, "num_turns": turns, "duration_ms": 900, "result": text, "permission_denials": [] }).to_string()
+    }
+
+    fn started() -> Ts {
+        "2026-10-14T09:00:00Z".parse().unwrap()
+    }
+
+    fn running() -> Run {
+        let mut r = Run::new("e1", RunKind::Manual, "go".into(), started());
+        r.state = RunState::Running;
+        r.started_at = Some(r.created_at);
+        r
+    }
+
+    fn left<'a>(transcript: &'a str, skills: Option<(own_skills::Snapshot, own_skills::Snapshot)>) -> Leftover<'a> {
+        Leftover { transcript, home: home(), supervised: true, modified: Some(started() + chrono::Duration::minutes(8)), now: now(), stderr_tail: None, skills }
+    }
+
+    #[test]
+    fn a_transcript_that_ended_finishes_the_run() {
+        let transcript = [assistant("Reading."), result("Line one.\nLine two.", 3), notify("t1", "Please check the totals."), result("Done.", 2)].join("\n");
+        let mut r = running();
+        assert!(settle(&mut r, left(&transcript, None), LOST).is_empty());
+        assert_eq!(r.state, RunState::Succeeded);
+        assert_eq!(r.summary.as_deref(), Some("Line one.\nLine two.\n\nDone."));
+        assert_eq!(r.turns, Some(5));
+        assert_eq!(r.needs_you, vec!["Please check the totals.".to_string()]);
+        assert_eq!(r.duration_ms, Some(8 * 60 * 1000));
+        assert_eq!(r.error, None);
+    }
+
+    #[test]
+    fn a_transcript_cut_mid_turn_is_lost() {
+        let transcript = [assistant("Reading."), result("Line one.", 1), assistant("Now the second part.")].join("\n");
+        let mut r = running();
+        settle(&mut r, left(&transcript, None), LOST);
+        assert_eq!((r.state, r.error.as_deref(), r.summary), (RunState::Lost, Some(LOST), None));
+    }
+
+    #[test]
+    fn a_half_written_last_line_does_not_reopen_the_turn() {
+        let transcript = format!("{}\n{}\n{{\"type\":\"assistant\",\"mess", assistant("Reading."), result("All done.", 2));
+        let mut r = running();
+        settle(&mut r, left(&transcript, None), LOST);
+        assert_eq!((r.state, r.summary.as_deref()), (RunState::Succeeded, Some("All done.")));
+    }
+
+    #[test]
+    fn a_kept_snapshot_records_the_edits() {
+        let dir = std::env::temp_dir().join(format!("omegastar-recover-{}", uuid::Uuid::new_v4()));
+        let skill = dir.join("skills").join("tester-notes");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "Check the inbox every morning.\n").unwrap();
+        let path = dir.join(BEFORE_SNAPSHOT);
+        own_skills::save_snapshot(&path, &own_skills::snapshot(&dir.join("skills"))).unwrap();
+        fs::write(skill.join("SKILL.md"), "Check the inbox every morning and evening.\n").unwrap();
+
+        let before = own_skills::load_snapshot(&path).unwrap();
+        let after = own_skills::snapshot(&dir.join("skills"));
+        let mut r = running();
+        let changes = settle(&mut r, left("", Some((before, after))), LOST);
+        assert_eq!(r.state, RunState::Lost);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(r.skill_changes, vec![SkillChange { skill: "tester-notes".into(), file: "SKILL.md".into(), change: ChangeKind::Modified }]);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

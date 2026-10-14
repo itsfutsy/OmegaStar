@@ -323,15 +323,8 @@ impl Office {
     /// A finished tidy goes to your Inbox when it proposes changes, and for an employee's first few
     /// tidies, so you see what one does before you stop looking.
     pub(super) fn review_tidy(&self, run: &mut Run) {
-        let (name, earlier) = {
-            let db = self.db();
-            let name = db.employee(&run.employee_id).ok().flatten().map(|e| e.name).unwrap_or_default();
-            let earlier = db
-                .tidy_runs(&run.employee_id)
-                .map(|v| v.iter().filter(|r| r.id != run.id && r.created_at < run.created_at && r.state == RunState::Succeeded).count())
-                .unwrap_or(usize::MAX);
-            (name, earlier)
-        };
+        let name = self.db().employee(&run.employee_id).ok().flatten().map(|e| e.name).unwrap_or_default();
+        let earlier = self.earlier_tidies(run);
         if run.proposed.is_some() {
             run.needs_you.push("Proposes bigger changes that need your OK.".into());
             self.sink().notify(&format!("{name} proposes tidy changes"), "Open the report in your Inbox to approve them.");
@@ -339,6 +332,15 @@ impl Office {
         if earlier < tidy::REVIEWED_FIRST {
             run.needs_you.push(format!("One of {name}'s first tidies: open it to see what changed. Every change can be reverted."));
         }
+    }
+
+    /// How many tidies of the run's employee succeeded before it was created; `usize::MAX` when the
+    /// store cannot tell, so nothing treats it as one of the first.
+    pub(super) fn earlier_tidies(&self, run: &Run) -> usize {
+        self.db()
+            .tidy_runs(&run.employee_id)
+            .map(|v| v.iter().filter(|r| r.id != run.id && r.created_at < run.created_at && r.state == RunState::Succeeded).count())
+            .unwrap_or(usize::MAX)
     }
 
     /// Queues a tidy for the employee, unless one is already waiting or running.

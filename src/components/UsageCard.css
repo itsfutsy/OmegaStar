@@ -16,6 +16,8 @@
 .usage-err .usage-bar span, .usage-mini-bar.usage-err span { background: var(--err); }
 .usage-err .mono { color: var(--err-text); }
 .usage-mini { display: none; }
+.usage-note { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: var(--t-xs); line-height: 1.4; color: var(--muted); }
+.usage-note-warn { color: var(--warn); }
 .usage-mini-bar { display: block; height: 3px; border-radius: 999px; background: var(--sunken); overflow: hidden; }
 .usage-mini-cost { font-size: 10px; color: var(--ink-2); text-align: center; }
 

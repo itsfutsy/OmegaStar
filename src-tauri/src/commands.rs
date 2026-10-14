@@ -466,6 +466,11 @@ pub async fn refresh_usage(office: O<'_>) -> Result<UsageLimits> {
 }
 
 #[tauri::command]
+pub async fn use_signed_in_account(office: O<'_>) -> Result<Company> {
+    office.use_signed_in_account().await
+}
+
+#[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<String>> {
     update::check(&app).await
 }

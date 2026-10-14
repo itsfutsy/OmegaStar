@@ -176,6 +176,13 @@ impl Store {
     pub fn set_backup_status(&self, s: &BackupStatus) -> Result<()> {
         self.set_meta("backup_status", s)
     }
+    /// When the usage limit that holds the office resets; `None` when nothing holds it.
+    pub fn held_until(&self) -> Result<Option<Ts>> {
+        Ok(self.meta::<Option<Ts>>("held_until")?.flatten())
+    }
+    pub fn set_held_until(&self, t: Option<Ts>) -> Result<()> {
+        self.set_meta("held_until", &t)
+    }
 
     /// Writes a consistent copy of the whole database to `path`, which must not exist.
     pub fn snapshot_to(&self, path: &Path) -> Result<()> {
