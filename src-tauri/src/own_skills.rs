@@ -247,6 +247,32 @@ pub fn notes_snapshot(workspace: &Path) -> Snapshot {
     snap
 }
 
+/// Markdown notes anywhere under `workspace/` changed since `since`: (path inside it, when), newest
+/// first. Hidden files and folders and `node_modules` are left out.
+pub fn changed_notes(workspace: &Path, since: Ts) -> Vec<(String, Ts)> {
+    fn walk(dir: &Path, rel: &str, since: Ts, out: &mut Vec<(String, Ts)>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "node_modules" {
+                continue;
+            }
+            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(meta) = e.metadata() else { continue };
+            if meta.is_dir() {
+                walk(&e.path(), &r, since, out);
+            } else if name.to_lowercase().ends_with(".md") {
+                if let Some(at) = meta.modified().ok().map(Ts::from).filter(|at| *at >= since) {
+                    out.push((r, at));
+                }
+            }
+        }
+    }
+    let mut v = vec![];
+    walk(workspace, "", since, &mut v);
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v
+}
+
 /// The company page and what an employee owns are recorded under these names. Only a conversation
 /// with the person they all work for changes either, so Undo never overwrites a newer change to them.
 pub const COMPANY: &str = "@company";
@@ -632,6 +658,22 @@ mod tests {
         fs::write(company_page_path(&dir), mine).unwrap();
         seed_company_page(&dir).unwrap();
         assert_eq!(fs::read(company_page_path(&dir)).unwrap(), mine.as_bytes(), "an existing page is left byte for byte");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changed_notes_are_markdown_outside_hidden_and_dependency_folders() {
+        let dir = temp_dir();
+        for f in ["campaign.md", "gads/log.md", "data.csv", "node_modules/pkg/README.md", ".cache/old.md", ".hidden.md"] {
+            let p = dir.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, "x").unwrap();
+        }
+        let since = Ts::from(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+        let mut names: Vec<String> = changed_notes(&dir, since).into_iter().map(|(f, _)| f).collect();
+        names.sort();
+        assert_eq!(names, ["campaign.md", "gads/log.md"]);
+        assert!(changed_notes(&dir, Ts::from(std::time::SystemTime::now() + std::time::Duration::from_secs(60))).is_empty(), "older than since");
         let _ = fs::remove_dir_all(&dir);
     }
 

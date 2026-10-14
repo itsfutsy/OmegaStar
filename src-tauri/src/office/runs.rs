@@ -342,6 +342,7 @@ impl Office {
                 .map(|x| (x.name.clone(), x.title.clone()))
                 .or_else(|| people.iter().find(|p| &p.id == m).map(|p| (p.name.clone(), p.title.clone())))
         });
+        let manager_is_agent = e.manager_id.as_ref().is_some_and(|m| employees.iter().any(|x| &x.id == m));
         let boss = company.reports_to.as_ref().and_then(|b| people.iter().find(|p| &p.id == b)).map(|p| (p.name.clone(), p.title.clone()));
         let reports = employees
             .iter()
@@ -366,26 +367,7 @@ impl Office {
             _ => None,
         };
         let person_name = |id: &str| people.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_else(|| "a former member".into());
-        let waiting_on = db
-            .requests(&RequestFilter { employee_id: Some(e.id.clone()), state: Some(RequestState::Open), ..Default::default() })
-            ?
-            .into_iter()
-            .map(|r| {
-                let n = person_name(&r.person_id);
-                (r, n)
-            })
-            .collect();
-        let recent_work = db
-            .work_runs(&e.id, 30)
-            ?
-            .into_iter()
-            .filter(|r| r.id != run.id && r.state.is_finished() && !matches!(r.kind, RunKind::Tidy { .. } | RunKind::ReplyCheck { .. }))
-            .filter_map(|r| Some((r.ended_at.unwrap_or(r.created_at), claude::kind_label(&r.kind), r.state, r.summary.clone().filter(|s| !s.trim().is_empty())?)))
-            .take(5)
-            .collect();
         let schedules = db.schedules(&e.id)?;
-        let proposals = db.proposals(Some(&e.id), Some(ProposalState::Open))?;
-        let checks = db.checks(&e.id, Some(CheckState::Open))?;
         let replier = match &run.kind {
             RunKind::FollowUp { person_id, .. }
             | RunKind::ReplyCheck { person_id, .. }
@@ -406,7 +388,28 @@ impl Office {
         };
         let session = db.run(&run.id)?.map(|r| r.session).unwrap_or_else(|| run.id.clone());
         let resume = db.session_started(&session)?;
+        let mut opening = opening(&db, &e, &employees, run, &session, resume, now())?;
+        if let Some(o) = opening.as_mut() {
+            o.waiting_on = db
+                .requests(&RequestFilter { employee_id: Some(e.id.clone()), state: Some(RequestState::Open), ..Default::default() })?
+                .into_iter()
+                .map(|r| {
+                    let n = person_name(&r.person_id);
+                    (r, n)
+                })
+                .collect();
+        }
+        let chain = match (&run.kind, run.upstream()) {
+            (RunKind::Delegated { .. } | RunKind::Asked { .. } | RunKind::Answered { .. }, Some(up)) => Some(tools::source_chain(&db, &company.ceo_name, up)?),
+            _ => None,
+        };
         drop(db);
+        let employee_dir = self.employee_dir(&e.id);
+        if let Some(o) = opening.as_mut() {
+            o.notes = own_skills::changed_notes(&employee_dir.join("workspace"), o.since.unwrap_or(o.now - chrono::Duration::days(7)));
+        }
+        let source = chain.map(|c| tools::source_text(&c, &self.0.data_dir.join("runs")));
+        let owns = fs::read_to_string(employee_dir.join(own_skills::OWN_FILE)).map(|t| t.trim().to_string()).unwrap_or_default();
         let tidy = self.tidy_brief(run, &e)?;
         let catalog = self.skill_catalog();
         let own = own_skills::own_skill_names(&self.skills_dir(&e.id));
@@ -415,7 +418,7 @@ impl Office {
             granted,
             claude: claude_path,
             settings: catalog::render_settings(&e.skills, &catalog, &own, &allowed_rules(&e, &run.allow_once)),
-            employee_dir: self.employee_dir(&e.id),
+            employee_dir,
             run_dir: self.run_dir(&run.id),
             mcp_url: format!("http://127.0.0.1:{}/mcp/{token}", self.0.mcp_port),
             company,
@@ -426,11 +429,11 @@ impl Office {
             colleagues,
             people,
             counterpart,
-            waiting_on,
-            recent_work,
             schedules,
-            proposals,
-            checks,
+            opening,
+            owns,
+            source,
+            manager_is_agent,
             tidy,
             replier,
             watched,
@@ -961,6 +964,82 @@ fn allowed_rules(e: &Employee, once: &[String]) -> Vec<String> {
     rules
 }
 
+/// What a run's opening note is made from, read under the store lock: `waiting_on` and `notes` are
+/// left for the caller. `None` for reply checks, nudges and Organize runs. A resumed conversation, and a
+/// quiet routine, get only what is new since their last turn.
+fn opening(db: &Store, e: &Employee, employees: &[Employee], run: &Run, session: &str, resume: bool, now: Ts) -> Result<Option<claude::Opening>> {
+    if matches!(run.kind, RunKind::ReplyCheck { .. } | RunKind::Nudge { .. } | RunKind::Organize { .. }) {
+        return Ok(None);
+    }
+    let (day, week) = (chrono::Duration::days(1), chrono::Duration::days(7));
+    let since = if resume {
+        db.last_turn_ended(session, &run.id)?
+    } else if let RunKind::Scheduled { schedule_id, quiet: true, .. } = &run.kind {
+        db.previous_finished(schedule_id, run.created_at)?.and_then(|r| r.ended_at)
+    } else {
+        None
+    };
+    let window_start = since.unwrap_or(now - week);
+    let finished_after = |employee_id: &str, start: Ts| -> Result<Vec<RunRecord>> {
+        Ok(db
+            .finished_since(employee_id, start - day)?
+            .into_iter()
+            .filter(|r| r.run.ended_at.is_some_and(|t| t > start))
+            .filter(|r| !matches!(r.run.kind, RunKind::Tidy { .. } | RunKind::ReplyCheck { .. } | RunKind::Nudge { .. }))
+            .collect())
+    };
+    let mut work: Vec<Run> =
+        finished_after(&e.id, window_start)?.into_iter().filter(|r| r.run.id != run.id && r.session != session).map(|r| r.run).collect();
+    work.sort_by(|a, b| b.ended_at.cmp(&a.ended_at));
+
+    let mut team = vec![];
+    let mut team_since = window_start;
+    let reports: Vec<&Employee> = employees.iter().filter(|x| x.manager_id.as_deref() == Some(e.id.as_str())).collect();
+    if !reports.is_empty() {
+        // From the last run that was not a quiet routine, so a frequent routine does not swallow the lines.
+        team_since = since
+            .or_else(|| work.iter().find(|r| !matches!(r.kind, RunKind::Scheduled { quiet: true, .. })).map(|r| r.started_at.unwrap_or(r.created_at)))
+            .unwrap_or(now - week);
+        for x in reports {
+            for r in finished_after(&x.id, team_since)? {
+                if r.run.kind.lane() != Lane::Work {
+                    continue;
+                }
+                // Work this employee handed over comes back to them on its own.
+                if let Some(parent) = r.run.parent_run_id() {
+                    if db.run(parent)?.is_some_and(|p| p.run.employee_id == e.id) {
+                        continue;
+                    }
+                }
+                team.push((x.name.clone(), r.run));
+            }
+        }
+        team.sort_by(|a, b| b.1.ended_at.cmp(&a.1.ended_at));
+    }
+
+    let cards = db
+        .open_cards(&e.id)?
+        .into_iter()
+        .filter_map(|r| {
+            let at = r.ended_at.unwrap_or(r.created_at);
+            r.card.map(|c| (at, c.message))
+        })
+        .collect();
+    Ok(Some(claude::Opening {
+        now,
+        since,
+        checks: db.checks(&e.id, Some(CheckState::Open))?,
+        cards,
+        waiting_on: vec![],
+        proposals: db.proposals(Some(&e.id), Some(ProposalState::Open))?,
+        work,
+        team,
+        running: db.active_runs_of(&e.id)?.into_iter().filter(|r| r.state == RunState::Running && r.id != run.id).collect(),
+        notes: vec![],
+        parents: db.parents_since(window_start.min(team_since) - day)?,
+    }))
+}
+
 /// Decides how a run ended. Pure.
 fn final_state(cancelled: bool, ended: &Result<Ended>) -> (RunState, Option<String>) {
     if cancelled {
@@ -1031,6 +1110,91 @@ mod tests {
 
     fn ended(o: Option<Outcome>, stderr: &str) -> Result<Ended> {
         Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None })
+    }
+
+    /// A temp store in its own folder.
+    fn opening_store() -> (PathBuf, Store) {
+        let dir = std::env::temp_dir().join(format!("omegastar-opening-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        (dir, db)
+    }
+
+    /// A finished run of `e`'s that ended `mins` minutes ago, saved in `session`.
+    fn finished(db: &Store, e: &Employee, kind: RunKind, mins: i64, session: &str, summary: &str) -> Run {
+        let at = now() - chrono::Duration::minutes(mins);
+        let mut r = Run::new(&e.id, kind, format!("Prompt {mins}."), at - chrono::Duration::minutes(1));
+        r.state = RunState::Succeeded;
+        r.started_at = Some(r.created_at);
+        r.ended_at = Some(at);
+        r.summary = Some(summary.into());
+        assert!(db.insert_run(&r, session).unwrap());
+        r
+    }
+
+    fn note(e: &Employee, o: claude::Opening, run: &Run) -> String {
+        let company = Company { name: "Acme".into(), ceo_name: "Pat".into(), ..Company::unset() };
+        claude::first_message(&claude::test_snapshot(company, e.clone(), Some(o), false), run)
+    }
+
+    #[test]
+    fn a_fresh_chat_knows_the_last_one() {
+        let (dir, db) = opening_store();
+        let mut ada = employee(Clearance::Supervised);
+        ada.chat_session = "chat-2".into();
+        db.save_employee(&ada).unwrap();
+        finished(&db, &ada, RunKind::Chat, 90, "chat-1", "Booked the venue for Thursday.");
+        let turn = Run::new(&ada.id, RunKind::Chat, "Where are we on the offsite?".into(), now());
+        let o = opening(&db, &ada, std::slice::from_ref(&ada), &turn, "chat-2", false, now()).unwrap().unwrap();
+        assert_eq!(o.since, None);
+        let text = note(&ada, o, &turn);
+        assert!(text.contains(", chat with Pat: Pat: \"Prompt 90.\" You: Booked the venue for Thursday."), "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resumed_turn_hears_only_what_is_new_elsewhere() {
+        let (dir, db) = opening_store();
+        let ada = employee(Clearance::Supervised);
+        db.save_employee(&ada).unwrap();
+        let sweep = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: false, model: None, effort: None, review: false };
+        finished(&db, &ada, RunKind::Chat, 180, "chat-ada", "Earlier turn.");
+        let last = finished(&db, &ada, RunKind::Chat, 60, "chat-ada", "Last turn.");
+        finished(&db, &ada, sweep, 120, "s1-run", "Swept before the last turn.");
+        let manual = finished(&db, &ada, RunKind::Manual, 30, "m1", "Paid the invoice.");
+        let turn = Run::new(&ada.id, RunKind::Chat, "And now?".into(), now());
+        let o = opening(&db, &ada, std::slice::from_ref(&ada), &turn, "chat-ada", true, now()).unwrap().unwrap();
+        assert_eq!(o.since, last.ended_at);
+        assert_eq!(o.work.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), vec![manual.id]);
+        let text = note(&ada, o, &turn);
+        assert!(text.contains("What you did elsewhere since your last turn here, newest first.\n- "), "{text}");
+        assert!(!text.contains("Swept") && !text.contains("Last turn."), "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_manager_hears_what_her_reports_did_on_their_own() {
+        let (dir, db) = opening_store();
+        let ada = employee(Clearance::Supervised);
+        let mut bo = employee(Clearance::Supervised);
+        bo.name = "Bo".into();
+        bo.slug = "bo".into();
+        bo.chat_session = "chat-bo".into();
+        bo.manager_id = Some(ada.id.clone());
+        db.save_employee(&ada).unwrap();
+        db.save_employee(&bo).unwrap();
+        let handed = finished(&db, &ada, RunKind::Manual, 240, "m0", "Handed Bo the audit.");
+        finished(&db, &bo, RunKind::Delegated { parent_run_id: handed.id.clone() }, 100, "d1", "Audit done.");
+        let report = RunKind::Scheduled { schedule_id: "s9".into(), slot: now(), label: "Weekly numbers".into(), quiet: false, model: None, effort: None, review: false };
+        finished(&db, &bo, report, 50, "s9-run", "Sales are up 4 percent.");
+        let run = Run::new(&ada.id, RunKind::Manual, "Go.".into(), now());
+        let employees = vec![ada.clone(), bo.clone()];
+        let o = opening(&db, &ada, &employees, &run, "m-now", false, now()).unwrap().unwrap();
+        assert_eq!(o.team.len(), 1, "her own hand-off comes back to her directly");
+        let text = note(&ada, o, &run);
+        assert!(text.contains("From your team since your last run:\n- Bo, scheduled 'Weekly numbers' ("), "{text}");
+        assert!(text.contains("): Sales are up 4 percent.") && !text.contains("Audit done."), "{text}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
