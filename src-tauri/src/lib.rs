@@ -193,6 +193,7 @@ pub fn run() {
             commands::open_attachment,
             commands::read_image,
             commands::open_image,
+            commands::open_report_path,
             commands::new_chat,
             commands::chat,
             commands::runs,

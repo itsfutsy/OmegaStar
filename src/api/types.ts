@@ -302,6 +302,8 @@ export type Commands = {
   open_attachment: { args: { runId: string; name: string }; ret: null };
   read_image: { args: { path: string }; ret: string };
   open_image: { args: { path: string }; ret: null };
+  /** A path an agent mentioned: documents and folders open, anything else is shown in Finder. */
+  open_report_path: { args: { path: string }; ret: null };
   new_chat: { args: { employeeId: string }; ret: null };
   chat: { args: { employeeId: string }; ret: Run[] };
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };
