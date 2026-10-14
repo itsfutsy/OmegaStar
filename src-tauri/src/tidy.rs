@@ -7,10 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
 
-/// No automatic tidy starts within this long of the last one, whatever it finds.
-const COOLDOWN_HOURS: i64 = 24;
-/// Things you taught only start a tidy this long after the last, so a busy week is one tidy.
-const TEACHING_DAYS: i64 = 7;
+/// No automatic tidy starts within this long of the last one, whatever the reason, so a busy week is one tidy.
+const COOLDOWN_DAYS: i64 = 7;
 /// Automatic tidies wait while the plan's windows are this full: real work comes first.
 const HOLD_FIVE_HOUR_PERCENT: f64 = 70.0;
 const HOLD_SEVEN_DAY_PERCENT: f64 = 85.0;
@@ -39,22 +37,19 @@ pub struct Situation<'a> {
 
 /// Why an automatic tidy should start now, if it should. A finding a tidy has already seen does not
 /// start another: a long runbook the employee rightly kept whole is not a reason to tidy every day.
+/// An overdue check never starts one either: a due check is work of its own, not something to tidy.
 pub fn due(s: &Situation) -> Option<String> {
     if let Some((at, _)) = s.last {
-        if s.now - at < chrono::Duration::hours(COOLDOWN_HOURS) {
+        if s.now - at < chrono::Duration::days(COOLDOWN_DAYS) {
             return None;
         }
     }
-    if s.findings.iter().any(|f| f.kind == HealthKind::OverdueCheck) {
-        return Some("a check you set for yourself is due".into());
-    }
     let known: HashSet<&str> = s.last.map(|(_, sig)| sig.iter().map(String::as_str).collect()).unwrap_or_default();
-    let fresh = s.findings.iter().filter(|f| !known.contains(key(f).as_str())).count();
+    let fresh = s.findings.iter().filter(|f| f.kind != HealthKind::OverdueCheck && !known.contains(key(f).as_str())).count();
     if fresh > 0 {
         return Some(format!("{fresh} {} to tidy since the last look", if fresh == 1 { "thing" } else { "things" }));
     }
-    let weekly = s.last.map(|(at, _)| s.now - at >= chrono::Duration::days(TEACHING_DAYS)).unwrap_or(true);
-    if s.taught > 0 && weekly {
+    if s.taught > 0 {
         return Some(format!("{} to confirm were taught into your skills", if s.taught == 1 { "1 thing you were told".to_string() } else { format!("{} things you were told", s.taught) }));
     }
     None
@@ -88,19 +83,21 @@ fn is_bullet(line: &str) -> bool {
     t.starts_with("- ") || t.starts_with("* ") || t.split_once(". ").map(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).unwrap_or(false)
 }
 
+/// Where a line's provenance starts: "(taught 2026-09-20)" or "(confirmed by Ada 2026-09-20)".
+fn mark_at(lower: &str) -> Option<usize> {
+    ["(taught", "(confirmed by"].into_iter().filter_map(|m| lower.find(m)).min()
+}
+
 /// The words of a line, without its "(taught 2026-09-20)" provenance: that is bookkeeping, and a rule
 /// folded into another line keeps its meaning without it.
 fn tokens(s: &str) -> BTreeSet<String> {
     let lower = s.to_lowercase();
-    let body = match lower.find("(taught") {
-        Some(i) => &lower[..i],
-        None => &lower,
-    };
+    let body = &lower[..mark_at(&lower).unwrap_or(lower.len())];
     body.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 2).map(String::from).collect()
 }
 
 /// (heading, line) of every taught line in `text`: bullets under a taught heading, and any line that
-/// carries a `(taught ...)` provenance mark.
+/// carries a `(taught ...)` or `(confirmed by ...)` provenance mark.
 fn taught_lines(text: &str) -> Vec<(String, String)> {
     let mut out = vec![];
     let (mut heading, mut fence) = (String::new(), false);
@@ -117,7 +114,8 @@ fn taught_lines(text: &str) -> Vec<(String, String)> {
             heading = t.to_string();
             continue;
         }
-        let marked = t.to_lowercase().contains("(taught ");
+        let lower = t.to_lowercase();
+        let marked = lower.contains("(taught ") || lower.contains("(confirmed by ");
         if (marked || (is_bullet(t) && is_taught_heading(&heading))) && tokens(t).len() >= 3 {
             out.push((heading.clone(), t.to_string()));
         }
@@ -127,6 +125,8 @@ fn taught_lines(text: &str) -> Vec<(String, String)> {
 
 /// Most of a clause's words must sit in one line of the family for the clause to count as still there.
 const CLAUSE_MATCH_PERCENT: usize = 75;
+/// A line this much of whose words sit in one line of the family was reworded, not dropped.
+const NEAR_DUPLICATE_PERCENT: usize = 60;
 
 /// The words of every line of the family after a run, for asking whether a line from before is still there.
 struct Family {
@@ -149,14 +149,22 @@ impl Family {
         let wanted = if wanted.is_empty() { vec![tokens(line)] } else { wanted };
         wanted.iter().all(|want| want.len() < 3 || self.lines.iter().any(|have| want.intersection(have).count() * 100 >= want.len() * CLAUSE_MATCH_PERCENT))
     }
+
+    /// Whether one line of the family is a near-duplicate of `line`: reworded in place, so putting
+    /// the old wording back would say the same thing twice.
+    fn near(&self, line: &str) -> bool {
+        let want = tokens(line);
+        want.len() >= 3 && self.lines.iter().any(|have| want.intersection(have).count() * 100 >= want.len() * NEAR_DUPLICATE_PERCENT)
+    }
 }
 
-/// The sentences of a line, without the "(taught ...)" mark, as sets of words. Clauses of fewer than
-/// three words say too little to look for and are left out.
+/// The sentences of a line, without its provenance mark, as sets of words. A full stop only ends a
+/// sentence when a space follows, so `campaign.md` stays whole. Clauses of fewer than three words say
+/// too little to look for and are left out.
 fn clauses(line: &str) -> Vec<BTreeSet<String>> {
     let lower = line.to_lowercase();
-    let body = lower.split("(taught").next().unwrap_or("");
-    body.split(['.', ';', '!', '?']).map(tokens).filter(|w| w.len() >= 3).collect()
+    let body = &lower[..mark_at(&lower).unwrap_or(lower.len())];
+    body.split(". ").flat_map(|s| s.split([';', '!', '?'])).map(tokens).filter(|w| w.len() >= 3).collect()
 }
 
 /// Taught lines of `before` that no longer appear in `after`, anywhere in the family.
@@ -168,7 +176,7 @@ pub fn dropped(before: &Snapshot, after: &Snapshot) -> Vec<Taught> {
             continue;
         }
         for (heading, line) in taught_lines(text) {
-            if !family.keeps(&line) {
+            if !family.keeps(&line) && !family.near(&line) {
                 out.push(Taught { skill: skill.clone(), file: file.clone(), heading, line });
             }
         }
@@ -264,4 +272,92 @@ pub fn clean_generated(skills_dir: &Path) -> usize {
         n
     }
     walk(skills_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROLE: &str = "# Ada\n\n## Standing preferences\n\n- Send the weekly supplier summary to finance every Friday morning (taught 2026-10-01)\n\
+        - Route receipts to Bo (confirmed by Ada 2026-10-03)\n- Keep every reply to a customer under five sentences\n";
+
+    fn snap(files: &[(&str, &str, &str)]) -> Snapshot {
+        files.iter().map(|(skill, file, text)| ((skill.to_string(), file.to_string()), text.to_string())).collect()
+    }
+
+    fn lines(lost: &[Taught]) -> Vec<&str> {
+        lost.iter().map(|t| t.line.as_str()).collect()
+    }
+
+    #[test]
+    fn reworded_and_moved_lines_are_kept() {
+        let before = snap(&[("ada", "SKILL.md", ROLE)]);
+        // Seven of the ten words stay: under a clause's bar, over a near-duplicate's.
+        let reworded = ROLE.replace("Send the weekly supplier summary to finance every Friday morning", "Send the weekly supplier summary to finance each Monday afternoon");
+        assert!(dropped(&before, &snap(&[("ada", "SKILL.md", &reworded)])).is_empty());
+
+        let moved = ROLE.replace("- Send the weekly supplier summary to finance every Friday morning (taught 2026-10-01)\n", "");
+        let facts = "# Facts\n\n- Send the weekly supplier summary to finance every Friday morning (taught 2026-10-01)\n";
+        assert!(dropped(&before, &snap(&[("ada", "SKILL.md", &moved), ("ada", "facts.md", facts)])).is_empty(), "a line moved into facts.md stays put");
+    }
+
+    #[test]
+    fn deleted_taught_lines_are_restored() {
+        let before = snap(&[("ada", "SKILL.md", ROLE)]);
+        let without_confirmed = ROLE.replace("- Route receipts to Bo (confirmed by Ada 2026-10-03)\n", "");
+        assert_eq!(lines(&dropped(&before, &snap(&[("ada", "SKILL.md", &without_confirmed)]))), vec!["- Route receipts to Bo (confirmed by Ada 2026-10-03)"]);
+
+        let marked = "# Ada\n\n## Notes\n\nRoute receipts to Bo on the first of each month (confirmed by Ada 2026-10-03)\n";
+        assert_eq!(dropped(&snap(&[("ada", "SKILL.md", marked)]), &snap(&[("ada", "SKILL.md", "# Ada\n\n## Notes\n")])).len(), 1, "a confirmed mark protects a line under any heading");
+
+        let gone = ROLE.replace("- Send the weekly supplier summary to finance every Friday morning (taught 2026-10-01)\n", "");
+        let lost = dropped(&before, &snap(&[("ada", "SKILL.md", &gone)]));
+        assert_eq!(lines(&lost), vec!["- Send the weekly supplier summary to finance every Friday morning (taught 2026-10-01)"]);
+
+        let dir = std::env::temp_dir().join(format!("omegastar-tidy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("ada")).unwrap();
+        fs::write(dir.join("ada/SKILL.md"), &gone).unwrap();
+        assert_eq!(restore(&dir, "ada", &lost).unwrap().len(), 1);
+        let back = fs::read_to_string(dir.join("ada/SKILL.md")).unwrap();
+        assert!(back.contains("## Standing preferences\n\n- Route receipts to Bo (confirmed by Ada 2026-10-03)\n- Keep every reply to a customer under five sentences\n- Send the weekly supplier"), "{back}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_name_is_not_a_sentence_break() {
+        assert_eq!(clauses("- Post the weekly campaign.md summary to the team channel (taught 2026-10-01)").len(), 1);
+        assert_eq!(clauses("- Post the weekly summary to the team. Then file the receipts by vendor name").len(), 2);
+    }
+
+    fn finding(kind: HealthKind, skill: &str) -> HealthFinding {
+        HealthFinding { kind, skill: Some(skill.into()), file: Some("SKILL.md".into()), detail: String::new() }
+    }
+
+    #[test]
+    fn tidies_wait_a_week_and_skip_overdue_checks() {
+        let now = chrono::Utc::now();
+        let ago = |days: i64| now - chrono::Duration::days(days);
+        let fresh = [finding(HealthKind::TooLong, "ada-invoices")];
+        let none: &[String] = &[];
+        let at = |days, findings: &[HealthFinding], taught| due(&Situation { now, findings, last: Some((ago(days), none)), taught });
+
+        assert_eq!(at(6, &fresh, 3), None, "no tidy within a week of the last, whatever the findings");
+        assert!(at(8, &fresh, 0).is_some(), "a fresh finding a week on starts one");
+        assert_eq!(at(8, &[finding(HealthKind::OverdueCheck, "ada")], 0), None, "an overdue check starts nothing");
+        assert!(at(8, &[], 2).is_some(), "what you taught starts one a week on");
+        assert!(due(&Situation { now, findings: &fresh, last: None, taught: 0 }).is_some(), "the first tidy needs no wait");
+    }
+
+    #[test]
+    fn snapshots_leave_out_dependencies_and_data() {
+        let dir = std::env::temp_dir().join(format!("omegastar-snapshot-{}", uuid::Uuid::new_v4()));
+        let skill = dir.join("ada-reports");
+        for (rel, text) in [("SKILL.md", "# Reports"), ("node_modules/x.js", "x"), ("data/pull.json", "{}"), ("log.jsonl", "{}"), ("out.csv", "a,b"), ("Rates.CSV", "a,b")] {
+            fs::create_dir_all(skill.join(rel).parent().unwrap()).unwrap();
+            fs::write(skill.join(rel), text).unwrap();
+        }
+        let files: Vec<String> = own_skills::snapshot(&dir).into_keys().map(|(_, f)| f).collect();
+        assert_eq!(files, vec!["SKILL.md"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
