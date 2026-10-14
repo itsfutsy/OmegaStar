@@ -182,7 +182,7 @@ fn tools() -> Value {
         },
         {
             "name": "delegate",
-            "description": "Hand one direct report a self-contained task. Returns {runId} immediately; collect the result with await_reports.",
+            "description": "Hand one direct report a self-contained task. Returns {runId} immediately. Their report always comes back to you: wait with await_reports only if it should take a few minutes; otherwise finish, and a new run brings it to you.",
             "inputSchema": obj(json!({
                 "to": { "type": "string", "description": "The report's name, slug or id." },
                 "task": { "type": "string", "description": "What to do, why, and what done looks like." }
@@ -195,7 +195,7 @@ fn tools() -> Value {
         },
         {
             "name": "ask_colleague",
-            "description": "Ask another agent a question, or hand them a task, that falls in their area, not yours. They work on it in a run of their own. Returns {runId} immediately. The answer or report always comes back to you: collect it with await_reports if you need it now, or finish without it and a new run brings it to you. Only when it genuinely helps: never for what you can find or do yourself.",
+            "description": "Ask another agent a question, or hand them a task, that falls in their area, not yours. They work on it in a run of their own. Returns {runId} immediately. The answer or report always comes back to you: wait with await_reports only if it should take a few minutes and you need it now; otherwise finish without it, and a new run brings it to you. Only when it genuinely helps: never for what you can find or do yourself.",
             "inputSchema": obj(json!({
                 "to": { "type": "string", "description": "The colleague's name, slug or id." },
                 "kind": { "type": "string", "enum": ["question", "task"], "description": "question (default): they answer and change nothing. task: they do the work, e.g. set something up once it is approved, or act on news you pass on." },
@@ -204,7 +204,7 @@ fn tools() -> Value {
         },
         {
             "name": "await_reports",
-            "description": "Wait (up to 5 minutes) for runs you delegated or questions you asked to finish, and return each run's state and report or answer. Call again for runs still going.",
+            "description": "Wait (up to 4 minutes) for runs you delegated or questions you asked to finish, and return each run's state and report or answer. Use it only for hand-offs that take a few minutes: anything still going comes back to you in a new run when it finishes.",
             "inputSchema": obj(json!({ "runIds": { "type": "array", "items": { "type": "string" } } }), &["runIds"]),
         },
         {

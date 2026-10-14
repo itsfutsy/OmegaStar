@@ -618,6 +618,7 @@ impl Store {
         let mut st = self.conn.prepare(
             "SELECT created_at, json_extract(data, '$.prompt') FROM runs
              WHERE employee_id = ?1 AND created_at > ?2 AND json_valid(data) AND json_extract(data, '$.kind.type') IN ('chat', 'reply', 'task')
+               AND COALESCE(json_extract(data, '$.omegaWrote'), 0) = 0
              ORDER BY created_at DESC, rowid DESC LIMIT ?3",
         )?;
         let rows = st.query_map(params![employee_id, since.map(ms).unwrap_or(0), limit as i64], |r| {
@@ -649,10 +650,13 @@ impl Store {
     }
 
     /// Every run that continues a conversation (replies, colleagues' asks and answers, delegated
-    /// work), oldest first: what `threads::file` follows to put a hand-off in one Inbox row.
+    /// work), oldest first: what `threads::file` follows to put a hand-off in one Inbox row. An answer
+    /// that came back as a chat turn belongs to that chat, never to a row.
     pub fn conversation_runs(&self) -> Result<Vec<Run>> {
         self.runs_where(
-            "WHERE json_valid(data) AND json_extract(data, '$.kind.type') IN ('reply', 'answered', 'asked', 'delegated') ORDER BY created_at, rowid",
+            "WHERE json_valid(data) AND json_extract(data, '$.kind.type') IN ('reply', 'answered', 'asked', 'delegated')
+               AND NOT (json_extract(data, '$.kind.type') = 'answered' AND COALESCE(json_extract(data, '$.kind.chat'), 0) = 1)
+             ORDER BY created_at, rowid",
             &[],
         )
     }
@@ -1007,6 +1011,35 @@ INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn taught_since_keeps_only_your_own_words() {
+        let dir = temp_dir();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let ada = employee("Ada", None);
+        db.save_employee(&ada).unwrap();
+        let report = run(&ada, RunKind::Manual, RunState::Succeeded);
+        db.insert_run(&report, &report.id).unwrap();
+        let reply = |prompt: &str, omega_wrote: bool| {
+            let mut r = Run::new(&ada.id, RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false }, prompt.into(), Utc::now());
+            r.omega_wrote = omega_wrote;
+            db.insert_run(&r, &r.id).unwrap();
+        };
+        // An approval from the app, and a reply of yours wrapped because the report's session never started.
+        reply("Pat allowed the build for this retry.", true);
+        reply("Your report (Manual run):\n\nIt failed.\n\nPat's reply:\n\nTry the other folder.", false);
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e0".into(), task: false, chat: true };
+        let mut answer = Run::new(&ada.id, came, "Bo answered your question.".into(), Utc::now());
+        answer.omega_wrote = true;
+        db.insert_run(&answer, &ada.chat_session).unwrap();
+
+        let taught: Vec<String> = db.taught_since(&ada.id, None, 10).unwrap().into_iter().map(|(_, t)| t).collect();
+        assert_eq!(taught.len(), 1, "{taught:?}");
+        assert!(taught[0].ends_with("Try the other folder."));
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// One of each kind of run. `i` makes its ids unique, since `insert_run` skips a second run of the
     /// same schedule slot or follow-up.
     fn every_kind(i: usize) -> Vec<RunKind> {
@@ -1019,7 +1052,8 @@ INSERT INTO runs(id, employee_id, lane, state, session, inited, created_at, data
             RunKind::Scheduled { schedule_id: format!("quiet-{i}"), slot, label: "Sweep".into(), quiet: true, model: None, effort: None },
             RunKind::Delegated { parent_run_id: format!("parent-{i}") },
             RunKind::Asked { parent_run_id: format!("parent-{i}"), asked_by: "e0".into(), task: false },
-            RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false },
+            RunKind::Answered { asked_run_id: format!("asked-{i}"), from: "e0".into(), task: false, chat: false },
+            RunKind::Answered { asked_run_id: format!("asked-chat-{i}"), from: "e0".into(), task: true, chat: true },
             RunKind::FollowUp { request_id: format!("request-{i}"), person_id: person() },
             RunKind::Organize { imported: vec![], settled: false },
             RunKind::Reply { to_run_id: format!("root-{i}"), label: "Manual run".into(), task: false },

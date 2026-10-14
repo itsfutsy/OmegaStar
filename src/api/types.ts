@@ -133,7 +133,7 @@ export type RunKind =
   | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean; model?: string | null; effort?: Effort | null }
   | { type: "delegated"; parentRunId: string }
   | { type: "asked"; parentRunId: string; askedBy: string; task: boolean }   // a colleague's question or task; askedBy = their employee id
-  | { type: "answered"; askedRunId: string; from: string; task: boolean }    // brings a colleague's answer to an asker whose run had ended
+  | { type: "answered"; askedRunId: string; from: string; task: boolean; chat: boolean }    // brings an answer or report to an asker whose run had ended; chat: as a turn in their chat
   | { type: "followUp"; requestId: string; personId: string }
   | { type: "replyCheck"; requestId: string; personId: string }
   | { type: "nudge"; requestId: string; personId: string }
@@ -161,7 +161,9 @@ export type Denial = { tool: string; brief: string; suggestedRule: string };
 export type SkillChangeKind = "added" | "modified" | "removed";
 export type SkillChange = { skill: string; file: string; change: SkillChangeKind };
 export type Run = {
-  id: string; employeeId: string; kind: RunKind; prompt: string; state: RunState;
+  id: string; employeeId: string; kind: RunKind; prompt: string;
+  omegaWrote: boolean;         // Omega Star wrote the prompt (an approval, a returned report), not you
+  state: RunState;
   createdAt: string; startedAt: string | null; endedAt: string | null;
   turns: number | null; durationMs: number | null;
   summary: string | null; error: string | null; denials: Denial[];
@@ -169,7 +171,7 @@ export type Run = {
   needsYou: string[];          // what the employee flagged with notify during the run
   archivedAt: string | null;   // archived reports leave the Inbox for the Archive
   repliedAt: string | null;    // when you last replied to this report
-  deliveredAt: string | null;  // asked runs: when the answer reached the asker
+  deliveredAt: string | null;  // asked and delegated runs: when the answer or report reached whoever handed it over
   allowOnce: string[];         // rules you granted this run only ("Allow once & retry")
   proposed: string | null;     // a tidy's bigger changes, waiting for your approval
   attachments: string[];       // file names you attached to a chat message
