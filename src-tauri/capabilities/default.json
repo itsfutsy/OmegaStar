@@ -7,7 +7,7 @@
     "core:default",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://docs.claude.com/*" }]
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }, { "url": "mailto:*" }]
     }
   ]
 }

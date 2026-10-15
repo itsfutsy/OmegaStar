@@ -174,10 +174,37 @@ pub(crate) fn skill_dirs(skills_dir: &Path) -> Vec<(String, PathBuf)> {
     v
 }
 
+/// Folders a skill's scripts fill with dependencies and caches, and data files they write: neither is
+/// what the employee wrote, so snapshots leave them out.
+const UNRECORDED_DIRS: [&str; 5] = ["node_modules", "__pycache__", ".cache", ".venv", ".git"];
+const UNRECORDED_EXTS: [&str; 3] = ["json", "jsonl", "csv"];
+
+/// The files of a skill worth recording: `skill_files` without UNRECORDED_DIRS and data files.
+fn recorded_files(skill_dir: &Path) -> Vec<(String, PathBuf)> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let p = e.path();
+            if p.is_dir() {
+                if !UNRECORDED_DIRS.contains(&name.as_str()) {
+                    walk(&p, &r, out);
+                }
+            } else if !Path::new(&name).extension().map(|x| UNRECORDED_EXTS.iter().any(|u| x.eq_ignore_ascii_case(u))).unwrap_or(false) {
+                out.push((r, p));
+            }
+        }
+    }
+    let mut v = vec![];
+    walk(skill_dir, "", &mut v);
+    v.sort();
+    v
+}
+
 pub fn snapshot(skills_dir: &Path) -> Snapshot {
     let mut snap = Snapshot::new();
     for (skill, dir) in skill_dirs(skills_dir).into_iter().filter(|(s, _)| s != CRAFT_NAME) {
-        for (file, path) in skill_files(&dir) {
+        for (file, path) in recorded_files(&dir) {
             let small = fs::metadata(&path).map(|m| m.len() < SNAPSHOT_MAX_BYTES).unwrap_or(false);
             if let (true, Ok(text)) = (small, fs::read_to_string(&path)) {
                 snap.insert((skill.clone(), file), text);
@@ -185,6 +212,19 @@ pub fn snapshot(skills_dir: &Path) -> Snapshot {
         }
     }
     snap
+}
+
+/// Keeps a snapshot on disk (a JSON list of [skill, file, text]), so a run's edits can still be
+/// recorded after a crash.
+pub fn save_snapshot(path: &Path, s: &Snapshot) -> std::io::Result<()> {
+    let rows: Vec<[&str; 3]> = s.iter().map(|((skill, file), text)| [skill.as_str(), file.as_str(), text.as_str()]).collect();
+    fs::write(path, serde_json::to_string(&rows)?)
+}
+
+/// A snapshot `save_snapshot` wrote; `None` when it is missing or unreadable.
+pub fn load_snapshot(path: &Path) -> Option<Snapshot> {
+    let rows: Vec<[String; 3]> = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    Some(rows.into_iter().map(|[skill, file, text]| ((skill, file), text)).collect())
 }
 
 /// The name a tidy's changes to an employee's notes (top-level markdown in `workspace/`) are recorded
@@ -207,8 +247,88 @@ pub fn notes_snapshot(workspace: &Path) -> Snapshot {
     snap
 }
 
-/// Where a recorded file lives: a skill file under `skills/`, or a notes file under `workspace/`.
+/// Markdown notes anywhere under `workspace/` changed since `since`: (path inside it, when), newest
+/// first. Hidden files and folders and `node_modules` are left out.
+pub fn changed_notes(workspace: &Path, since: Ts) -> Vec<(String, Ts)> {
+    fn walk(dir: &Path, rel: &str, since: Ts, out: &mut Vec<(String, Ts)>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "node_modules" {
+                continue;
+            }
+            let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(meta) = e.metadata() else { continue };
+            if meta.is_dir() {
+                walk(&e.path(), &r, since, out);
+            } else if name.to_lowercase().ends_with(".md") {
+                if let Some(at) = meta.modified().ok().map(Ts::from).filter(|at| *at >= since) {
+                    out.push((r, at));
+                }
+            }
+        }
+    }
+    let mut v = vec![];
+    walk(workspace, "", since, &mut v);
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v
+}
+
+/// The company page and what an employee owns are recorded under these names. Only a conversation
+/// with the person they all work for changes either, so Undo never overwrites a newer change to them.
+pub const COMPANY: &str = "@company";
+pub const COMPANY_FILE: &str = "CLAUDE.md";
+pub const OWN: &str = "@own";
+pub const OWN_FILE: &str = "what-you-own.md";
+
+pub fn guarded(skill: &str) -> bool {
+    skill == COMPANY || skill == OWN
+}
+
+/// The company page: a CLAUDE.md above every employee's folder, so Claude Code loads it in every run.
+pub fn company_page_path(employees_dir: &Path) -> PathBuf {
+    employees_dir.join(COMPANY_FILE)
+}
+
+const COMPANY_PAGE: &str = "# Company page
+
+Every employee reads this page at the start of every run, so keep it short: one line per fact, and point to where details live instead of copying them. Never write a password, key or account number here. It changes only in a conversation with the person you all work for.
+
+## What we sell
+
+## Who to ask
+
+## How things work here
+
+## Public copy rules
+
+## Right now
+
+Dated lines, newest first.
+
+## Decisions
+
+Dated lines, newest first: what was decided, and why, in one line.
+";
+
+/// Writes the empty company page once. An existing page is never touched.
+pub fn seed_company_page(employees_dir: &Path) -> Result<()> {
+    let path = company_page_path(employees_dir);
+    if !path.exists() {
+        fs::write(path, COMPANY_PAGE)?;
+    }
+    Ok(())
+}
+
+/// Where a recorded file lives: a skill file under `skills/`, a notes file under `workspace/`, the
+/// company page above the employee's folder, or what they own in it.
 pub fn recorded_path(employee_dir: &Path, skill: &str, file: &str) -> Result<PathBuf> {
+    if guarded(skill) {
+        let (want, dir) = if skill == COMPANY { (COMPANY_FILE, employee_dir.parent()) } else { (OWN_FILE, Some(employee_dir)) };
+        return match dir {
+            Some(dir) if file == want => Ok(dir.join(file)),
+            _ => Err(AppError::invalid(format!("invalid file '{skill}/{file}'"))),
+        };
+    }
     if skill == NOTES {
         if file.contains(['/', '\\']) || !safe_segment(file) {
             return Err(AppError::invalid(format!("invalid notes file '{file}'")));
@@ -218,20 +338,38 @@ pub fn recorded_path(employee_dir: &Path, skill: &str, file: &str) -> Result<Pat
     resolve(&skills_dir(employee_dir), skill, file)
 }
 
-/// Writes (`Some`) or deletes (`None`) a recorded file. Deleting a notes file never removes `workspace/`.
+/// Writes (`Some`) or deletes (`None`) a recorded file. Deleting a notes or guarded file never removes
+/// the folder it sits in. A link in a notes or guarded file's place is replaced, never written through:
+/// a run could have aimed it at any file.
 pub fn write_recorded(path: &Path, skill: &str, text: Option<&str>) -> Result<()> {
-    if skill != NOTES {
+    if skill != NOTES && !guarded(skill) {
         return write_file(path, text);
     }
-    match text {
-        Some(t) => fs::write(path, t)?,
-        None => {
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-        }
+    let link = is_link(path);
+    if link || (text.is_none() && path.exists()) {
+        fs::remove_file(path)?;
+    }
+    if let Some(t) = text {
+        fs::write(path, t)?;
     }
     Ok(())
+}
+
+/// The company page and what the employee owns, keyed like skill files, each only while it exists. No size
+/// cap: a page too large to read would look missing, and putting that back would delete it. Kept apart from
+/// the skills snapshot: a run that should not change them has its change put back instead of recorded.
+pub fn guarded_snapshot(employee_dir: &Path) -> Snapshot {
+    let mut snap = Snapshot::new();
+    let files = [(COMPANY, COMPANY_FILE, employee_dir.parent()), (OWN, OWN_FILE, Some(employee_dir))];
+    for (skill, file, dir) in files {
+        let Some(path) = dir.map(|d| d.join(file)) else { continue };
+        // A link reads as missing, so its target is never quoted and a put-back replaces it with the file.
+        let is_file = fs::symlink_metadata(&path).is_ok_and(|m| m.is_file());
+        if let (true, Ok(text)) = (is_file, fs::read_to_string(&path)) {
+            snap.insert((skill.to_string(), file.to_string()), text);
+        }
+    }
+    snap
 }
 
 pub struct FileChange {
@@ -516,4 +654,95 @@ pub fn promote(skills_dir: &Path, skill: &str, config_dir: &Path, catalog: &[Ski
     copy_dir(src.parent().unwrap(), &dest)?;
     let (name, description) = catalog::read_skill(&dest).unwrap_or((skill.to_string(), String::new()));
     Ok(SkillInfo { id: format!("user:{name}"), name, description, source: SkillSource::User, skills: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("omegastar-own-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn company_page_is_seeded_once() {
+        let dir = temp_dir();
+        seed_company_page(&dir).unwrap();
+        assert_eq!(fs::read_to_string(company_page_path(&dir)).unwrap(), COMPANY_PAGE);
+        let mine = "# Company page\n\n## What we sell\n\nGarden tools.\n";
+        fs::write(company_page_path(&dir), mine).unwrap();
+        seed_company_page(&dir).unwrap();
+        assert_eq!(fs::read(company_page_path(&dir)).unwrap(), mine.as_bytes(), "an existing page is left byte for byte");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changed_notes_are_markdown_outside_hidden_and_dependency_folders() {
+        let dir = temp_dir();
+        for f in ["campaign.md", "gads/log.md", "data.csv", "node_modules/pkg/README.md", ".cache/old.md", ".hidden.md"] {
+            let p = dir.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, "x").unwrap();
+        }
+        let since = Ts::from(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+        let mut names: Vec<String> = changed_notes(&dir, since).into_iter().map(|(f, _)| f).collect();
+        names.sort();
+        assert_eq!(names, ["campaign.md", "gads/log.md"]);
+        assert!(changed_notes(&dir, Ts::from(std::time::SystemTime::now() + std::time::Duration::from_secs(60))).is_empty(), "older than since");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guarded_files_have_one_place_each() {
+        let employee = Path::new("/office/employees/e1");
+        assert_eq!(recorded_path(employee, COMPANY, COMPANY_FILE).unwrap(), Path::new("/office/employees/CLAUDE.md"));
+        assert_eq!(recorded_path(employee, OWN, OWN_FILE).unwrap(), Path::new("/office/employees/e1/what-you-own.md"));
+        for (skill, file) in [(COMPANY, "x.md"), (COMPANY, "../CLAUDE.md"), (OWN, "../what-you-own.md"), (OWN, COMPANY_FILE), (NOTES, "../state.md")] {
+            assert!(recorded_path(employee, skill, file).is_err(), "{skill}/{file}");
+        }
+        assert!(guarded(COMPANY) && guarded(OWN) && !guarded(NOTES) && !guarded("ada"));
+    }
+
+    #[test]
+    fn guarded_snapshot_reads_the_page_and_what_they_own() {
+        let root = temp_dir();
+        let employee = root.join("e1");
+        fs::create_dir_all(&employee).unwrap();
+        assert!(guarded_snapshot(&employee).is_empty(), "neither file exists yet");
+        fs::write(company_page_path(&root), "# Company page\n").unwrap();
+        fs::write(employee.join(OWN_FILE), "The weekly signups.\n").unwrap();
+        fs::write(employee.join(COMPANY_FILE), "# Handbook\n").unwrap();
+        let snap = guarded_snapshot(&employee);
+        assert_eq!(snap.len(), 2, "the employee's own handbook is not guarded");
+        assert_eq!(snap[&(COMPANY.to_string(), COMPANY_FILE.to_string())], "# Company page\n");
+        assert_eq!(snap[&(OWN.to_string(), OWN_FILE.to_string())], "The weekly signups.\n");
+        let large = "- A line about the company.\n".repeat(SNAPSHOT_MAX_BYTES as usize / 10);
+        fs::write(company_page_path(&root), &large).unwrap();
+        assert_eq!(guarded_snapshot(&employee)[&(COMPANY.to_string(), COMPANY_FILE.to_string())], large, "a large page is not taken for a missing one");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_guarded_file_turned_into_a_link_is_put_back_without_touching_its_target() {
+        let root = temp_dir();
+        let employee = root.join("e1");
+        fs::create_dir_all(&employee).unwrap();
+        let target = root.join("zshrc");
+        fs::write(&target, "export SECRET=1\n").unwrap();
+        let own = employee.join(OWN_FILE);
+        std::os::unix::fs::symlink(&target, &own).unwrap();
+        assert!(guarded_snapshot(&employee).get(&(OWN.to_string(), OWN_FILE.to_string())).is_none(), "the target is not read");
+        write_recorded(&own, OWN, Some("The weekly signups.\n")).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "export SECRET=1\n", "the target is untouched");
+        assert!(!is_link(&own));
+        assert_eq!(fs::read_to_string(&own).unwrap(), "The weekly signups.\n");
+        fs::remove_file(&own).unwrap();
+        std::os::unix::fs::symlink(root.join("gone"), &own).unwrap();
+        write_recorded(&own, OWN, None).unwrap();
+        assert!(!is_link(&own), "a dangling link is removed too");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

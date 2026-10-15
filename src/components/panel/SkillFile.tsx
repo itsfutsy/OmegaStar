@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, OwnSkill, Run, SkillRevision } from "../../api/types";
-import { dateLong, firstName, runKindLabel } from "../../lib/format";
+import { dateLong, firstName, recordedName, runKindLabel } from "../../lib/format";
 import { refreshOrg, useQuery } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import { openRun } from "../../lib/router";
@@ -11,9 +11,10 @@ import { Markdown, splitFrontmatter } from "../Markdown";
 import { ConfirmButton, ErrorNote, Section, Skeleton } from "../ui";
 import { TimelineItem } from "./SkillsOverview";
 
-/** A tidy's changes to an employee's notes are recorded under this name; the notes are files in workspace/, not a skill. */
-export const NOTES = "@workspace";
-export const NOTES_FOLDER: OwnSkill = { name: NOTES, description: "", role: false, managed: false, files: [], updatedAt: "" };
+const folder = (name: string): OwnSkill => ({ name, description: "", role: false, managed: false, files: [], updatedAt: "" });
+/** Files recorded like skills that are not skills: a tidy's notes in workspace/, the company page, and what the employee owns. */
+export const PSEUDO_FOLDERS: Record<string, OwnSkill> = { "@workspace": folder("@workspace"), "@company": folder("@company"), "@own": folder("@own") };
+export const pseudoFolder = (name: string): OwnSkill | undefined => (name.startsWith("@") ? PSEUDO_FOLDERS[name] : undefined);
 
 export function FileView({ e, skill, file, history, onBack, onOpenRev, onChanged }: {
   e: EmployeeView; skill: OwnSkill | undefined; file: string; history: SkillRevision[];
@@ -55,7 +56,7 @@ export function FileView({ e, skill, file, history, onBack, onOpenRev, onChanged
 
   const parsed = q.data !== undefined ? splitFrontmatter(q.data) : null;
   const isMd = file.endsWith(".md");
-  const shown = name === NOTES ? "workspace notes" : name;
+  const shown = recordedName(name);
   return (
     <div className="fileview">
       <div className="tab-scroll">
@@ -75,7 +76,7 @@ export function FileView({ e, skill, file, history, onBack, onOpenRev, onChanged
           </div>
           {!skill?.managed && !editing ? (
             <div className="row" style={{ gap: 4 }}>
-              {skill && !skill.role && name !== NOTES ? <ConfirmButton label="Make a company skill" icon="promote" className="btn btn-ghost" size="btn-sm" question="Copy it into your Claude Code skills?" confirmLabel="Copy it" onConfirm={promote} /> : null}
+              {skill && !skill.role && !pseudoFolder(name) ? <ConfirmButton label="Make a company skill" icon="promote" className="btn btn-ghost" size="btn-sm" question="Copy it into your Claude Code skills?" confirmLabel="Copy it" onConfirm={promote} /> : null}
               <button className="btn btn-sm" onClick={startEdit} disabled={q.data === undefined}><Icon name="edit" size={12} /> Edit</button>
             </div>
           ) : null}
@@ -122,7 +123,7 @@ export function RevisionView({ e, rev, run, onBack, onOpenFile, onChanged }: {
     try {
       await call("revert_revision", { revisionId: rev.id });
       refreshOrg();
-      toast(`Undone. ${firstName(e.name)}'s skill is back to how it was. The undo is listed under Changes too.`, "ok");
+      toast(`Undone. ${pseudoFolder(rev.skill) ? "It's" : `${firstName(e.name)}'s skill is`} back to how it was. The undo is listed under Changes too.`, "ok");
       onChanged();
     } catch (x) {
       toast(errorMessage(x), "err");
@@ -132,11 +133,11 @@ export function RevisionView({ e, rev, run, onBack, onOpenFile, onChanged }: {
     <div className="tab-scroll">
       <nav className="crumbs" aria-label="Breadcrumb">
         <button onClick={onBack}>Skills</button><Icon name="chevronRight" size={11} />
-        <span className="crumb-here">{verb} {rev.skill}</span>
+        <span className="crumb-here">{verb} {recordedName(rev.skill)}</span>
       </nav>
       <div className="rev-head">
         <div className="stack grow" style={{ minWidth: 0, gap: 4 }}>
-          <h3 className="h-md">{verb} <button className="mono linkish rev-file" onClick={() => onOpenFile(rev.skill, rev.file)}>{rev.skill}/{rev.file}</button></h3>
+          <h3 className="h-md">{verb} <button className="mono linkish rev-file" onClick={() => onOpenFile(rev.skill, rev.file)}>{pseudoFolder(rev.skill) ? rev.file : `${rev.skill}/${rev.file}`}</button></h3>
           <span className="rev-sub">
             {rev.runId ? (
               <button className="linkish" onClick={() => rev.runId && openRun(rev.runId)}>

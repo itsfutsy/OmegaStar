@@ -1,4 +1,9 @@
 //! Domain types shared with the frontend (camelCase JSON).
+//!
+//! Stored types are read back by older and newer builds: every field added after a release needs
+//! #[serde(default)], and new data goes into the JSON, never a new column. An older build that saves a
+//! row drops the fields it does not know, so a build of an unreleased branch runs on its own copy of
+//! the office (OMEGASTAR_DATA_DIR).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
@@ -624,9 +629,10 @@ pub struct SkillSources {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Misfire {
+    #[default]
     CatchUp,
     Skip,
 }
@@ -641,10 +647,14 @@ pub struct ScheduleDraft {
     pub cron: String,
     pub instruction: String,
     pub enabled: bool,
-    pub misfire: Misfire,
     /// Quiet routines reach the Inbox only when the run calls `notify` or does not succeed.
     #[serde(default)]
     pub quiet: bool,
+    /// The model and effort the routine runs on; `None` = the employee's own.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<Effort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -656,9 +666,18 @@ pub struct Schedule {
     pub cron: String,
     pub instruction: String,
     pub enabled: bool,
+    /// Kept only so older builds, which require it, can read schedules this build saves. Always CatchUp; nothing reads it.
+    #[serde(default)]
     pub misfire: Misfire,
     #[serde(default)]
     pub quiet: bool,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<Effort>,
+    /// The weekly review Omega Star seeds for every employee.
+    #[serde(default)]
+    pub review: bool,
     /// Computed on read, never stored.
     #[serde(default)]
     pub next_fire: Option<Ts>,
@@ -682,6 +701,9 @@ impl Serialize for CronPreview {
     }
 }
 
+/// The schedule_id prefix of a due check's run (see `RunKind::check_id`).
+pub const CHECK_PREFIX: &str = "check:";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum RunKind {
@@ -694,6 +716,12 @@ pub enum RunKind {
         /// Copied from the schedule when the slot fires.
         #[serde(default)]
         quiet: bool,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<Effort>,
+        #[serde(default)]
+        review: bool,
     },
     Delegated { parent_run_id: String },
     /// A colleague (any employee, not only a manager) asked this employee a question, or with
@@ -704,9 +732,16 @@ pub enum RunKind {
         #[serde(default)]
         task: bool,
     },
-    /// Brings a colleague's answer (the finished Asked run `asked_run_id`, by employee `from`) to an
-    /// asker whose own run ended before it arrived.
-    Answered { asked_run_id: String, from: String, task: bool },
+    /// Brings a colleague's answer or a report (the finished Asked or Delegated run `asked_run_id`, by
+    /// employee `from`) to whoever handed it over, once their own run had ended before it arrived.
+    Answered {
+        asked_run_id: String,
+        from: String,
+        task: bool,
+        /// It is a turn in the asker's chat with you: their run was a chat turn when they handed the work over.
+        #[serde(default)]
+        chat: bool,
+    },
     FollowUp { request_id: String, person_id: String },
     /// Sorts skills you imported from Claude Code into the employee's family.
     Organize {
@@ -723,6 +758,9 @@ pub enum RunKind {
         label: String,
         #[serde(default)]
         task: bool,
+        /// The reply answers a card, written by Omega Star from your tap.
+        #[serde(default)]
+        card: bool,
     },
     /// A task you started beside the ongoing chat: a conversation of its own, so it runs at the same
     /// time as the employee's other work. `label` names it. It starts from the conversation you were in:
@@ -818,7 +856,7 @@ impl Lane {
 impl RunKind {
     pub fn lane(&self) -> Lane {
         match self {
-            RunKind::Chat => Lane::Chat,
+            RunKind::Chat | RunKind::Answered { chat: true, .. } => Lane::Chat,
             _ => Lane::Work,
         }
     }
@@ -826,7 +864,15 @@ impl RunKind {
     /// Your conversations with the employee (the ongoing chat, tasks, replies in a thread) run beside
     /// everything else. The rest is background work, which an employee does one piece at a time.
     pub fn is_conversation(&self) -> bool {
-        matches!(self, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. })
+        matches!(self, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. } | RunKind::Answered { chat: true, .. })
+    }
+
+    /// A due check runs as a Scheduled run whose schedule_id is check:<check id>; no schedules row has that id.
+    pub fn check_id(&self) -> Option<&str> {
+        match self {
+            RunKind::Scheduled { schedule_id, .. } => schedule_id.strip_prefix(CHECK_PREFIX),
+            _ => None,
+        }
     }
 }
 
@@ -881,6 +927,129 @@ pub struct SkillChange {
     pub change: ChangeKind,
 }
 
+/// How this copy of Omega Star was built: a published release, a test build, or a developer's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildChannel {
+    Release,
+    Dogfood,
+    Dev,
+}
+
+impl BuildChannel {
+    pub fn current() -> BuildChannel {
+        match env!("OMEGA_CHANNEL") {
+            "release" => BuildChannel::Release,
+            "dogfood" => BuildChannel::Dogfood,
+            _ => BuildChannel::Dev,
+        }
+    }
+}
+
+/// This copy of Omega Star: its version, the commit it was built from, and its channel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Build {
+    pub version: String,
+    pub commit: String,
+    pub channel: BuildChannel,
+}
+
+impl Build {
+    pub fn new(version: String) -> Build {
+        Build { version, commit: env!("OMEGA_COMMIT").into(), channel: BuildChannel::current() }
+    }
+}
+
+/// The build a run started on, and the Claude Code and organisation around it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunBuild {
+    #[serde(flatten)]
+    pub app: Build,
+    #[serde(default)]
+    pub claude: Option<String>,
+    #[serde(default)]
+    pub org: Option<String>,
+}
+
+/// Something a run asks you with the answer built in: a decision, a list to approve, or a chore only you
+/// can do (`notify` with choices, items or chore). One per run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Card {
+    pub message: String,
+    pub ask: CardAsk,
+    #[serde(default)]
+    pub answer: Option<CardAnswer>,
+}
+
+impl Card {
+    pub fn is_open(&self) -> bool {
+        self.answer.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CardAsk {
+    /// Up to four buttons; `recommended` is the index of the one the employee recommends.
+    Choices { choices: Vec<String>, recommended: usize },
+    /// A list you tick one by one; `verb` is what a tick means, e.g. "Post".
+    Items { verb: String, items: Vec<CardItem> },
+    /// `chrome` or `sign-in:<site>`: every run waiting on the same subject carries on when you press Done.
+    Chore { subject: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardItem {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardAnswer {
+    pub at: Ts,
+    pub how: AnswerHow,
+    /// The fixed answer sent to the employee, e.g. "Chose: Not now."; empty when nothing was sent.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AnswerHow {
+    /// You pressed one of its buttons.
+    Tapped,
+    /// You replied in the thread instead.
+    Typed,
+    Dismissed,
+    /// A newer card from the same routine or thread took its place.
+    Replaced,
+}
+
+/// Your answer to a card, from the Inbox.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CardReply {
+    Choice { index: usize },
+    Items { picks: Vec<ItemPick> },
+    Done,
+    Dismiss,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemPick {
+    pub id: String,
+    pub tick: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
@@ -888,6 +1057,10 @@ pub struct Run {
     pub employee_id: String,
     pub kind: RunKind,
     pub prompt: String,
+    /// Omega Star wrote this prompt from something you did or something that came back (an approval, a
+    /// returned report, a card answer); it is not your own words, except where it quotes them.
+    #[serde(default)]
+    pub omega_wrote: bool,
     pub state: RunState,
     pub created_at: Ts,
     pub started_at: Option<Ts>,
@@ -896,19 +1069,24 @@ pub struct Run {
     pub duration_ms: Option<u64>,
     pub summary: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
     pub denials: Vec<Denial>,
+    #[serde(default)]
     pub skill_changes: Vec<SkillChange>,
     /// What the employee flagged for you with `notify` during the run.
     #[serde(default)]
     pub needs_you: Vec<String>,
+    /// What the run asked you with a card, and your answer. Its message is also in `needs_you`.
+    #[serde(default)]
+    pub card: Option<Card>,
     /// When you archived this report: it leaves the Inbox for the Archive.
     #[serde(default)]
     pub archived_at: Option<Ts>,
     /// When you last replied to this report from the Inbox.
     #[serde(default)]
     pub replied_at: Option<Ts>,
-    /// For a colleague's Asked run: when its answer reached the asker, through `await_reports` or an
-    /// Answered run. Set once, so an answer is delivered exactly once.
+    /// For an Asked or Delegated run: when its answer or report reached whoever handed it over, through
+    /// await_reports or an Answered run. Set once, so it is delivered exactly once.
     #[serde(default)]
     pub delivered_at: Option<Ts>,
     /// Permission rules you granted for this run only ("Allow once & retry"). They go into the run's
@@ -921,6 +1099,15 @@ pub struct Run {
     /// Files you attached to a chat message, by name. They live in the employee's `attachments/<run id>/`.
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// The build that ran it: app version, commit and channel, Claude Code's version and the signed-in organisation.
+    #[serde(default)]
+    pub build: Option<RunBuild>,
+    /// Times the run went back to the queue because the usage limit stopped it.
+    #[serde(default)]
+    pub limit_retries: u32,
+    /// The context size in tokens after its last top-level message.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
 }
 
 impl Run {
@@ -930,6 +1117,7 @@ impl Run {
             employee_id: employee_id.to_string(),
             kind,
             prompt,
+            omega_wrote: false,
             state: RunState::Queued,
             created_at: now,
             started_at: None,
@@ -941,12 +1129,16 @@ impl Run {
             denials: vec![],
             skill_changes: vec![],
             needs_you: vec![],
+            card: None,
             archived_at: None,
             replied_at: None,
             delivered_at: None,
             allow_once: vec![],
             proposed: None,
             attachments: vec![],
+            build: None,
+            limit_retries: 0,
+            context_tokens: None,
         }
     }
 
@@ -1018,30 +1210,6 @@ pub struct Conversations {
     pub inbox: Vec<String>,
     /// One per current employee.
     pub chats: Vec<ChatHead>,
-}
-
-/// What an employee's ongoing chat is told about a thread you archived. Written when you archive it,
-/// read by the next chat turn in that session, shown in the chat as a card.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Brief {
-    pub id: String,
-    pub employee_id: String,
-    pub root_run_id: String,
-    /// What the report was.
-    pub label: String,
-    pub replies: u32,
-    /// One line for the chat timeline: the last thing the employee said in the thread.
-    pub excerpt: String,
-    /// What the employee reads at the start of their next turn.
-    pub text: String,
-    pub created_at: Ts,
-    /// When a chat turn was launched with it.
-    #[serde(default)]
-    pub consumed_at: Option<Ts>,
-    /// The thread was a task's.
-    #[serde(default)]
-    pub task: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1127,6 +1295,14 @@ pub struct SkillHealth {
     pub findings: Vec<HealthFinding>,
 }
 
+/// The page every employee reads at the start of every run, with what is worth a look on it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanyPage {
+    pub text: String,
+    pub findings: Vec<HealthFinding>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckState {
@@ -1147,8 +1323,7 @@ impl CheckState {
 }
 
 /// Something an employee said they would look at again, tracked so it is not left as a sentence in a
-/// file. Without a schedule, no run of theirs happens later unless something starts it; an open check
-/// past its date is that something (see `tidy`).
+/// file. An open check past its date starts a run of its own, see `Office::tick`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
@@ -1252,10 +1427,11 @@ pub struct SetupStatus {
     pub account: Option<Account>,
     pub company: Option<Company>,
     pub background: bool,
+    pub build: Build,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub max_concurrent_runs: u32,
     pub claude_path: Option<String>,
@@ -1263,11 +1439,22 @@ pub struct AppSettings {
     pub data_dir: String,
     pub paused: bool,
     /// Absent from settings saved before backups existed.
-    #[serde(default)]
     pub backup: BackupSettings,
     /// Absent from settings saved before requests were watched.
-    #[serde(default)]
     pub watch: WatchSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            max_concurrent_runs: 3,
+            claude_path: None,
+            data_dir: String::new(),
+            paused: false,
+            backup: BackupSettings::default(),
+            watch: WatchSettings::default(),
+        }
+    }
 }
 
 /// How Omega Star watches requests to people for replies.
@@ -1392,6 +1579,12 @@ pub struct BackupStatus {
     /// Set when the last attempt failed; cleared by the next success.
     pub last_error: Option<String>,
     pub next_at: Option<Ts>,
+    /// backup::fingerprint() of the office at the last successful backup.
+    pub fingerprint: Option<String>,
+    /// The last time an automatic backup was due but nothing had changed.
+    pub checked_at: Option<Ts>,
+    /// Large files and build folders the last successful backup left out.
+    pub left_out: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -1413,13 +1606,25 @@ pub struct UsageLimits {
     pub observed_at: Option<Ts>,
     /// `false` when the account has no subscription limits (API key billing).
     pub subscription: bool,
+    /// The office waits for the usage limit to reset until then: no run starts.
+    pub held_until: Option<Ts>,
+    /// Claude Code is signed out or on another account than the one set up: routines wait.
+    pub account_issue: Option<AccountIssue>,
 }
 
 impl Default for UsageLimits {
     fn default() -> Self {
         // Unknown until the first probe; assume a subscription so the UI waits rather than switching to spend.
-        UsageLimits { five_hour: None, seven_day: None, observed_at: None, subscription: true }
+        UsageLimits { five_hour: None, seven_day: None, observed_at: None, subscription: true, held_until: None, account_issue: None }
     }
+}
+
+/// Why routines are paused for the account, and the account Claude Code is signed in to instead.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountIssue {
+    pub message: String,
+    pub signed_in_as: Option<String>,
 }
 
 /// A file attached to a chat message: its name and its bytes in base64.
@@ -1431,3 +1636,81 @@ pub struct NewAttachment {
 
 pub const MAX_ATTACHMENTS: usize = 10;
 pub const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn build() -> Build {
+        Build { version: "1.2.3".into(), commit: "abc1234567".into(), channel: BuildChannel::Dogfood }
+    }
+
+    #[test]
+    fn a_run_saved_before_builds_were_stamped_loads() {
+        let mut run = serde_json::to_value(Run::new("e1", RunKind::Manual, "Do the thing".into(), Utc::now())).unwrap();
+        run.as_object_mut().unwrap().remove("build");
+        let run: Run = serde_json::from_value(run).unwrap();
+        assert_eq!(run.build, None);
+    }
+
+    #[test]
+    fn a_run_saved_before_cards_loads() {
+        let mut run = serde_json::to_value(Run::new("e1", RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: true }, "Chose: Not now.".into(), Utc::now())).unwrap();
+        run.as_object_mut().unwrap().remove("card");
+        run["kind"].as_object_mut().unwrap().remove("card");
+        let run: Run = serde_json::from_value(run).unwrap();
+        assert_eq!(run.card, None);
+        assert_eq!(run.kind, RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: false });
+    }
+
+    #[test]
+    fn a_card_reads_its_own_shapes() {
+        let card = Card { message: "Boost it?".into(), ask: CardAsk::Choices { choices: vec!["Not now".into(), "Try it".into()], recommended: 0 }, answer: None };
+        let v = serde_json::to_value(&card).unwrap();
+        assert_eq!(v, json!({ "message": "Boost it?", "ask": { "type": "choices", "choices": ["Not now", "Try it"], "recommended": 0 }, "answer": null }));
+        assert_eq!(serde_json::from_value::<Card>(v).unwrap(), card);
+        let reply: CardReply = serde_json::from_value(json!({ "type": "items", "picks": [{ "id": "d1", "tick": true }] })).unwrap();
+        assert_eq!(reply, CardReply::Items { picks: vec![ItemPick { id: "d1".into(), tick: true, note: None }] });
+        assert_eq!(serde_json::from_value::<CardReply>(json!({ "type": "done" })).unwrap(), CardReply::Done);
+    }
+
+    #[test]
+    fn a_run_build_round_trips_flat() {
+        let b = RunBuild { app: build(), claude: Some("2.1.0".into()), org: Some("Example Org".into()) };
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v, json!({ "version": "1.2.3", "commit": "abc1234567", "channel": "dogfood", "claude": "2.1.0", "org": "Example Org" }));
+        assert_eq!(serde_json::from_value::<RunBuild>(v).unwrap(), b);
+        let bare: RunBuild = serde_json::from_value(json!({ "version": "1.2.3", "commit": "abc1234567", "channel": "dogfood" })).unwrap();
+        assert_eq!(bare, RunBuild { app: build(), claude: None, org: None });
+    }
+
+    #[test]
+    fn a_build_channel_is_lower_case() {
+        assert_eq!(serde_json::to_value(BuildChannel::Dogfood).unwrap(), json!("dogfood"));
+    }
+
+    fn schedule_json(misfire: Option<&str>) -> String {
+        let misfire = misfire.map(|m| format!(r#","misfire":"{m}""#)).unwrap_or_default();
+        format!(r#"{{"id":"s1","employeeId":"e1","label":"Sweep","cron":"0 9 * * *","instruction":"Look","enabled":true{misfire}}}"#)
+    }
+
+    #[test]
+    fn schedules_read_old_misfire_values_and_save_catch_up() {
+        let skip: Schedule = serde_json::from_str(&schedule_json(Some("skip"))).unwrap();
+        assert_eq!(skip.misfire, Misfire::Skip);
+        let none: Schedule = serde_json::from_str(&schedule_json(None)).unwrap();
+        assert_eq!(none.misfire, Misfire::CatchUp);
+        assert_eq!((none.model, none.effort, none.review), (None, None, false));
+        let saved = serde_json::to_string(&Schedule { misfire: Misfire::CatchUp, ..skip }).unwrap();
+        assert!(saved.contains(r#""misfire":"catchUp""#), "{saved}");
+    }
+
+    #[test]
+    fn check_id_reads_only_check_runs() {
+        let scheduled = |id: &str| RunKind::Scheduled { schedule_id: id.into(), slot: Utc::now(), label: "x".into(), quiet: true, model: None, effort: None, review: false };
+        assert_eq!(scheduled("check:abc").check_id(), Some("abc"));
+        assert_eq!(scheduled("6f1c0e2a").check_id(), None);
+        assert_eq!(RunKind::Chat.check_id(), None);
+    }
+}

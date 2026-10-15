@@ -28,6 +28,8 @@ const DATED_LINES: usize = 3;
 const REPEATED_LINES: usize = 5;
 /// Edits to one file within a day before it counts as churn.
 const CHURN_EDITS: usize = 3;
+/// Every run of every employee reads the company page.
+const PAGE_CHARS: usize = 6_000;
 /// Files larger than this are binaries or data, not notes.
 const TEXT_MAX_BYTES: u64 = 256 * 1024;
 
@@ -108,11 +110,44 @@ fn has_date(line: &str) -> bool {
     })
 }
 
-fn find_word(hay: &str, word: &str) -> Option<usize> {
+/// The line without its "(taught ...)", "(checked ...)" and "(confirmed by ...)" marks: the date in a
+/// mark is bookkeeping, not a fact that ages.
+fn without_marks(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let (mut out, mut i) = (String::new(), 0);
+    while let Some(start) = ["(taught", "(checked", "(confirmed by"].iter().filter_map(|m| lower[i..].find(m)).min().map(|at| i + at) {
+        out.push_str(&line[i..start]);
+        i = lower[start..].find(')').map(|end| start + end + 1).unwrap_or(line.len());
+    }
+    out.push_str(&line[i..]);
+    out
+}
+
+/// The line with every backtick span blanked to spaces, so a file name or command in code is not read
+/// as words. Same number of characters, so positions still point into the original line.
+fn without_code(line: &str) -> String {
+    let (mut out, mut rest) = (String::new(), line);
+    while let Some(open) = rest.find('`') {
+        let Some(len) = rest[open + 1..].find('`') else { break };
+        let close = open + len + 2;
+        out.push_str(&rest[..open]);
+        out.extend(rest[open..close].chars().map(|_| ' '));
+        rest = &rest[close..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Where `word` stands on its own as a word, not as part of a name or path: `todo` in `my-todo-list`,
+/// `workspace/todo.md` or `todo.md` is a file, while `TODO.` ending a sentence is a note.
+fn find_bare_word(hay: &str, word: &str) -> Option<usize> {
     hay.match_indices(word).map(|(i, _)| i).find(|&i| {
         let before = hay[..i].chars().next_back();
-        let after = hay[i + word.len()..].chars().next();
-        !before.map(|c| c.is_alphanumeric()).unwrap_or(false) && !after.map(|c| c.is_alphanumeric()).unwrap_or(false)
+        let mut after = hay[i + word.len()..].chars();
+        let next = after.next();
+        let joined = |c: char| c.is_alphanumeric() || ['_', '-', '/', '\\'].contains(&c);
+        !before.map(|c| joined(c) || c == '.').unwrap_or(false)
+            && !next.map(|c| joined(c) || (c == '.' && after.next().map(char::is_alphanumeric).unwrap_or(false))).unwrap_or(false)
     })
 }
 
@@ -126,8 +161,8 @@ const LOOSE_PHRASES: [&str; 12] = [
 /// catch an instruction now and then ("when the mapping needs to be verified visually"), which is why
 /// a finding only says a line may be unfinished.
 fn loose_note(line: &str) -> Option<usize> {
-    let l = line.to_lowercase();
-    let word = ["todo", "tbc", "tbd"].into_iter().filter_map(|w| find_word(&l, w));
+    let l = without_code(line).to_lowercase();
+    let word = ["todo", "tbc", "tbd"].into_iter().filter_map(|w| find_bare_word(&l, w));
     let phrase = LOOSE_PHRASES.into_iter().filter_map(|p| l.find(p));
     word.chain(phrase).min().map(|i| l[..i].chars().count())
 }
@@ -228,6 +263,23 @@ pub fn overdue_checks(open: &[Check], now: Ts) -> Vec<HealthFinding> {
         .collect()
 }
 
+/// What is worth a look on the company page. Kept out of `check`, which is per employee and decides
+/// when they tidy: nobody tidies the company page alone.
+pub fn page(text: &str) -> Vec<HealthFinding> {
+    let mut f = vec![];
+    let file = Some("company page".to_string());
+    let loose = loose_notes(text);
+    if !loose.is_empty() {
+        f.push(HealthFinding { kind: HealthKind::LooseNotes, skill: None, file: file.clone(), detail: format!("{} line(s) may be unfinished notes ({}).", loose.len(), sample(&loose)) });
+    }
+    let n = text.chars().count();
+    if n > PAGE_CHARS {
+        let detail = format!("The company page is {} characters, and every run of every employee reads it. Keep one line per fact and move detail to the skill that owns it.", k(n));
+        f.push(HealthFinding { kind: HealthKind::TooLong, skill: None, file, detail });
+    }
+    f
+}
+
 pub fn check(skills_dir: &Path, notes_dir: &Path, slug: &str, edits: &[(String, String, Ts)], now: Ts) -> SkillHealth {
     let fam = load(skills_dir);
     let notes = load_notes(notes_dir);
@@ -264,7 +316,7 @@ pub fn check(skills_dir: &Path, notes_dir: &Path, slug: &str, edits: &[(String, 
             Some(n) => add(HealthKind::NameMismatch, Some(name), Some("SKILL.md"), format!("The frontmatter name is `{n}` but the folder is `{name}`; they should match.")),
             None => add(HealthKind::NameMismatch, Some(name), Some("SKILL.md"), "The frontmatter has no name.".into()),
         }
-        let dated: Vec<usize> = prose(main).into_iter().filter(|(_, l)| has_date(l)).map(|(n, _)| n).collect();
+        let dated: Vec<usize> = prose(main).into_iter().filter(|(_, l)| has_date(&without_marks(l))).map(|(n, _)| n).collect();
         if dated.len() >= DATED_LINES {
             add(
                 HealthKind::DatedLines,
@@ -356,4 +408,69 @@ pub fn check(skills_dir: &Path, notes_dir: &Path, slug: &str, edits: &[(String, 
 
     f.sort_by(|a, b| (a.kind, &a.skill, &a.file).cmp(&(b.kind, &b.skill, &b.file)));
     SkillHealth { skills: total as u32, description_chars: description_chars as u32, findings: f }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A family holding only the role skill `ada`, with `body` under its frontmatter. Returns the
+    /// folder, which the caller removes.
+    fn family(body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("omegastar-health-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("skills/ada")).unwrap();
+        fs::create_dir_all(dir.join("workspace")).unwrap();
+        fs::write(dir.join("skills/ada/SKILL.md"), format!("---\nname: ada\ndescription: Role skill for Ada.\n---\n\n{body}")).unwrap();
+        dir
+    }
+
+    fn findings(dir: &Path, kind: HealthKind) -> Vec<HealthFinding> {
+        check(&dir.join("skills"), &dir.join("workspace"), "ada", &[], chrono::Utc::now()).findings.into_iter().filter(|f| f.kind == kind).collect()
+    }
+
+    #[test]
+    fn marks_are_not_dated_lines() {
+        let taught = "## Standing preferences\n\n- Send the weekly summary on Fridays (taught 2026-10-01)\n- Keep replies short (taught 2026-10-01)\n\
+            - Copy the finance lead on invoices (taught 2026-10-01)\n- Use the shared calendar (Taught 2026-10-01)\n";
+        let dir = family(taught);
+        assert!(findings(&dir, HealthKind::DatedLines).is_empty(), "taught marks are not dates that age");
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(!has_date(&without_marks("- Keep replies short (confirmed by Bo 2026-10-03)")));
+        assert!(has_date(&without_marks("Updated 2026-10-01 (checked 2026-10-02)")), "a dated fact still counts once its mark is gone");
+        let dated = "Updated 2026-10-01 (checked 2026-10-02)\n\nRates 2026-10-01\n\nPrices 2026-10-01\n";
+        let dir = family(dated);
+        let found = findings(&dir, HealthKind::DatedLines);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].detail.starts_with("3 lines carry a date"), "{}", found[0].detail);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_names_are_not_loose_notes() {
+        for line in ["Keep the list in `todo.md` and read it first.", "see `todo.md`", "Notes live in workspace/todo.md", "Run my-todo-list each morning"] {
+            assert_eq!(loose_note(line), None, "{line}");
+        }
+        for line in ["TODO: confirm the rate.", "fix this TODO."] {
+            assert!(loose_note(line).is_some(), "{line}");
+        }
+        let line = "| Supplier rates | `rates.md` keeps the full table for every region we ship to | TODO: confirm the rate. |";
+        let at = loose_note(line).unwrap();
+        assert_eq!(line.chars().skip(at).take(4).collect::<String>(), "TODO", "the code span keeps positions");
+        assert!(excerpt(line, at).contains("TODO: confirm the rate."), "{}", excerpt(line, at));
+    }
+
+    #[test]
+    fn company_page_findings() {
+        let short = "# Company page\n\n## Who to ask\n\n- Invoices: the finance lead.\n";
+        assert!(page(short).is_empty());
+        let long = format!("# Company page\n\n{}", "- One line about how things work here.\n".repeat(180));
+        let found = page(&long);
+        assert_eq!(found.iter().map(|f| f.kind).collect::<Vec<_>>(), vec![HealthKind::TooLong]);
+        assert!(found[0].detail.starts_with("The company page is 7.0k characters"), "{}", found[0].detail);
+        assert_eq!(found[0].file.as_deref(), Some("company page"));
+        assert_eq!(found[0].skill, None);
+        let loose = page("## Right now\n\n- 2026-10-01 New supplier. TODO confirm the terms.\n");
+        assert_eq!(loose.iter().map(|f| f.kind).collect::<Vec<_>>(), vec![HealthKind::LooseNotes]);
+    }
 }

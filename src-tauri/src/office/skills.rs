@@ -33,28 +33,7 @@ impl Office {
     }
 
     fn record_edit(&self, employee_id: &str, skill: &str, file: &str, text: Option<&str>) -> Result<Option<SkillRevision>> {
-        if skill == own_skills::CRAFT_NAME {
-            return Err(AppError::invalid("omega-skill-craft is managed by Omega Star"));
-        }
-        let path = own_skills::recorded_path(&self.employee_dir(employee_id), skill, file)?;
-        let before = fs::read_to_string(&path).ok();
-        if before.as_deref() == text {
-            return Ok(None);
-        }
-        let change = match (&before, text) {
-            (None, _) => ChangeKind::Added,
-            (Some(_), None) => ChangeKind::Removed,
-            _ => ChangeKind::Modified,
-        };
-        own_skills::write_recorded(&path, skill, text)?;
-        let fc = own_skills::FileChange {
-            change: SkillChange { skill: skill.into(), file: file.replace('\\', "/"), change },
-            before,
-            after: text.map(String::from),
-        };
-        let rev = own_skills::revision(fc, None, now());
-        self.db().insert_revision(employee_id, &rev)?;
-        Ok(Some(rev))
+        record(&self.db(), &self.employee_dir(employee_id), employee_id, skill, file, text)
     }
 
     pub fn save_skill_file(&self, employee_id: &str, skill: &str, file: &str, text: &str) -> Result<Option<SkillRevision>> {
@@ -68,6 +47,9 @@ impl Office {
 
     pub fn revert_revision(&self, revision_id: &str) -> Result<SkillRevision> {
         let (employee_id, rev) = self.db().revision(revision_id)?.ok_or_else(|| AppError::not_found("revision not found"))?;
+        if !safe_to_undo(&self.employee_dir(&employee_id), &rev)? {
+            return Err(AppError::conflict("This changed again since then, so undoing it would lose the newer change. Edit it instead."));
+        }
         self.record_edit(&employee_id, &rev.change.skill, &rev.change.file, rev.before.as_deref())?
             .ok_or_else(|| AppError::conflict("the file already matches that revision"))
     }
@@ -76,6 +58,24 @@ impl Office {
         let e = self.employee(employee_id)?;
         let catalog = self.skill_catalog();
         own_skills::promote(&self.skills_dir(&e.id), skill, &catalog::config_dir(), &catalog)
+    }
+
+    /// The page every employee reads at the start of every run; empty until it exists.
+    pub fn company_page(&self) -> Result<CompanyPage> {
+        let text = fs::read_to_string(own_skills::company_page_path(&self.0.data_dir.join("employees"))).unwrap_or_default();
+        Ok(CompanyPage { findings: health::page(&text), text })
+    }
+
+    /// You edit the company page yourself. A plain write with no revision: you are its author.
+    pub fn save_company_page(&self, text: &str) -> Result<CompanyPage> {
+        fs::write(own_skills::company_page_path(&self.0.data_dir.join("employees")), text)?;
+        *lock(&self.0.company_saved) = Some(now());
+        self.company_page()
+    }
+
+    /// You saved the company page in You at or after `since`, in this session.
+    pub(super) fn company_saved_since(&self, since: Ts) -> bool {
+        lock(&self.0.company_saved).is_some_and(|at| at >= since)
     }
 
     // ------------------------------------------------------------------ importing and organizing
@@ -186,12 +186,7 @@ impl Office {
             return Err(AppError::conflict("wait for the run to finish before reverting it"));
         }
         let revs: Vec<SkillRevision> = self.db().revisions(&run.employee_id)?.into_iter().filter(|r| r.run_id.as_deref() == Some(run_id)).collect();
-        let mut n = 0;
-        for r in &revs {
-            if self.record_edit(&run.employee_id, &r.change.skill, &r.change.file, r.before.as_deref())?.is_some() {
-                n += 1;
-            }
-        }
+        let n = undo(&self.db(), &self.employee_dir(&run.employee_id), &run.employee_id, &revs)?;
         let skills_dir = self.skills_dir(&run.employee_id);
         // A folder the run created can still hold files no revision tracks (binaries, big files).
         let created: HashSet<&str> =
@@ -304,7 +299,8 @@ impl Office {
     /// What a Tidy run works from; none for any other run.
     pub(super) fn tidy_brief(&self, run: &Run, e: &Employee) -> Result<Option<claude::TidyBrief>> {
         let RunKind::Tidy { plan, .. } = &run.kind else { return Ok(None) };
-        let findings = self.skill_health(&e.id)?.findings;
+        // An overdue check is work of its own, not something for the tidy to do.
+        let findings = self.skill_health(&e.id)?.findings.into_iter().filter(|f| f.kind != HealthKind::OverdueCheck).collect();
         let db = self.db();
         // What you taught since the last tidy that got as far as confirming it.
         let since = db.tidy_runs(&e.id)?.into_iter().find(|r| r.id != run.id && r.state == RunState::Succeeded).map(|r| r.created_at);
@@ -319,18 +315,57 @@ impl Office {
         }
     }
 
+    /// Handles a run that changed the company page or what its employee owns while you were not in it:
+    /// `PutBack` writes `before` back (`None` removes the file), and both `PutBack` and `FlagOnly` show you
+    /// what it tried in one headline. `Leave` does nothing.
+    pub(super) fn put_back_guarded(
+        &self,
+        run: &Run,
+        e: &Employee,
+        key: &(String, String),
+        before: Option<&String>,
+        now: Option<&String>,
+        action: GuardedAction,
+    ) -> Result<()> {
+        let (skill, file) = (key.0.as_str(), key.1.as_str());
+        let put_back = match action {
+            GuardedAction::Leave => return Ok(()),
+            GuardedAction::PutBack => true,
+            GuardedAction::FlagOnly => false,
+        };
+        if put_back {
+            let path = own_skills::recorded_path(&self.employee_dir(&e.id), skill, file)?;
+            own_skills::write_recorded(&path, skill, before.map(String::as_str))?;
+        }
+        let name = &e.name;
+        let parts: Vec<String> = if skill == own_skills::COMPANY {
+            let (added, removed) = line_changes(before.map(String::as_str), now.map(String::as_str));
+            let head = if put_back {
+                format!("{name} tried to change the company page in a run nobody was watching, so it was put back.")
+            } else {
+                format!("{name} changed the company page in a run nobody was watching while you were also changing it, so it was not put back.")
+            };
+            let tail = if put_back { format!("If you want this, tell {name} in a chat or edit the page in You.") } else { "Check the page in You.".to_string() };
+            let added = (!added.is_empty()).then(|| format!("It added: \"{added}\""));
+            let removed = (!removed.is_empty()).then(|| format!("It removed: \"{removed}\""));
+            [Some(head), added, removed, Some(tail)].into_iter().flatten().collect()
+        } else {
+            let text = claude::clip(&claude::one_line(now.map(String::as_str).unwrap_or_default()), 500);
+            if put_back {
+                vec![format!("{name} proposes what they own: \"{text}\" It was put back until you agree. To use it, edit What {name} owns on their profile, or tell them in a chat.")]
+            } else {
+                vec![format!("{name} changed what they own in a run nobody was watching while you were also changing it, so it was not put back: \"{text}\" Check it on their profile.")]
+            }
+        };
+        self.flag(&run.id, parts.join(" "));
+        Ok(())
+    }
+
     /// A finished tidy goes to your Inbox when it proposes changes, and for an employee's first few
     /// tidies, so you see what one does before you stop looking.
     pub(super) fn review_tidy(&self, run: &mut Run) {
-        let (name, earlier) = {
-            let db = self.db();
-            let name = db.employee(&run.employee_id).ok().flatten().map(|e| e.name).unwrap_or_default();
-            let earlier = db
-                .tidy_runs(&run.employee_id)
-                .map(|v| v.iter().filter(|r| r.id != run.id && r.created_at < run.created_at && r.state == RunState::Succeeded).count())
-                .unwrap_or(usize::MAX);
-            (name, earlier)
-        };
+        let name = self.db().employee(&run.employee_id).ok().flatten().map(|e| e.name).unwrap_or_default();
+        let earlier = self.earlier_tidies(run);
         if run.proposed.is_some() {
             run.needs_you.push("Proposes bigger changes that need your OK.".into());
             self.sink().notify(&format!("{name} proposes tidy changes"), "Open the report in your Inbox to approve them.");
@@ -338,6 +373,15 @@ impl Office {
         if earlier < tidy::REVIEWED_FIRST {
             run.needs_you.push(format!("One of {name}'s first tidies: open it to see what changed. Every change can be reverted."));
         }
+    }
+
+    /// How many tidies of the run's employee succeeded before it was created; `usize::MAX` when the
+    /// store cannot tell, so nothing treats it as one of the first.
+    pub(super) fn earlier_tidies(&self, run: &Run) -> usize {
+        self.db()
+            .tidy_runs(&run.employee_id)
+            .map(|v| v.iter().filter(|r| r.id != run.id && r.created_at < run.created_at && r.state == RunState::Succeeded).count())
+            .unwrap_or(usize::MAX)
     }
 
     /// Queues a tidy for the employee, unless one is already waiting or running.
@@ -465,4 +509,270 @@ fn mentions(text: &str, name: &str) -> bool {
         let after = text[i + name.len()..].chars().next();
         !before.is_some_and(word) && !after.is_some_and(word)
     })
+}
+
+/// The CEO is in this conversation. Not is_conversation(): an Answered chat turn starts from a colleague's report.
+pub(super) fn ceo_in(kind: &RunKind) -> bool {
+    matches!(kind, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. })
+}
+
+/// The run's own top-level calls wrote `path`: a Write, Edit or MultiEdit of it (a relative path is taken from
+/// `employee_dir`), or a shell command naming it in full or as the run's working directory sees it. Calls that
+/// came back as errors do not count. Pure.
+pub(super) fn wrote_file(transcript: &str, path: &Path, employee_dir: &Path) -> bool {
+    let target = lexical(path);
+    let edited = ["Write", "Edit", "MultiEdit"]
+        .into_iter()
+        .flat_map(|tool| claude::office_calls(transcript, tool))
+        .any(|input| input["file_path"].as_str().is_some_and(|f| lexical(&employee_dir.join(f)) == target));
+    if edited {
+        return true;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let near = if path.parent() == Some(employee_dir) { name } else { format!("../{name}") };
+    let full = path.to_string_lossy();
+    claude::office_calls(transcript, "Bash")
+        .iter()
+        .filter_map(|input| input["command"].as_str())
+        .any(|c| c.contains(full.as_ref()) || c.contains(&near))
+}
+
+/// `p` with `.` and `..` resolved without touching the disk.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// What happens to a guarded file a run changed while you were not in it.
+#[derive(Debug, PartialEq)]
+pub(super) enum GuardedAction {
+    /// The run did not write it: someone else did, and their run or editor records it.
+    Leave,
+    PutBack,
+    /// Shown to you but kept: putting it back could lose your own edit.
+    FlagOnly,
+}
+
+/// Decides by what this run did, not by what else is running. Pure.
+pub(super) fn guarded_action(wrote: bool, ceo_talking: bool, revised_since_start: bool) -> GuardedAction {
+    match (wrote, ceo_talking || revised_since_start) {
+        (false, _) => GuardedAction::Leave,
+        (true, true) => GuardedAction::FlagOnly,
+        (true, false) => GuardedAction::PutBack,
+    }
+}
+
+/// (added, removed): the lines only `now` has and the lines only `before` has, trimmed, without blank lines and
+/// headings, each joined with "; " and clipped to 500 characters. Pure.
+fn line_changes(before: Option<&str>, now: Option<&str>) -> (String, String) {
+    fn lines(t: Option<&str>) -> Vec<&str> {
+        t.unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect()
+    }
+    fn only(xs: &[&str], ys: &[&str]) -> String {
+        claude::clip(&xs.iter().filter(|x| !ys.contains(x)).copied().collect::<Vec<_>>().join("; "), 500)
+    }
+    let (b, n) = (lines(before), lines(now));
+    (only(&n, &b), only(&b, &n))
+}
+
+/// Writes `text` to a recorded file (`None` deletes it) and records the change. `None` when the file
+/// already holds it.
+fn record(db: &Store, employee_dir: &Path, employee_id: &str, skill: &str, file: &str, text: Option<&str>) -> Result<Option<SkillRevision>> {
+    if skill == own_skills::CRAFT_NAME {
+        return Err(AppError::invalid("omega-skill-craft is managed by Omega Star"));
+    }
+    let path = own_skills::recorded_path(employee_dir, skill, file)?;
+    let before = fs::read_to_string(&path).ok();
+    if before.as_deref() == text {
+        return Ok(None);
+    }
+    let change = match (&before, text) {
+        (None, _) => ChangeKind::Added,
+        (Some(_), None) => ChangeKind::Removed,
+        _ => ChangeKind::Modified,
+    };
+    own_skills::write_recorded(&path, skill, text)?;
+    let fc = own_skills::FileChange {
+        change: SkillChange { skill: skill.into(), file: file.replace('\\', "/"), change },
+        before,
+        after: text.map(String::from),
+    };
+    let rev = own_skills::revision(fc, None, now());
+    db.insert_revision(employee_id, &rev)?;
+    Ok(Some(rev))
+}
+
+/// The file holds `after` (a missing file holds `None`).
+fn unchanged_since(path: &Path, after: Option<&str>) -> bool {
+    fs::read_to_string(path).ok().as_deref() == after
+}
+
+/// Undo writes back the whole earlier file, so a guarded file (the company page, what an employee
+/// owns) is put back only while it still holds what the change wrote, or is already back.
+fn safe_to_undo(employee_dir: &Path, r: &SkillRevision) -> Result<bool> {
+    if !own_skills::guarded(&r.change.skill) {
+        return Ok(true);
+    }
+    let path = own_skills::recorded_path(employee_dir, &r.change.skill, &r.change.file)?;
+    Ok(unchanged_since(&path, r.after.as_deref()) || unchanged_since(&path, r.before.as_deref()))
+}
+
+/// Puts back what the revisions changed, skipping a guarded file that changed again since. Returns
+/// how many files changed.
+fn undo(db: &Store, employee_dir: &Path, employee_id: &str, revs: &[SkillRevision]) -> Result<u32> {
+    let mut n = 0;
+    for r in revs {
+        if safe_to_undo(employee_dir, r)? && record(db, employee_dir, employee_id, &r.change.skill, &r.change.file, r.before.as_deref())?.is_some() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoSink;
+    impl EventSink for NoSink {
+        fn org_changed(&self) {}
+        fn run_updated(&self, _run: &Run) {}
+        fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
+        fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    #[tokio::test]
+    async fn a_save_in_you_is_seen_by_a_runs_guard() {
+        let dir = std::env::temp_dir().join(format!("omegastar-page-{}", uuid::Uuid::new_v4()));
+        let office = Office::open(dir.clone(), Arc::new(NoSink), Build::new("0.0.0".into())).await.unwrap();
+        let started = now();
+        assert!(!office.company_saved_since(started), "nothing saved yet");
+        office.save_company_page("# Company page\n\n- Releases: Sam.\n").unwrap();
+        assert!(office.company_saved_since(started), "a run that started before the save counts it as your edit");
+        assert!(!office.company_saved_since(now() + chrono::Duration::seconds(1)), "a run that started after it does not");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unchanged_since_compares_the_whole_file() {
+        let dir = std::env::temp_dir().join(format!("omegastar-undo-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("CLAUDE.md");
+        assert!(unchanged_since(&path, None), "a missing file is None");
+        fs::write(&path, "one").unwrap();
+        assert!(unchanged_since(&path, Some("one")));
+        assert!(!unchanged_since(&path, Some("one more")));
+        assert!(!unchanged_since(&path, None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_keeps_a_newer_change_to_the_company_page() {
+        let root = std::env::temp_dir().join(format!("omegastar-undo-{}", uuid::Uuid::new_v4()));
+        let employee_dir = root.join("employees").join("e1");
+        fs::create_dir_all(own_skills::skills_dir(&employee_dir).join("ada")).unwrap();
+        let db = Store::open(&root.join("office.db")).unwrap();
+        let page = own_skills::recorded_path(&employee_dir, own_skills::COMPANY, own_skills::COMPANY_FILE).unwrap();
+        let skill = own_skills::recorded_path(&employee_dir, "ada", "SKILL.md").unwrap();
+        fs::write(&page, "# Company page\n").unwrap();
+        fs::write(&skill, "# Ada\n").unwrap();
+
+        // A run changes a skill and the page, then the page changes again in a later conversation.
+        let mut run_revs = vec![];
+        for (key, path, after) in [(("ada", "SKILL.md"), &skill, "# Ada\n\nA new step.\n"), ((own_skills::COMPANY, own_skills::COMPANY_FILE), &page, "# Company page\n\n- Run line.\n")] {
+            let before = fs::read_to_string(path).ok();
+            fs::write(path, after).unwrap();
+            let fc = own_skills::FileChange {
+                change: SkillChange { skill: key.0.into(), file: key.1.into(), change: ChangeKind::Modified },
+                before,
+                after: Some(after.into()),
+            };
+            let rev = own_skills::revision(fc, Some("run-1".into()), now());
+            db.insert_revision("e1", &rev).unwrap();
+            run_revs.push(rev);
+        }
+        record(&db, &employee_dir, "e1", own_skills::COMPANY, own_skills::COMPANY_FILE, Some("# Company page\n\n- Run line.\n- Newer line.\n")).unwrap();
+
+        let revs: Vec<SkillRevision> = db.revisions("e1").unwrap().into_iter().filter(|r| r.run_id.as_deref() == Some("run-1")).collect();
+        assert_eq!(undo(&db, &employee_dir, "e1", &revs).unwrap(), 1, "only the skill file is put back");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), "# Ada\n");
+        assert_eq!(fs::read_to_string(&page).unwrap(), "# Company page\n\n- Run line.\n- Newer line.\n");
+        let page_rev = run_revs.iter().find(|r| r.change.skill == own_skills::COMPANY).unwrap();
+        assert!(!safe_to_undo(&employee_dir, page_rev).unwrap(), "revert_revision refuses it too");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn call(id: &str, tool: &str, input: Value) -> String {
+        json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": id, "name": tool, "input": input }] } }).to_string()
+    }
+
+    fn result(id: &str, error: bool) -> String {
+        json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": id, "is_error": error, "content": "done" }] } }).to_string()
+    }
+
+    #[test]
+    fn wrote_file_reads_the_runs_own_calls() {
+        let employee_dir = Path::new("/office/employees/e1");
+        let page = Path::new("/office/employees/CLAUDE.md");
+        let own = Path::new("/office/employees/e1/what-you-own.md");
+        let wrote = |lines: &[String], path: &Path| wrote_file(&lines.join("\n"), path, employee_dir);
+
+        let write = [call("t1", "Write", json!({ "file_path": "/office/employees/CLAUDE.md", "content": "x" })), result("t1", false)];
+        assert!(wrote(&write, page));
+        assert!(!wrote(&write, own));
+        let edit = [call("t1", "Edit", json!({ "file_path": "../CLAUDE.md", "old_string": "a", "new_string": "b" })), result("t1", false)];
+        assert!(wrote(&edit, page), "a relative path is taken from the employee's folder");
+        let bash = [call("t1", "Bash", json!({ "command": "cat >> ../CLAUDE.md <<'EOF'\n- A line.\nEOF" })), result("t1", false)];
+        assert!(wrote(&bash, page));
+        let own_bash = [call("t1", "Bash", json!({ "command": "printf 'The signups.' > what-you-own.md" })), result("t1", false)];
+        assert!(wrote(&own_bash, own));
+
+        let failed = [call("t1", "Write", json!({ "file_path": "/office/employees/CLAUDE.md", "content": "x" })), result("t1", true)];
+        assert!(!wrote(&failed, page), "a write that errored changed nothing");
+        let handbook = [
+            call("t1", "Edit", json!({ "file_path": "CLAUDE.md", "old_string": "a", "new_string": "b" })),
+            result("t1", false),
+            call("t2", "Edit", json!({ "file_path": "/office/employees/e1/CLAUDE.md", "old_string": "a", "new_string": "b" })),
+            result("t2", false),
+        ];
+        assert!(!wrote(&handbook, page), "the employee's own CLAUDE.md is not the company page");
+    }
+
+    #[test]
+    fn guarded_action_puts_back_only_what_this_run_wrote_alone() {
+        assert_eq!(guarded_action(false, false, false), GuardedAction::Leave);
+        assert_eq!(guarded_action(false, true, true), GuardedAction::Leave);
+        assert_eq!(guarded_action(true, false, false), GuardedAction::PutBack);
+        assert_eq!(guarded_action(true, true, false), GuardedAction::FlagOnly);
+        assert_eq!(guarded_action(true, false, true), GuardedAction::FlagOnly);
+    }
+
+    #[test]
+    fn line_changes_quote_added_and_removed_lines() {
+        let before = "# Company page\n\n## Who to ask\n\n- Releases: Sam.\n";
+        assert_eq!(line_changes(Some(before), Some(&format!("{before}- Billing: Kim.\n- Copy: Lee.\n"))), ("- Billing: Kim.; - Copy: Lee.".into(), String::new()));
+        assert_eq!(line_changes(Some(before), Some("# Company page\n\n## Who to ask\n")), (String::new(), "- Releases: Sam.".into()));
+        assert_eq!(line_changes(Some(before), Some("# Company\n\n## Ask\n\n- Releases: Kim.\n")), ("- Releases: Kim.".into(), "- Releases: Sam.".into()));
+        assert_eq!(line_changes(None, Some("# Page\n## Decisions\n")), (String::new(), String::new()), "headings are skipped");
+    }
+
+    #[test]
+    fn only_chats_tasks_and_replies_have_you_in_them() {
+        let scheduled = RunKind::Scheduled { schedule_id: "s1".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
+        assert!(!ceo_in(&RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true }));
+        assert!(!ceo_in(&scheduled));
+        assert!(!ceo_in(&RunKind::Delegated { parent_run_id: "r1".into() }));
+        assert!(ceo_in(&RunKind::Chat));
+        assert!(ceo_in(&RunKind::Task { label: "Draft it".into(), from: None, context: String::new() }));
+        assert!(ceo_in(&RunKind::Reply { to_run_id: "r1".into(), label: "Sweep".into(), task: false, card: false }));
+    }
 }

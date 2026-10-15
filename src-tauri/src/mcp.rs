@@ -86,7 +86,7 @@ async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<
         "schedules" => office.my_schedules(&me),
         "schedule" => office.schedule_tool(&me, args),
         "unschedule" => office.unschedule_tool(&me, s("id")),
-        "notify" => office.notify_tool(&run_id, &me, s("message")),
+        "notify" => office.notify_tool(&run_id, &me, args),
         "catalog" => office.catalog_tool(),
         "propose_hire" => office.propose_hire_tool(&run_id, &me, args),
         "my_proposals" => office.my_proposals(&me),
@@ -111,15 +111,16 @@ fn tools() -> Value {
         },
         {
             "name": "schedule",
-            "description": "Create a recurring schedule for yourself, or change one by id (only the fields you pass change). Omega Star starts a run with the instruction at every cron slot, whether or not any Claude session is open. Check schedules() first so you never create a duplicate.",
+            "description": "Create a recurring schedule for yourself, or change one by id (only the fields you pass change). Omega Star starts a run with the instruction at every cron slot, whether or not any Claude session is open. Check schedules() first so you never create a duplicate. If Omega Star was closed, asleep or waiting at a slot, the routine runs once as soon as it can.",
             "inputSchema": obj(json!({
                 "id": { "type": "string", "description": "Omit to create; pass to change an existing schedule." },
                 "label": { "type": "string", "description": "Short name, e.g. 'Inbox watch'." },
                 "cron": { "type": "string", "description": "Five-field cron in this computer's local time, e.g. '*/10 * * * *' or '0 8 * * 1-5'." },
                 "instruction": { "type": "string", "description": "What you do each time it fires. Keep it short; the how lives in your skills." },
-                "quiet": { "type": "boolean", "description": "true: a run's report reaches the person you work for only if the run calls notify or fails. Use for frequent watches. Default false: every report lands in their Inbox." },
+                "quiet": { "type": "boolean", "description": "true: a run's report reaches anyone only if the run calls notify or fails. Use for frequent watches. Default false: every report goes where your handbook's Your report section says." },
                 "enabled": { "type": "boolean" },
-                "misfire": { "type": "string", "enum": ["catchUp", "skip"], "description": "When the app was closed at a slot: run once on start (catchUp, default) or skip it." }
+                "model": { "type": "string", "description": "Optional. The model this routine runs on, e.g. 'haiku' for a frequent, simple check. Leave it out to use your usual model; pass 'default' to go back to it." },
+                "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max", "default"], "description": "Optional. How hard this routine thinks: 'low' for a quick check, 'high' or more for research. 'default' goes back to your usual effort." }
             }), &[]),
         },
         {
@@ -129,9 +130,28 @@ fn tools() -> Value {
         },
         {
             "name": "notify",
-            "description": "Get the attention of the person you work for: sends a desktop notification now, and shows your message as the headline right above this run's report in their Inbox, so the report need not repeat it. Only for something that needs their decision or action; never for routine results.",
+            "description": "Ask the person you work for for something only they can give: a decision, an approval, or a chore. Sends a desktop notification now and puts your message, with the answer built in, at the top of this run's report in their Inbox. Add choices for a decision (up to four buttons, mark the one you recommend), items for a list they approve one by one, or chore for something only they can do. Your message says what you recommend and the safe default you will follow if they dismiss it; going ahead is never the default for spending, public posts, customer messages, deleting data, new vendors or payment details. Their answer comes back to you in this conversation as a short fixed message. One card per run. Never for updates or routine results: those belong in your report.",
             "inputSchema": obj(json!({
-                "message": { "type": "string", "description": "One or two sentences, written to them: what needs them and what you propose." }
+                "message": { "type": "string", "description": "One or two sentences, written to them: what needs them, what you recommend, and the safe default if they dismiss it. Never a code or password." },
+                "choices": {
+                    "type": "array", "maxItems": 4,
+                    "description": "2 to 4 buttons for one decision, e.g. [{\"label\": \"Not now\", \"recommended\": true}, {\"label\": \"Try A$5 a day\"}]. Mark exactly one recommended.",
+                    "items": obj(json!({
+                        "label": { "type": "string", "description": "A few words, e.g. 'Not now'." },
+                        "recommended": { "type": "boolean" }
+                    }), &["label"])
+                },
+                "items": {
+                    "type": "array", "maxItems": 10,
+                    "description": "Things to approve one by one, up to 10. Each gets a tick box and an optional note.",
+                    "items": obj(json!({
+                        "id": { "type": "string", "description": "A short id they and you can refer to, e.g. 'd1'." },
+                        "text": { "type": "string", "description": "One line: what it is and anything that decides it, e.g. how old the post it answers is." },
+                        "recommended": { "type": "boolean", "description": "true for the ones you would approve." }
+                    }), &["id", "text"])
+                },
+                "itemVerb": { "type": "string", "description": "What a tick means, one word, e.g. 'Post'. Default 'Approve'." },
+                "chore": { "type": "string", "description": "Something only they can do, as one of: 'chrome' (reconnect Claude in Chrome) or 'sign-in:<site>' (sign in to a site, e.g. 'sign-in:wise'). They press Done and every run waiting on it carries on. Your message names the one action, in plain words." }
             }), &["message"]),
         },
         {
@@ -141,7 +161,7 @@ fn tools() -> Value {
         },
         {
             "name": "check_later",
-            "description": "Set yourself a check: something you must find out later and cannot now (a change that needs a day to show up, a fact you could not verify). Omega Star tracks it and brings it back to you when it is due, even if nothing else starts a run. Use this instead of writing 'verify later' or 'not yet confirmed' in a skill or notes file. Max 20 open at once.",
+            "description": "Set yourself a check: something you must find out or do later and cannot now (a change that needs a day to show up, a follow-up you promised). On its due date Omega Star starts a quiet run of yours with what and how as its instruction, whether or not anything else runs. Use it for anything you will do later, instead of writing 'I'll check' in a report or 'verify later' in a skill or notes file. Max 20 open at once.",
             "inputSchema": obj(json!({
                 "what": { "type": "string", "description": "What you will find out, in one sentence." },
                 "how": { "type": "string", "description": "Where or how you will look: the command, the page, who to ask. Specific enough that a future run can do it cold." },
@@ -181,7 +201,7 @@ fn tools() -> Value {
         },
         {
             "name": "delegate",
-            "description": "Hand one direct report a self-contained task. Returns {runId} immediately; collect the result with await_reports.",
+            "description": "Hand one direct report a self-contained task. Returns {runId} immediately. Their report always comes back to you: wait with await_reports only if it should take a few minutes; otherwise finish, and a new run brings it to you.",
             "inputSchema": obj(json!({
                 "to": { "type": "string", "description": "The report's name, slug or id." },
                 "task": { "type": "string", "description": "What to do, why, and what done looks like." }
@@ -194,7 +214,7 @@ fn tools() -> Value {
         },
         {
             "name": "ask_colleague",
-            "description": "Ask another agent a question, or hand them a task, that falls in their area, not yours. They work on it in a run of their own. Returns {runId} immediately. The answer or report always comes back to you: collect it with await_reports if you need it now, or finish without it and a new run brings it to you. Only when it genuinely helps: never for what you can find or do yourself.",
+            "description": "Ask another agent a question, or hand them a task, that falls in their area, not yours. They work on it in a run of their own. Returns {runId} immediately. The answer or report always comes back to you: wait with await_reports only if it should take a few minutes and you need it now; otherwise finish without it, and a new run brings it to you. Only when it genuinely helps: never for what you can find or do yourself.",
             "inputSchema": obj(json!({
                 "to": { "type": "string", "description": "The colleague's name, slug or id." },
                 "kind": { "type": "string", "enum": ["question", "task"], "description": "question (default): they answer and change nothing. task: they do the work, e.g. set something up once it is approved, or act on news you pass on." },
@@ -203,7 +223,7 @@ fn tools() -> Value {
         },
         {
             "name": "await_reports",
-            "description": "Wait (up to 5 minutes) for runs you delegated or questions you asked to finish, and return each run's state and report or answer. Call again for runs still going.",
+            "description": "Wait (up to 4 minutes) for runs you delegated or questions you asked to finish, and return each run's state and report or answer. Use it only for hand-offs that take a few minutes: anything still going comes back to you in a new run when it finishes.",
             "inputSchema": obj(json!({ "runIds": { "type": "array", "items": { "type": "string" } } }), &["runIds"]),
         },
         {

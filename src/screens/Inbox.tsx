@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { call } from "../api/client";
-import type { NewAttachment } from "../api/types";
+import type { CardReply, NewAttachment, Run } from "../api/types";
 import { dayHeading, firstName } from "../lib/format";
 import { useOrg, useProposals, useQuery } from "../lib/hooks";
 import { setMark } from "../lib/marks";
-import { activityAt } from "../lib/threads";
+import { activityAt, rowCardOpen } from "../lib/threads";
 import { RequestCard } from "../components/RequestCard";
 import { ProposalCard } from "../components/ProposalCard";
 import { AskRow } from "../components/ColleagueAsks";
 import { useShell } from "../Shell";
 import { Icon } from "../components/Icon";
 import { ErrorNote, PageColumn, Section, Skeleton } from "../components/ui";
-import { canBrief, markDone, reopen, sendAndDone } from "../components/conversation/ThreadView";
+import { answerCard } from "../components/conversation/CardView";
+import { markDone, reopen, sendAndDone } from "../components/conversation/ThreadView";
 import { toItem, useStatuses, type Item } from "../components/conversation/useStatuses";
 import { InboxItem, type ItemActions } from "./InboxItem";
 import "./Inbox.css";
@@ -81,9 +82,9 @@ export function InboxScreen() {
       return () => setOpenId(next);
     };
     return {
-      done: async (brief) => {
+      done: async () => {
         const go = leaving();
-        if (await markDone(id, name, brief)) go();
+        if (await markDone(id, name)) go();
       },
       snooze: (until) => {
         const go = leaving();
@@ -100,10 +101,15 @@ export function InboxScreen() {
         await sendAndDone(id, name, text, attachments);
         go();
       },
+      answer: async (run: Run, reply: CardReply) => {
+        const go = leaving();
+        if (await answerCard(run, reply, name)) go();
+      },
     };
   };
 
-  // E acts on the open row, else the one under the pointer: Done, or in the Archive, Reopen. Escape closes the row.
+  // E acts on the open row, else the one under the pointer: Done, or in the Archive, Reopen. A row with a card waiting
+  // on you is answered on the card, so E leaves it. Escape closes the row.
   const latest = useRef({ rows, actionsFor, openId });
   latest.current = { rows, actionsFor, openId };
   useEffect(() => {
@@ -118,7 +124,7 @@ export function InboxScreen() {
       e.preventDefault();
       const act = actionsFor(i);
       if (i.status.state === "done") act.reopen();
-      else if (i.status.state !== "working" && i.status.state !== "queued") void act.done(canBrief(i.thread.root.kind.type === "task", i.thread.replies.length));
+      else if (i.status.state !== "working" && i.status.state !== "queued" && !rowCardOpen(i.thread)) void act.done();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

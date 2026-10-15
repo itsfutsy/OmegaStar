@@ -12,7 +12,8 @@ pub use stream::*;
 
 use crate::model::*;
 use serde_json::{json, Value};
-use std::ffi::OsString;
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -74,15 +75,30 @@ pub fn locate(override_path: Option<&str>) -> Option<PathBuf> {
     found.or_else(|| fallback_locations().into_iter().find(|p| p.is_file()))
 }
 
-/// A child process with no console window and the login shell's PATH.
+/// A child process with no console window, the login shell's PATH and none of the inherited
+/// Anthropic credentials or provider settings, so a run always uses the signed-in account.
 pub(crate) fn command(program: &Path) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(program);
     if let Some(p) = child_path() {
         c.env("PATH", p);
     }
+    let names: Vec<OsString> = std::env::vars_os().map(|(k, _)| k).collect();
+    for n in scrubbed_vars(names.iter().map(OsString::as_os_str)) {
+        c.env_remove(n);
+    }
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c
+}
+
+/// The inherited variables a child must not see: Anthropic keys, base URLs and tokens, and the
+/// switches to another provider. Network proxy variables and CLAUDE_CONFIG_DIR stay.
+fn scrubbed_vars<'a>(names: impl Iterator<Item = &'a OsStr>) -> Vec<OsString> {
+    const EXACT: [&str; 3] = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "AWS_BEARER_TOKEN_BEDROCK"];
+    names
+        .filter(|n| n.to_str().is_some_and(|n| n.starts_with("ANTHROPIC_") || n.starts_with("CLAUDE_CODE_USE_") || EXACT.contains(&n)))
+        .map(OsStr::to_os_string)
+        .collect()
 }
 
 async fn capture(program: &Path, args: &[&str]) -> Option<String> {
@@ -149,22 +165,21 @@ pub struct Snapshot {
     pub people: Vec<Person>,
     /// Name and title of the colleague on the other end: who asked (Asked runs) or who answered (Answered runs).
     pub counterpart: Option<(String, String)>,
-    /// The employee's own open requests, with the person's name.
-    pub waiting_on: Vec<(HumanRequest, String)>,
-    /// Summaries of recent finished work runs, newest first: (when, kind label, state, summary).
-    pub recent_work: Vec<(Ts, String, RunState, String)>,
     /// The employee's own recurring schedules.
     pub schedules: Vec<Schedule>,
-    /// The employee's hire proposals still waiting on a decision.
-    pub proposals: Vec<HireProposal>,
-    /// The employee's open checks, soonest first.
-    pub checks: Vec<Check>,
+    /// What the opening note at the top of the first message is made from. `None` for reply checks,
+    /// nudges and Organize runs, which get no note.
+    pub opening: Option<Opening>,
+    /// What the employee owns: their `what-you-own.md`, trimmed; empty when there is none.
+    pub owns: String,
+    /// For Delegated, Asked and Answered runs: where the hand-off began, in one passage.
+    pub source: Option<String>,
+    /// The employee's manager is an agent, not a person.
+    pub manager_is_agent: bool,
     /// For Tidy runs: what to work from.
     pub tidy: Option<TidyBrief>,
     /// For follow-up runs, reply checks, nudges and give-ups: the person the request went to.
     pub replier: Option<String>,
-    /// For chat turns: what the threads you closed since the last turn decided, oldest first.
-    pub briefs: Vec<String>,
     /// For reply checks, nudges and give-ups: the request they are about.
     pub watched: Option<Watched>,
     pub settings: Value,
@@ -174,6 +189,34 @@ pub struct Snapshot {
     /// `true` when the session already exists and must be resumed.
     pub resume: bool,
     pub session: String,
+}
+
+/// What changed around the employee that a run should know before it starts: what waits, what they
+/// did lately, what their team finished, what else is running and which notes changed. With `since`,
+/// only what is new since then.
+#[derive(Default)]
+pub struct Opening {
+    pub now: Ts,
+    /// The end of the last turn in this conversation (or of the routine's last run); `None` = a fresh start.
+    pub since: Option<Ts>,
+    /// Open checks, soonest first.
+    pub checks: Vec<Check>,
+    /// Cards still waiting on an answer: (when raised, message), oldest first.
+    pub cards: Vec<(Ts, String)>,
+    /// Open requests to people, with the person's name.
+    pub waiting_on: Vec<(HumanRequest, String)>,
+    /// Hire proposals waiting on a decision.
+    pub proposals: Vec<HireProposal>,
+    /// The employee's finished runs in the window, other conversations only, newest first.
+    pub work: Vec<Run>,
+    /// What the employee's direct reports finished, with their names, newest first.
+    pub team: Vec<(String, Run)>,
+    /// The employee's other runs in progress.
+    pub running: Vec<Run>,
+    /// Notes in `workspace/` changed in the window: (path inside it, when), newest first.
+    pub notes: Vec<(String, Ts)>,
+    /// Runs that asked or delegated something: a quiet run among them reached someone.
+    pub parents: HashSet<String>,
 }
 
 /// The request a reply check, nudge or give-up is about.
@@ -239,6 +282,19 @@ pub fn clip(s: &str, n: usize) -> String {
     }
 }
 
+/// The start and the end of a long text, so a report's closing lines survive: one line, and when it is
+/// longer than `2n + 5` characters, its first and last `n` around " ... ".
+pub(crate) fn ends(s: &str, n: usize) -> String {
+    let s = one_line(s);
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= 2 * n + 5 {
+        return s;
+    }
+    let head: String = chars[..n].iter().collect();
+    let tail: String = chars[chars.len() - n..].iter().collect();
+    format!("{} ... {}", head.trim_end(), tail.trim_start())
+}
+
 pub(crate) fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -277,7 +333,7 @@ pub fn attachments_dir(employee_dir: &Path, run_id: &str) -> PathBuf {
 }
 
 /// The prompt, followed by the absolute path of each attached file.
-fn with_attachments(prompt: &str, dir: &Path, names: &[String]) -> String {
+pub(super) fn with_attachments(prompt: &str, dir: &Path, names: &[String]) -> String {
     if names.is_empty() {
         return prompt.to_string();
     }
@@ -289,6 +345,28 @@ fn with_attachments(prompt: &str, dir: &Path, names: &[String]) -> String {
 /// Claude Code tools whose effect dies with the `claude -p` process or bypasses Omega Star. The
 /// `omega` MCP tools `schedule` and `notify` replace them.
 const SESSION_ONLY_TOOLS: [&str; 6] = ["CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "PushNotification"];
+
+/// `--model` and `--effort` for a run: the employee's own, unless its kind says otherwise.
+fn model_args(kind: &RunKind, e: &Employee) -> Vec<String> {
+    let (model, effort) = match kind {
+        // A reply check only looks and reports: the smallest model does it.
+        RunKind::ReplyCheck { .. } => (Some("haiku".to_string()), Some(Effort::Low)),
+        RunKind::Scheduled { model, effort, .. } => (model.clone().or_else(|| e.model.clone()), effort.or(e.effort)),
+        _ => (e.model.clone(), e.effort),
+    };
+    let mut args = vec![];
+    if let Some(m) = model {
+        args.extend(["--model".into(), m]);
+    }
+    if let Some(eff) = effort {
+        args.extend(["--effort".into(), eff.as_str().into()]);
+    }
+    args
+}
+
+/// The first message of a run that goes again after the usage limit stopped it: the conversation it
+/// resumes already holds the message it was answering.
+pub const LIMIT_RETRY_NOTE: &str = "Omega Star: the usage limit stopped you before you could answer. It has reset now, so carry on with the message above.";
 
 pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     let e = &s.employee;
@@ -313,17 +391,7 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
         args.push("--chrome".into());
     }
     args.extend(["--disallowedTools".into(), SESSION_ONLY_TOOLS.join(",")]);
-    // A reply check only looks and reports: the smallest model does it.
-    let (model, effort) = match run.kind {
-        RunKind::ReplyCheck { .. } => (Some("haiku".to_string()), Some(Effort::Low)),
-        _ => (e.model.clone(), e.effort),
-    };
-    if let Some(m) = model {
-        args.extend(["--model".into(), m]);
-    }
-    if let Some(eff) = effort {
-        args.extend(["--effort".into(), eff.as_str().into()]);
-    }
+    args.extend(model_args(&run.kind, e));
     for w in e.workspaces.iter().filter(|w| !w.trim().is_empty()) {
         args.extend(["--add-dir".into(), w.clone()]);
     }
@@ -333,13 +401,45 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
         args,
         cwd: s.employee_dir.clone(),
         env: vec![("MCP_TOOL_TIMEOUT".into(), "900000".into())],
-        stdin: with_attachments(&run.prompt, &attachments_dir(&s.employee_dir, &run.id), &run.attachments),
+        stdin: first_message(s, run),
         files: vec![
             (s.employee_dir.join("CLAUDE.md"), handbook(s)),
             (settings_path, serde_json::to_string_pretty(&s.settings).unwrap()),
             (prompt_path, system_prompt(s, run)),
             (mcp_path, serde_json::to_string_pretty(&mcp).unwrap()),
         ],
+    }
+}
+
+/// A snapshot of `employee` at `company` with nothing else around them, for tests.
+#[cfg(test)]
+pub(crate) fn test_snapshot(company: Company, employee: Employee, opening: Option<Opening>, resume: bool) -> Snapshot {
+    let employee_dir = PathBuf::from("/office/employees").join(&employee.id);
+    Snapshot {
+        claude: PathBuf::from("/usr/local/bin/claude"),
+        company,
+        granted: vec![],
+        manager: None,
+        boss: None,
+        reports: vec![],
+        colleagues: vec![],
+        people: vec![],
+        counterpart: None,
+        schedules: vec![],
+        opening,
+        owns: String::new(),
+        source: None,
+        manager_is_agent: false,
+        tidy: None,
+        replier: None,
+        watched: None,
+        settings: json!({}),
+        run_dir: PathBuf::from("/office/runs/r1"),
+        employee_dir,
+        mcp_url: "http://127.0.0.1:1/mcp/t".into(),
+        resume,
+        session: employee.chat_session.clone(),
+        employee,
     }
 }
 
@@ -445,4 +545,202 @@ pub async fn probe_usage(program: &Path, cwd: &Path) -> Option<UsageSample> {
     }
     let _ = child.wait().await;
     parse_usage_output(&out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_schedule_can_run_on_its_own_model_and_effort() {
+        let e = Employee {
+            id: "e1".into(),
+            slug: "ada".into(),
+            name: "Ada".into(),
+            title: "Tester".into(),
+            description: String::new(),
+            objective: String::new(),
+            manager_id: None,
+            skills: SkillGrant::default(),
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: Some("opus".into()),
+            effort: Some(Effort::High),
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![],
+            hue: 0,
+            chat_session: "chat-ada".into(),
+            hired_at: chrono::Utc::now(),
+        };
+        let scheduled = |model: Option<&str>, effort| RunKind::Scheduled {
+            schedule_id: "s1".into(),
+            slot: chrono::Utc::now(),
+            label: "Inbox watch".into(),
+            quiet: true,
+            model: model.map(String::from),
+            effort,
+            review: false,
+        };
+        assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
+        assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);
+        assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false, card: false }, &e), ["--model", "opus", "--effort", "high"]);
+    }
+
+    fn ada() -> Employee {
+        Employee {
+            id: "e1".into(),
+            slug: "ada".into(),
+            name: "Ada".into(),
+            title: "Analyst".into(),
+            description: String::new(),
+            objective: "Keep the numbers right.".into(),
+            manager_id: None,
+            skills: SkillGrant::default(),
+            clearance: Clearance::Supervised,
+            allow_rules: vec![],
+            model: None,
+            effort: None,
+            browser: false,
+            auto_tidy: false,
+            workspaces: vec![],
+            hue: 0,
+            chat_session: "chat-ada".into(),
+            hired_at: chrono::Utc::now(),
+        }
+    }
+
+    fn acme() -> Company {
+        Company { name: "Acme".into(), ceo_name: "Pat".into(), ..Company::unset() }
+    }
+
+    fn snapshot(opening: Option<Opening>, resume: bool) -> Snapshot {
+        test_snapshot(acme(), ada(), opening, resume)
+    }
+
+    fn now_opening(since: Option<Ts>) -> Opening {
+        Opening { now: chrono::Utc::now(), since, ..Opening::default() }
+    }
+
+    fn file<'a>(inv: &'a Invocation, name: &str) -> &'a str {
+        &inv.files.iter().find(|(p, _)| p.ends_with(name)).unwrap().1
+    }
+
+    fn scheduled(id: &str, quiet: bool) -> RunKind {
+        RunKind::Scheduled { schedule_id: id.into(), slot: chrono::Utc::now(), label: "Inbox sweep".into(), quiet, model: None, effort: None, review: false }
+    }
+
+    /// A finished run of Ada's, `mins` minutes ago.
+    fn done(kind: RunKind, mins: i64, summary: &str) -> Run {
+        let at = chrono::Utc::now() - chrono::Duration::minutes(mins);
+        let mut r = Run::new("e1", kind, "Go.".into(), at);
+        r.state = RunState::Succeeded;
+        r.started_at = Some(at);
+        r.ended_at = Some(at);
+        r.summary = Some(summary.into());
+        r
+    }
+
+    #[test]
+    fn the_frame_reaches_a_resumed_run_in_its_first_message() {
+        let fresh = Run::new("e1", scheduled("s1", false), "Sweep the inbox.".into(), chrono::Utc::now());
+        let before = fresh.prompt.clone();
+        let inv = prepare(&snapshot(Some(now_opening(None)), false), &fresh);
+        assert!(file(&inv, "system-prompt.md").contains("Scheduled routine 'Inbox sweep'"));
+        assert!(inv.stdin.starts_with("<omega-star>\nOmega Star wrote this note. It is not a message from Pat.\n\nNow: "), "{}", inv.stdin);
+        assert!(inv.stdin.ends_with("</omega-star>\n\nSweep the inbox."));
+        assert!(!inv.stdin.contains("Scheduled routine"), "a new session reads its frame in the system prompt");
+        assert_eq!(fresh.prompt, before);
+
+        let reply = Run::new("e1", RunKind::Reply { to_run_id: "r0".into(), label: "Inbox sweep".into(), task: false, card: false }, "Archive it.".into(), chrono::Utc::now());
+        let inv = prepare(&snapshot(Some(now_opening(Some(chrono::Utc::now()))), true), &reply);
+        let frame_text = "replied in the thread on your report 'Inbox sweep'";
+        assert!(!file(&inv, "system-prompt.md").contains(frame_text));
+        let (note, body) = inv.stdin.split_once("</omega-star>\n\n").unwrap();
+        assert!(note.contains(frame_text), "{note}");
+        assert_eq!(body, "Archive it.");
+        assert_eq!(reply.prompt, "Archive it.", "the note is never written into the prompt");
+
+        let chat = Run::new("e1", RunKind::Chat, "Where are we on the launch?".into(), chrono::Utc::now());
+        let inv = prepare(&snapshot(Some(now_opening(Some(chrono::Utc::now()))), true), &chat);
+        assert!(!inv.stdin.contains("You are talking with Pat"));
+        assert!(!file(&inv, "system-prompt.md").contains("You are talking with Pat"));
+        assert!(inv.stdin.ends_with("Where are we on the launch?"));
+
+        let mut retried = reply.clone();
+        retried.limit_retries = 1;
+        let inv = prepare(&snapshot(None, true), &retried);
+        assert!(inv.stdin.contains(frame_text));
+        assert!(inv.stdin.ends_with(&format!("</omega-star>\n\n{LIMIT_RETRY_NOTE}")));
+        assert!(!inv.stdin.contains("Archive it."));
+    }
+
+    #[test]
+    fn the_handbook_stays_the_same_whatever_happened_lately() {
+        let mut busy = now_opening(None);
+        busy.work = vec![done(RunKind::Manual, 30, "Paid the invoice.")];
+        busy.notes = vec![("campaign.md".into(), chrono::Utc::now())];
+        assert_eq!(handbook(&snapshot(Some(busy), false)), handbook(&snapshot(Some(now_opening(None)), false)));
+        assert_eq!(handbook(&snapshot(None, false)), handbook(&snapshot(Some(now_opening(Some(chrono::Utc::now()))), true)));
+    }
+
+    #[test]
+    fn quiet_runs_fold_into_one_line_per_routine() {
+        let mut o = now_opening(None);
+        for i in 0..47 {
+            o.work.push(done(scheduled("s1", true), 10 + i, &format!("Nothing new in run {i}.")));
+        }
+        let mut flagged = done(scheduled("s1", true), 5, "Found a renewal notice.");
+        flagged.needs_you = vec!["The domain renews on Friday.".into()];
+        o.work.insert(0, flagged);
+        o.parents = [o.work[3].id.clone(), o.work[9].id.clone()].into();
+        let run = Run::new("e1", RunKind::Manual, "Go.".into(), chrono::Utc::now());
+        let text = first_message(&snapshot(Some(o), false), &run);
+        let fold = text.lines().find(|l| l.contains("quiet runs")).unwrap();
+        assert!(fold.starts_with("- Inbox sweep: 47 quiet runs since "), "{fold}");
+        assert!(fold.contains(", 2 reached someone. Latest (") && fold.ends_with("): Nothing new in run 0."), "{fold}");
+        let raised = text.lines().find(|l| l.contains("(you raised: The domain renews on Friday.)")).unwrap();
+        assert!(raised.contains("scheduled 'Inbox sweep': Found a renewal notice."), "{raised}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("- ")).count(), 2, "{text}");
+
+        let mut o = now_opening(None);
+        o.work = (0..3).map(|i| done(scheduled("s1", true), 10 + i, "Nothing new.")).collect();
+        let text = first_message(&snapshot(Some(o), false), &run);
+        assert!(text.contains("3 quiet runs since ") && text.contains(", none reached anyone. Latest ("), "{text}");
+    }
+
+    #[test]
+    fn a_long_report_keeps_its_start_and_its_end() {
+        let mut o = now_opening(None);
+        let summary = format!("Reconciled the accounts. {}**Still open:** the bank has not confirmed the transfer.", "Checked every line twice. ".repeat(35));
+        assert!(summary.chars().count() > 900);
+        o.work = vec![done(RunKind::Manual, 30, &summary)];
+        let run = Run::new("e1", RunKind::Manual, "Go.".into(), chrono::Utc::now());
+        let text = first_message(&snapshot(Some(o), false), &run);
+        let line = text.lines().find(|l| l.contains("Reconciled the accounts.")).unwrap();
+        assert!(line.contains(" ... ") && line.ends_with("**Still open:** the bank has not confirmed the transfer."), "{line}");
+        assert_eq!(ends("short", 150), "short");
+    }
+
+    #[test]
+    fn a_quiet_routine_with_nothing_new_gets_no_note() {
+        let quiet = Run::new("e1", scheduled("s1", true), "Sweep the inbox.".into(), chrono::Utc::now());
+        let since = Some(chrono::Utc::now() - chrono::Duration::minutes(15));
+        assert_eq!(first_message(&snapshot(Some(now_opening(since)), false), &quiet), quiet.prompt);
+        let loud = Run::new("e1", scheduled("s2", false), "Write the weekly report.".into(), chrono::Utc::now());
+        let text = first_message(&snapshot(Some(now_opening(since)), false), &loud);
+        let note = text.split_once("\n\n").unwrap().1;
+        assert!(note.starts_with("Now: ") && note.contains(".\n</omega-star>"), "only the time: {text}");
+        assert_eq!(first_message(&snapshot(None, false), &quiet), quiet.prompt, "no note at all");
+    }
+
+    #[test]
+    fn runs_lose_inherited_anthropic_settings_but_keep_the_network() {
+        let names = [
+            "PATH", "HOME", "CLAUDE_CONFIG_DIR", "SHELL", "HTTPS_PROXY", "no_proxy",
+            "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
+        ];
+        let scrubbed = scrubbed_vars(names.iter().map(OsStr::new));
+        assert_eq!(scrubbed, ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"]);
+    }
 }

@@ -7,12 +7,30 @@ import { toast } from "../lib/toasts";
 const IMAGE_PATH = /^\/\S*\.(png|jpe?g|gif|webp)$/i;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const imageCode = (path: string) => `<code data-image-path="${esc(path)}">${esc(path)}</code>`;
+// A local path an agent mentioned. It opens through Rust on click, so it has no href:
+// DOMPurify drops file: hrefs and a bare /Users/... href would resolve inside the webview.
+const OPEN_PATH = /^(\/|~\/)\S+$/;
+const pathAttrs = (path: string) => `class="md-path" data-open-path="${esc(path)}" title="Open"`;
+// A file URL is percent-encoded (a space is %20); a bare path is taken as written.
+const decoded = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+const linkPath = (href: string) => (href.startsWith("file://") ? decoded(href.slice(7)) : /^(\/|~\/)/.test(href) ? href : null);
 
 const md = new Marked({ gfm: true, breaks: false, async: false });
 md.use({
   renderer: {
-    codespan: ({ text }) => IMAGE_PATH.test(text) && imageCode(text),
+    codespan: ({ text }) =>
+      IMAGE_PATH.test(text) ? imageCode(text) : OPEN_PATH.test(text) && `<code ${pathAttrs(text)}>${esc(text)}</code>`,
     image: ({ href }) => IMAGE_PATH.test(href) && imageCode(href),
+    link({ href, tokens }) {
+      const path = linkPath(href);
+      return path !== null && `<a ${pathAttrs(path)}>${this.parser.parseInline(tokens)}</a>`;
+    },
   },
 });
 
@@ -71,7 +89,11 @@ export function Markdown({ text, className }: { text: string; className?: string
     }
   }, [html]);
   const open = (e: React.MouseEvent) => {
-    if (e.target instanceof HTMLImageElement && e.target.classList.contains("md-img"))
+    const path = (e.target as Element).closest<HTMLElement>("[data-open-path]");
+    if (path) {
+      e.preventDefault();
+      call("open_report_path", { path: path.dataset.openPath! }).catch((err) => toast(errorMessage(err), "err"));
+    } else if (e.target instanceof HTMLImageElement && e.target.classList.contains("md-img"))
       call("open_image", { path: e.target.alt }).catch((err) => toast(errorMessage(err), "err"));
   };
   return <div ref={ref} className={`md ${className ?? ""}`} onClick={open} dangerouslySetInnerHTML={{ __html: html }} />;

@@ -168,7 +168,8 @@ has to start that work, hand it back with what they need to start it instead of 
     }
 
     /// The session a run about a request continues: the asking run's own when it was a work run whose
-    /// session started; otherwise `fresh`, with the chat message to quote when the ask came from a chat.
+    /// session started; otherwise `fresh`, with your chat message to quote when the ask came from one.
+    /// A chat turn Omega Star wrote, such as a colleague's report coming back, is not yours to quote.
     fn origin_session(db: &Store, origin_run_id: Option<&str>, fresh: &str) -> Result<(String, Option<String>)> {
         let Some(rec) = origin_run_id.map(|id| db.run(id)).transpose()?.flatten() else {
             return Ok((fresh.to_string(), None));
@@ -176,7 +177,10 @@ has to start that work, hand it back with what they need to start it instead of 
         Ok(match rec.run.kind.lane() {
             Lane::Work if db.session_started(&rec.session)? => (rec.session, None),
             Lane::Work => (fresh.to_string(), None),
-            Lane::Chat => (fresh.to_string(), Some(claude::clip(&rec.run.prompt, 2000))),
+            Lane::Chat => {
+                let yours = matches!(rec.run.kind, RunKind::Chat) && !rec.run.omega_wrote;
+                (fresh.to_string(), yours.then(|| claude::clip(&rec.run.prompt, 2000)))
+            }
         })
     }
 
@@ -693,4 +697,27 @@ fn fail_check(w: &mut Watch, error: String) -> bool {
 /// A moment on your local clock: "Tue 6 Oct 1:15 pm".
 fn local_time(t: Ts) -> String {
     t.with_timezone(&Local).format("%a %-d %b %-I:%M %P").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_your_own_chat_turn_is_quoted_for_a_request() {
+        let dir = std::env::temp_dir().join(format!("omegastar-requests-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let turn = Run::new("e1", RunKind::Chat, "Ask the supplier for a date.".into(), now());
+        db.insert_run(&turn, "chat-e1").unwrap();
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true };
+        let mut answered = Run::new("e1", came, "Bo answered your question. Their answer: ask the supplier.".into(), now());
+        answered.omega_wrote = true;
+        db.insert_run(&answered, "chat-e1").unwrap();
+
+        let quoted = |id: &str| Office::origin_session(&db, Some(id), "fresh").unwrap();
+        assert_eq!(quoted(&turn.id), ("fresh".to_string(), Some("Ask the supplier for a date.".to_string())));
+        assert_eq!(quoted(&answered.id), ("fresh".to_string(), None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

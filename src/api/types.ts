@@ -118,28 +118,29 @@ export type SkillSources = {
   error: string | null;       // the first I/O error, with its path
 };
 
-export type Misfire = "catchUp" | "skip";
 export type Schedule = {
   id: string; employeeId: string; label: string; cron: string; instruction: string;
-  enabled: boolean; misfire: Misfire;
+  enabled: boolean;
   quiet: boolean;            // reports reach the Inbox only when the run calls notify or fails
+  model: string | null; effort: Effort | null;   // null: the employee's own
+  review?: boolean;          // the weekly review Omega Star seeds for every employee
   nextFire: string | null;
 };
-export type ScheduleDraft = Omit<Schedule, "id" | "nextFire"> & { id?: string };
+export type ScheduleDraft = Omit<Schedule, "id" | "nextFire" | "review"> & { id?: string };
 export type CronPreview = { ok: true; description: string; next: string[] } | { ok: false; error: string };
 
 export type RunKind =
   | { type: "manual" } | { type: "chat" }
-  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean }
+  | { type: "scheduled"; scheduleId: string; slot: string; label: string; quiet: boolean; model?: string | null; effort?: Effort | null; review?: boolean }
   | { type: "delegated"; parentRunId: string }
   | { type: "asked"; parentRunId: string; askedBy: string; task: boolean }   // a colleague's question or task; askedBy = their employee id
-  | { type: "answered"; askedRunId: string; from: string; task: boolean }    // brings a colleague's answer to an asker whose run had ended
+  | { type: "answered"; askedRunId: string; from: string; task: boolean; chat: boolean }    // brings an answer or report to an asker whose run had ended; chat: as a turn in their chat
   | { type: "followUp"; requestId: string; personId: string }
   | { type: "replyCheck"; requestId: string; personId: string }
   | { type: "nudge"; requestId: string; personId: string }
   | { type: "unanswered"; requestId: string; personId: string }
   | { type: "organize"; imported: ImportedSkill[]; settled: boolean }
-  | { type: "reply"; toRunId: string; label: string; task: boolean }    // your reply to a report or in a task; label = what it was
+  | { type: "reply"; toRunId: string; label: string; task: boolean; card: boolean }    // your reply to a report or in a task; label = what it was; card: Omega Star wrote it from your answer on a card
   | { type: "task"; label: string; from: string | null; context: string }   // a task you started beside the chat; from = the conversation it started in
   | { type: "hireDecided"; proposalId: string; approved: boolean }   // you approved or declined their hire proposal
   | { type: "tidy"; reason: TidyReason; signature: string[]; plan: string | null };   // they tidy their own skills and notes
@@ -160,19 +161,37 @@ export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelle
 export type Denial = { tool: string; brief: string; suggestedRule: string };
 export type SkillChangeKind = "added" | "modified" | "removed";
 export type SkillChange = { skill: string; file: string; change: SkillChangeKind };
+/** What a run asks you with the answer built in. One per run; its message is also in needsYou. */
+export type CardItem = { id: string; text: string; recommended: boolean };
+export type CardAsk =
+  | { type: "choices"; choices: string[]; recommended: number }   // recommended: the index of the one they recommend
+  | { type: "items"; verb: string; items: CardItem[] }            // verb: what a tick means, e.g. "Post"
+  | { type: "chore"; subject: string };                           // "chrome" or "sign-in:<site>"
+export type AnswerHow = "tapped" | "typed" | "dismissed" | "replaced";
+export type CardAnswer = { at: string; how: AnswerHow; text: string };   // text: the fixed answer sent, empty when nothing was
+export type Card = { message: string; ask: CardAsk; answer: CardAnswer | null };
+/** Your answer on a card. */
+export type ItemPick = { id: string; tick: boolean; note?: string | null };
+export type CardReply = { type: "choice"; index: number } | { type: "items"; picks: ItemPick[] } | { type: "done" } | { type: "dismiss" };
 export type Run = {
-  id: string; employeeId: string; kind: RunKind; prompt: string; state: RunState;
+  id: string; employeeId: string; kind: RunKind; prompt: string;
+  omegaWrote: boolean;         // Omega Star wrote the prompt (an approval, a returned report), not you
+  state: RunState;
   createdAt: string; startedAt: string | null; endedAt: string | null;
   turns: number | null; durationMs: number | null;
   summary: string | null; error: string | null; denials: Denial[];
   skillChanges: SkillChange[];
   needsYou: string[];          // what the employee flagged with notify during the run
+  card: Card | null;           // what the run asked you with a card, and your answer
   archivedAt: string | null;   // archived reports leave the Inbox for the Archive
   repliedAt: string | null;    // when you last replied to this report
-  deliveredAt: string | null;  // asked runs: when the answer reached the asker
+  deliveredAt: string | null;  // asked and delegated runs: when the answer or report reached whoever handed it over
   allowOnce: string[];         // rules you granted this run only ("Allow once & retry")
   proposed: string | null;     // a tidy's bigger changes, waiting for your approval
   attachments: string[];       // file names you attached to a chat message
+  build: RunBuild | null;      // the build that ran it, and the Claude Code organisation around it
+  limitRetries: number;        // times it went back to the queue after the usage limit
+  contextTokens: number | null; // the context size after its last top-level message
 };
 export type NewAttachment = { name: string; data: string /* base64 */ };
 
@@ -193,17 +212,6 @@ export type Conversations = {
   inbox: string[];             // root ids of the threads that lead an Inbox row: reports that reached you
   chats: ChatHead[];           // one per current employee
 };
-/** What an employee's ongoing chat is told about a thread or task you archived; the chat shows it as a card. */
-export type Brief = {
-  id: string; employeeId: string; rootRunId: string;
-  label: string;               // what the report was
-  replies: number;
-  excerpt: string;             // the last thing the employee said in the thread, one line
-  text: string;                // what the employee reads at the start of their next turn
-  createdAt: string; consumedAt: string | null;   // consumed: a chat turn was launched with it
-  task: boolean;               // the thread was a task's
-};
-
 export type OwnSkill = {
   name: string; description: string; role: boolean; managed: boolean;
   files: string[]; updatedAt: string;
@@ -214,6 +222,8 @@ export type HealthKind =
   | "tooLong" | "datedLines" | "descriptionsHeavy" | "description" | "junk" | "nameMismatch";
 export type HealthFinding = { kind: HealthKind; skill: string | null; file: string | null; detail: string };
 export type SkillHealth = { skills: number; descriptionChars: number; findings: HealthFinding[] };
+/** The page every employee reads at the start of every run. */
+export type CompanyPage = { text: string; findings: HealthFinding[] };
 /** Something an employee said they would look at again; open ones come back when they are due. */
 export type CheckState = "open" | "done" | "dropped";
 export type Check = {
@@ -247,11 +257,16 @@ export type TaskOutcome = "done" | "failed" | "stopped";
 export type RunDetail = { run: Run; events: RunEvent[]; children: Run[] };
 
 export type Account = { loggedIn: boolean; email: string | null; orgName: string | null; plan: string | null };
+/** How this copy of Omega Star was built: a published release, a test build, or a developer's own. */
+export type BuildChannel = "release" | "dogfood" | "dev";
+export type Build = { version: string; commit: string; channel: BuildChannel };
+export type RunBuild = Build & { claude: string | null; org: string | null };
 export type SetupStatus = {
   claude: { found: boolean; path: string | null; version: string | null };
   account: Account | null;
   company: Company | null;
   background: boolean;
+  build: Build;
 };
 export type AppSettings = { maxConcurrentRuns: number; claudePath: string | null; dataDir: string; paused: boolean; backup: BackupSettings; watch: WatchSettings };
 
@@ -271,10 +286,17 @@ export type BackupStatus = {
   lastAttemptAt: string | null;
   lastError: string | null;       // the last attempt failed
   nextAt: string | null;          // null when automatic backups are off
+  fingerprint: string | null;     // the office at the last successful backup
+  checkedAt: string | null;       // the last time a backup was due but nothing had changed
+  leftOut: number;                // large files and build folders the last backup left out
 };
 
 export type UsageWindow = { percent: number; resetsAt: string | null; resetsText: string | null };   // percent 0-100
-export type UsageLimits = { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; observedAt: string | null; subscription: boolean };
+export type UsageLimits = {
+  fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; observedAt: string | null; subscription: boolean;
+  heldUntil: string | null;    // no run starts until the usage limit resets then
+  accountIssue: { message: string; signedInAs: string | null } | null;   // routines wait for the right account
+};
 
 export type ApiError = { code: string; message: string };
 
@@ -302,6 +324,8 @@ export type Commands = {
   open_attachment: { args: { runId: string; name: string }; ret: null };
   read_image: { args: { path: string }; ret: string };
   open_image: { args: { path: string }; ret: null };
+  /** A path an agent mentioned: documents and folders open, anything else is shown in Finder. */
+  open_report_path: { args: { path: string }; ret: null };
   new_chat: { args: { employeeId: string }; ret: null };
   chat: { args: { employeeId: string }; ret: Run[] };
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };
@@ -311,16 +335,16 @@ export type Commands = {
   conversations: { args: Record<string, never>; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
-  /** Briefs left for the employee's current chat conversation, oldest first. */
-  chat_briefs: { args: { employeeId: string }; ret: Brief[] };
-  /** Archives a thread (any run in it) or moves it back. Archiving one you replied in briefs the ongoing chat unless `brief: false`. */
-  set_archived: { args: { runId: string; archived: boolean; brief?: boolean }; ret: Run };
+  /** Archives a thread (any run in it) or moves it back. */
+  set_archived: { args: { runId: string; archived: boolean }; ret: Run };
   /** Your reply in a report's thread (`runId`: any run in it). `archive` means "don't bring the answer back unless it needs me". */
   reply_to_run: { args: { runId: string; text: string; archive: boolean; attachments?: NewAttachment[] }; ret: Run };
   /** Allow what a finished run was blocked on and send it back to retry. `rules` must come from its denials
    *  (a denial's suggestedRule, or `mcp__<server>__*` for an MCP tool). `always` saves them to the employee;
    *  otherwise they apply to the retry only. Archives the blocked report. Returns the retry run. */
   approve_blocked: { args: { runId: string; rules: string[]; always: boolean }; ret: Run };
+  /** Your answer on a run's card: it goes to the run, and for a chore's Done to every run waiting on it. Returns the replies it started. */
+  answer_card: { args: { runId: string; answer: CardReply }; ret: Run[] };
   /** Colleague asks still in flight (queued, running, or answered and not yet collected), oldest first. */
   open_asks: { args: Record<string, never>; ret: Run[] };
   employee_skills: { args: { employeeId: string }; ret: OwnSkill[] };
@@ -332,6 +356,9 @@ export type Commands = {
   tidy_runs: { args: { employeeId: string }; ret: Run[] };
   read_skill_file: { args: { employeeId: string; skill: string; file: string }; ret: string };
   save_skill_file: { args: { employeeId: string; skill: string; file: string; text: string }; ret: SkillRevision | null };
+  company_page: { args: Record<string, never>; ret: CompanyPage };
+  /** Your own edit: saved as is, with no revision. */
+  save_company_page: { args: { text: string }; ret: CompanyPage };
   skill_history: { args: { employeeId: string }; ret: SkillRevision[] };
   revert_revision: { args: { revisionId: string }; ret: SkillRevision };
   promote_skill: { args: { employeeId: string; skill: string }; ret: SkillInfo };
@@ -361,6 +388,7 @@ export type Commands = {
   open_backup_dir: { args: Record<string, never>; ret: null };
   usage_limits: { args: Record<string, never>; ret: UsageLimits };
   refresh_usage: { args: Record<string, never>; ret: UsageLimits };
+  use_signed_in_account: { args: Record<string, never>; ret: Company };
   check_update: { args: Record<string, never>; ret: string | null };
   install_update: { args: Record<string, never>; ret: null };
 };

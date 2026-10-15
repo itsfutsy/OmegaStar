@@ -72,6 +72,10 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   const stick = useRef(true);
   const name = firstName(e.name);
   const hasContent = !!text.trim() || files.length > 0;
+  // A turn takes messages until its result; after that a message waits to be its next turn. A turn the
+  // usage limit sent back to the queue starts again at a new init, so only a result after it counts.
+  const attempt = live ? live.events.slice(live.events.map((ev) => ev.type).lastIndexOf("init") + 1) : [];
+  const steerable = live?.run.state === "running" && !attempt.some((ev) => ev.type === "result");
 
   useImperativeHandle(ref, () => ({
     prefill: (t) => {
@@ -189,7 +193,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
           ) : null}
           <textarea
             ref={input} className="composer-input" value={text} disabled={sending} rows={1}
-            placeholder={busy ? `Message ${name}. They'll see it as they work.` : placeholder}
+            placeholder={!busy ? placeholder : steerable ? `Message ${name}. They'll see it as they work.` : `Message ${name}. It goes to them as their next turn.`}
             onChange={(ev) => setText(ev.target.value)}
             onPaste={(ev) => {
               const pasted = [...ev.clipboardData.files];

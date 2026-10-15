@@ -5,16 +5,17 @@
 //!
 //! Inbox rows group threads that belong together, so you see one row per piece of work rather than
 //! one per run: a report with everything it set off in conversation, or an ask a report made with
-//! everything that came back from it (`file`), and a schedule's failures in a row (`merge_streaks`).
+//! everything that came back from it (`file`), and a schedule's failures in a row or everyone waiting on
+//! the same chore (`merge_rows`).
 
 use crate::claude::{clip, one_line};
 use crate::model::*;
 use std::collections::{HashMap, HashSet};
 
-/// Replies a brief quotes at most; older ones are summarised as a count.
-const BRIEF_TURNS: usize = 12;
 /// Turns a new task is told about from the conversation it started in.
 const CONTEXT_TURNS: usize = 8;
+/// How far back a new task is told about that conversation: older turns are likely about something else.
+const CONTEXT_WINDOW: chrono::Duration = chrono::Duration::hours(2);
 /// A task's name, cut from your first message.
 const TASK_LABEL_CHARS: usize = 48;
 
@@ -94,6 +95,8 @@ pub fn reaches_you(r: &Run, quiet_chain: bool, top: bool) -> bool {
     match r.kind {
         // Work handed to a colleague reports to whoever asked, unless it breaks on the way.
         RunKind::Asked { .. } | RunKind::Delegated { .. } => broke(r),
+        // A weekly review reaches you whoever the employee reports to.
+        RunKind::Scheduled { review: true, .. } => true,
         _ => top,
     }
 }
@@ -182,14 +185,14 @@ pub fn file(starts: &[Run], conversation: Vec<Run>, lookup: impl Fn(&str) -> Opt
     rows
 }
 
-/// Merges rows that are one schedule's failures in a row. `streak` names the streak a row's first run
-/// belongs to (a scheduled run that failed), or None; rows naming the same streak become one, in the
-/// place of the first.
-pub fn merge_streaks(rows: Vec<Row>, streak: impl Fn(&Run) -> Option<String>) -> Vec<Row> {
+/// Merges rows that belong together: one schedule's failures in a row, or everyone waiting on the same
+/// chore. `key` names what a row belongs to, or None; rows with the same key become one, in the place of
+/// the first.
+pub fn merge_rows(rows: Vec<Row>, key: impl Fn(&Row) -> Option<String>) -> Vec<Row> {
     let mut out: Vec<Row> = vec![];
     let mut at: HashMap<String, usize> = HashMap::new();
     for row in rows {
-        let key = row.members.first().and_then(|(t, _)| streak(&t.root));
+        let key = key(&row);
         match key.as_ref().and_then(|k| at.get(k)) {
             Some(&i) => {
                 out[i].members.extend(row.members);
@@ -204,6 +207,32 @@ pub fn merge_streaks(rows: Vec<Row>, streak: impl Fn(&Run) -> Option<String>) ->
         }
     }
     out
+}
+
+/// The run in a thread whose card waits on your answer, newest first.
+pub fn open_card(t: &Thread) -> Option<&Run> {
+    t.replies.iter().rev().chain(std::iter::once(&t.root)).find(|r| r.card.as_ref().is_some_and(Card::is_open))
+}
+
+/// Any of these threads has a card waiting on your answer.
+pub fn card_open(threads: &[Thread]) -> bool {
+    threads.iter().any(|t| open_card(t).is_some())
+}
+
+/// `chore:<subject>` for a row with a chore waiting on you, so everyone waiting on the same chore shares a row.
+pub fn chore_key(row: &Row) -> Option<String> {
+    row.members.iter().flat_map(|(t, _)| std::iter::once(&t.root).chain(&t.replies)).find_map(|r| match &r.card {
+        Some(c @ Card { ask: CardAsk::Chore { subject }, .. }) if c.is_open() => Some(format!("chore:{subject}")),
+        _ => None,
+    })
+}
+
+/// `review@<year>-W<week>` for a weekly review, from its slot's local ISO week, so one week's reviews
+/// across the team share a row.
+pub fn review_week(r: &Run) -> Option<String> {
+    let RunKind::Scheduled { slot, review: true, .. } = &r.kind else { return None };
+    let iso = chrono::Datelike::iso_week(&slot.with_timezone(&chrono::Local));
+    Some(format!("review@{}-W{:02}", iso.year(), iso.week()))
 }
 
 /// A row as you see it: the thread it is about, with its other threads in `related`, oldest first.
@@ -248,56 +277,33 @@ pub fn report_label(kind: &RunKind) -> String {
     }
 }
 
-/// One turn of a conversation as a brief or a task's context quotes it: what you said, then the
-/// employee's answer, or `pending` while it is still coming.
-fn exchange(ceo: &str, r: &Run, pending: &str) -> String {
-    let mut text = String::new();
-    if !r.prompt.trim().is_empty() {
-        text += &format!("- {ceo}: {}\n", clip(&one_line(&r.prompt), 300));
-    }
-    match r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-        Some(s) => text += &format!("- You: {}\n", clip(&one_line(s), 400)),
-        None if r.state.is_finished() => text += &format!("- You: (your reply did not finish: {})\n", r.error.as_deref().unwrap_or("no report")),
-        None => text += &format!("- You: ({pending})\n"),
-    }
-    text
+/// A moment on your local clock, as a task's context labels a turn: "2:15 pm".
+fn clock(t: Ts) -> String {
+    t.with_timezone(&chrono::Local).format("%-I:%M %P").to_string()
 }
 
-/// What an employee's ongoing chat is told when you archive a thread you replied in, or a task: the
-/// exchange, oldest first, each turn clipped. Returns (text for the employee, one-line excerpt for the UI).
-pub fn brief(ceo: &str, label: &str, root: &Run, replies: &[Run]) -> (String, String) {
-    let n = replies.len();
-    let pending = "still working on it when it was closed";
-    let mut text = if matches!(root.kind, RunKind::Task { .. }) {
-        let mut t = format!("{ceo} closed your task \"{label}\". What was said, oldest first:\n\n");
-        t += &exchange(ceo, root, pending);
-        t
-    } else {
-        let mut t = format!(
-            "{ceo} closed the thread on your report \"{label}\" ({n} {}). What was said, oldest first:\n\n",
-            if n == 1 { "reply" } else { "replies" }
-        );
-        if let Some(s) = root.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            t += &format!("- Your report: {}\n", clip(&one_line(s), 400));
+/// One turn of a conversation as a task's context quotes it, each line labelled with its time: what
+/// you said at `asked`, then the employee's answer, or `pending` while it is still coming. A message
+/// Omega Star wrote is never quoted as yours.
+fn exchange(ceo: &str, r: &Run, asked: &str, pending: &str) -> String {
+    let mut text = String::new();
+    if !r.prompt.trim().is_empty() {
+        let who = match &r.kind {
+            RunKind::Answered { .. } => "a colleague's report came back".to_string(),
+            _ if r.omega_wrote => format!("Omega Star, from what {ceo} did in the app"),
+            _ => ceo.to_string(),
+        };
+        text += &format!("- {asked}, {who}: {}\n", clip(&one_line(&r.prompt), 300));
+    }
+    let answered = r.ended_at.map(clock).unwrap_or_else(|| asked.to_string());
+    match r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(s) => text += &format!("- {answered}, you: {}\n", clip(&one_line(s), 400)),
+        None if r.state.is_finished() => {
+            text += &format!("- {answered}, you: (your reply did not finish: {})\n", r.error.as_deref().unwrap_or("no report"))
         }
-        t
-    };
-    let skipped = n.saturating_sub(BRIEF_TURNS);
-    if skipped > 0 {
-        text += &format!("- ({skipped} earlier {} omitted)\n", if skipped == 1 { "reply" } else { "replies" });
+        None => text += &format!("- {answered}, you: ({pending})\n"),
     }
-    for r in replies.iter().skip(skipped) {
-        text += &exchange(ceo, r, pending);
-    }
-    text += "\nTreat this as settled. Mention it only where it bears on what they say next.";
-    let excerpt = replies
-        .iter()
-        .rev()
-        .find_map(|r| r.summary.as_deref().filter(|s| !s.trim().is_empty()))
-        .or(root.summary.as_deref())
-        .map(|s| clip(&one_line(&first_line(s)), 160))
-        .unwrap_or_default();
-    (text, excerpt)
+    text
 }
 
 /// The first line of a report with markdown marks stripped, so an excerpt reads as plain text.
@@ -310,19 +316,22 @@ fn first_line(s: &str) -> String {
         .unwrap_or_default()
 }
 
-/// What a task you start mid-conversation is told about that conversation: its newest turns, oldest
-/// first, each clipped. `runs` is the conversation in order; a report opening it is quoted as one.
-pub fn context(ceo: &str, runs: &[Run]) -> String {
-    let skipped = runs.len().saturating_sub(CONTEXT_TURNS);
+/// What a task you start mid-conversation is told about that conversation: its turns from the last
+/// two hours, at most the newest few, oldest first, each clipped and labelled with its time. `runs` is
+/// the conversation in order; a report opening it is quoted as one.
+pub fn context(ceo: &str, runs: &[Run], now: Ts) -> String {
+    let recent: Vec<&Run> = runs.iter().filter(|r| now - r.created_at <= CONTEXT_WINDOW).collect();
+    let skipped = recent.len().saturating_sub(CONTEXT_TURNS);
     let mut text = String::new();
     if skipped > 0 {
         text += &format!("- ({skipped} earlier {} omitted)\n", if skipped == 1 { "turn" } else { "turns" });
     }
-    for r in runs.iter().skip(skipped) {
+    for r in recent.into_iter().skip(skipped) {
+        let at = clock(r.created_at);
         if r.kind.is_conversation() {
-            text += &exchange(ceo, r, "still working on this in that conversation");
+            text += &exchange(ceo, r, &at, "still working on this in that conversation");
         } else if let Some(s) = r.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            text += &format!("- Your report: {}\n", clip(&one_line(s), 400));
+            text += &format!("- {}, your report: {}\n", clock(r.ended_at.unwrap_or(r.created_at)), clip(&one_line(s), 400));
         }
     }
     text
@@ -365,4 +374,129 @@ pub fn task_label(text: &str, files: &[String]) -> String {
     }
     let mut chars = label.chars();
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chore(employee: &str, subject: &str, answered: bool) -> Run {
+        let mut r = Run::new(employee, RunKind::Manual, "go".into(), chrono::Utc::now());
+        r.state = RunState::Failed;
+        r.card = Some(Card {
+            message: "Waiting on you.".into(),
+            ask: CardAsk::Chore { subject: subject.into() },
+            answer: answered.then(|| CardAnswer { at: chrono::Utc::now(), how: AnswerHow::Tapped, text: "Done.".into() }),
+        });
+        r
+    }
+
+    fn row(r: Run) -> Row {
+        Row { members: vec![(Thread::new(r, vec![]), true)] }
+    }
+
+    #[test]
+    fn a_thread_with_an_unanswered_card_is_open() {
+        let plain = Thread::new(Run::new("e1", RunKind::Manual, "go".into(), chrono::Utc::now()), vec![]);
+        let waiting = Thread::new(chore("e1", "chrome", false), vec![]);
+        let answered = Thread::new(chore("e1", "chrome", true), vec![]);
+        assert!(!card_open(&[plain.clone(), answered.clone()]));
+        assert!(card_open(&[plain.clone(), waiting.clone()]));
+        assert_eq!(open_card(&waiting).map(|r| &r.id), Some(&waiting.root.id));
+        let mut reply = chore("e1", "chrome", false);
+        reply.kind = RunKind::Reply { to_run_id: plain.root.id.clone(), label: "Manual run".into(), task: false, card: false };
+        let with_reply = Thread::new(plain.root.clone(), vec![reply.clone()]);
+        assert_eq!(open_card(&with_reply).map(|r| &r.id), Some(&reply.id));
+    }
+
+    #[test]
+    fn everyone_waiting_on_one_chore_shares_a_row() {
+        let rows = vec![
+            row(chore("e1", "chrome", false)),
+            row(chore("e2", "sign-in:wise", false)),
+            row(chore("e2", "chrome", false)),
+            row(chore("e3", "chrome", true)),
+        ];
+        let merged = merge_rows(rows, chore_key);
+        let sizes: Vec<usize> = merged.iter().map(|r| r.members.len()).collect();
+        assert_eq!(sizes, vec![2, 1, 1]);
+        let employees: Vec<&str> = merged[0].members.iter().map(|(t, _)| t.root.employee_id.as_str()).collect();
+        assert_eq!(employees, vec!["e1", "e2"]);
+        assert_eq!(chore_key(&merged[1]).as_deref(), Some("chore:sign-in:wise"));
+        assert_eq!(chore_key(&merged[2]), None, "an answered chore waits on nobody");
+    }
+
+    #[test]
+    fn a_schedules_failures_still_merge() {
+        let failed = |schedule: &str| {
+            let kind = RunKind::Scheduled { schedule_id: schedule.into(), slot: chrono::Utc::now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
+            let mut r = Run::new("e1", kind, "go".into(), chrono::Utc::now());
+            r.state = RunState::Failed;
+            r
+        };
+        let streak = |row: &Row| match &row.members.first()?.0.root.kind {
+            RunKind::Scheduled { schedule_id, .. } => Some(schedule_id.clone()),
+            _ => None,
+        };
+        let merged = merge_rows(vec![row(failed("s1")), row(failed("s2")), row(failed("s1"))], streak);
+        assert_eq!(merged.iter().map(|r| r.members.len()).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_review_reaches_you_whoever_its_employee_reports_to() {
+        // Wednesday noon UTC falls in the same ISO week in every time zone.
+        let slot = "2026-10-14T12:00:00Z".parse::<Ts>().unwrap();
+        let kind = |review: bool| RunKind::Scheduled { schedule_id: "s1".into(), slot, label: "Weekly review".into(), quiet: false, model: None, effort: None, review };
+        let mut review = Run::new("e2", kind(true), "go".into(), slot);
+        review.state = RunState::Succeeded;
+        assert!(reaches_you(&review, false, false), "a second-level employee's review");
+        let mut routine = review.clone();
+        routine.kind = kind(false);
+        assert!(!reaches_you(&routine, false, false));
+        assert_eq!(review_week(&review).as_deref(), Some("review@2026-W42"));
+        assert_eq!(review_week(&routine), None);
+    }
+
+    #[test]
+    fn context_never_quotes_omega_stars_words_as_yours() {
+        let at = chrono::Utc::now();
+        let t = clock(at);
+        let mut turn = Run::new("e1", RunKind::Chat, "Count the stock.".into(), at);
+        turn.summary = Some("On it.".into());
+        turn.ended_at = Some(at);
+        let came = RunKind::Answered { asked_run_id: "r1".into(), from: "e2".into(), task: false, chat: true };
+        let mut answered = Run::new("e1", came, "Bo answered your question. Their answer: 40 boxes.".into(), at);
+        answered.omega_wrote = true;
+        answered.summary = Some("Bo counted 40 boxes.".into());
+        answered.ended_at = Some(at);
+        let reply = RunKind::Reply { to_run_id: "r2".into(), label: "Manual run".into(), task: false, card: false };
+        let mut tap = Run::new("e1", reply, "Pat approved what was blocked.".into(), at);
+        tap.omega_wrote = true;
+        assert_eq!(
+            context("Pat", &[turn, answered, tap], at),
+            format!(
+                "- {t}, Pat: Count the stock.\n- {t}, you: On it.\n\
+- {t}, a colleague's report came back: Bo answered your question. Their answer: 40 boxes.\n- {t}, you: Bo counted 40 boxes.\n\
+- {t}, Omega Star, from what Pat did in the app: Pat approved what was blocked.\n- {t}, you: (still working on this in that conversation)\n"
+            )
+        );
+    }
+
+    #[test]
+    fn context_keeps_only_the_last_two_hours() {
+        let now = chrono::Utc::now();
+        let turn = |mins: i64, said: &str| {
+            let at = now - chrono::Duration::minutes(mins);
+            let mut r = Run::new("e1", RunKind::Chat, said.into(), at);
+            r.state = RunState::Succeeded;
+            r.ended_at = Some(at);
+            r.summary = Some("Done.".into());
+            r
+        };
+        let text = context("Pat", &[turn(180, "Book the venue."), turn(30, "Order the chairs.")], now);
+        assert!(!text.contains("Book the venue."), "{text}");
+        let at = clock(now - chrono::Duration::minutes(30));
+        assert!(text.starts_with(&format!("- {at}, Pat: Order the chairs.\n- {at}, you: Done.\n")), "{text}");
+        assert_eq!(context("Pat", &[turn(180, "Book the venue.")], now), "");
+    }
 }

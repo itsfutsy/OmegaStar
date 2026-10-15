@@ -11,6 +11,13 @@
   align-self: flex-end; max-width: 82%; padding: 9px 13px; border-radius: 14px 14px 4px 14px; background: var(--sunken);
   border: 1px solid var(--line); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5;
 }
+/* A colleague's report or answer that came back as a turn in the chat: folded, since Omega Star wrote it. */
+.msg-came { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+.msg-came > summary { display: flex; align-items: center; gap: 7px; font-size: var(--t-sm); color: var(--muted); cursor: pointer; list-style: none; }
+.msg-came > summary::-webkit-details-marker { display: none; }
+.msg-came > summary > svg { flex: none; }
+.msg-came > summary:hover { color: var(--ink); }
+.msg-came[open] > summary { margin-bottom: 8px; }
 .msg-emp { display: flex; gap: 10px; align-items: flex-start; }
 .msg-av { margin-top: 1px; }
 .msg-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding-left: 12px; margin-left: -2px; border-left: 2px solid var(--line); }
@@ -65,18 +72,6 @@
 .thread { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .thread-time { font-size: var(--t-xs); white-space: nowrap; }
 .thread-needs { margin: 0; }
-.thread-brief-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); font-size: 13px; }
-.thread-brief-opt .switch { margin-top: 2px; }
-.thread-brief-opt .muted { font-size: var(--t-sm); line-height: 1.45; }
-
-/* ------------------------------------------------ a thread you archived, in the ongoing chat */
-.brief { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); animation: riseIn var(--d-ui) var(--ease); }
-.brief-top { display: flex; align-items: center; gap: 7px; font-size: var(--t-sm); color: var(--muted); min-width: 0; }
-.brief-top > svg { flex: none; }
-.brief-top b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brief-time { font-size: var(--t-xs); white-space: nowrap; }
-.brief-excerpt { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-.brief-note { font-size: 11.5px; }
 
 /* In a new task the send button says a task will start. */
 .composer-send.composer-send-task { width: auto; height: 32px; padding: 0 12px 0 10px; gap: 6px; }

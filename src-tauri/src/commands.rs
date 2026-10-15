@@ -146,6 +146,45 @@ pub async fn open_image(app: AppHandle, path: String) -> Result<()> {
     app.opener().open_path(&path, None::<&str>).map_err(|e| AppError::internal(format!("Could not open {path}: {e}")))
 }
 
+/// Kinds of file a click on a report path opens in their app. Anything else is shown in Finder.
+const OPENS: &[&str] = &[
+    "pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "m4a", "mp3", "wav", "txt", "md", "csv", "html", "docx", "xlsx",
+    "pptx", "key", "pages", "numbers",
+];
+
+/// Whether a report path opens in its app, so a click never runs a program
+/// (an .app bundle is a folder, a .command or .sh is a file).
+fn opens_directly(path: &Path, is_dir: bool) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => OPENS.contains(&ext.to_ascii_lowercase().as_str()),
+        None => is_dir,
+    }
+}
+
+/// A path from a report as a full path, with a leading `~/` expanded.
+fn report_path(path: &str) -> Result<std::path::PathBuf> {
+    let full = match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir().map(|home| home.join(rest)),
+        None => Some(std::path::PathBuf::from(path)),
+    };
+    full.filter(|p| p.is_absolute()).ok_or_else(|| AppError::invalid(format!("{path} is not a full path")))
+}
+
+#[tauri::command]
+pub async fn open_report_path(app: AppHandle, path: String) -> Result<()> {
+    // Resolved, so a link named like a document cannot point at a program.
+    let full = std::fs::canonicalize(report_path(&path)?).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => AppError::not_found(format!("Nothing is at {path} any more")),
+        _ => AppError::internal(format!("Could not open {path}: {e}")),
+    })?;
+    let done = if opens_directly(&full, full.is_dir()) {
+        app.opener().open_path(full.to_string_lossy(), None::<&str>)
+    } else {
+        app.opener().reveal_item_in_dir(&full)
+    };
+    done.map_err(|e| AppError::internal(format!("Could not open {path}: {e}")))
+}
+
 #[tauri::command]
 pub async fn new_chat(office: O<'_>, employee_id: String) -> Result<()> {
     office.new_chat(&employee_id)
@@ -182,13 +221,8 @@ pub async fn thread(office: O<'_>, run_id: String) -> Result<Thread> {
 }
 
 #[tauri::command]
-pub async fn chat_briefs(office: O<'_>, employee_id: String) -> Result<Vec<Brief>> {
-    office.chat_briefs(&employee_id)
-}
-
-#[tauri::command]
-pub async fn set_archived(office: O<'_>, run_id: String, archived: bool, brief: Option<bool>) -> Result<Run> {
-    office.set_archived(&run_id, archived, brief)
+pub async fn set_archived(office: O<'_>, run_id: String, archived: bool) -> Result<Run> {
+    office.set_archived(&run_id, archived)
 }
 
 #[tauri::command]
@@ -199,6 +233,11 @@ pub async fn reply_to_run(office: O<'_>, run_id: String, text: String, archive: 
 #[tauri::command]
 pub async fn approve_blocked(office: O<'_>, run_id: String, rules: Vec<String>, always: bool) -> Result<Run> {
     office.approve_blocked(&run_id, rules, always)
+}
+
+#[tauri::command]
+pub async fn answer_card(office: O<'_>, run_id: String, answer: CardReply) -> Result<Vec<Run>> {
+    office.answer_card(&run_id, answer)
 }
 
 #[tauri::command]
@@ -249,6 +288,16 @@ pub async fn read_skill_file(office: O<'_>, employee_id: String, skill: String, 
 #[tauri::command]
 pub async fn save_skill_file(office: O<'_>, employee_id: String, skill: String, file: String, text: String) -> Result<Option<SkillRevision>> {
     office.save_skill_file(&employee_id, &skill, &file, &text)
+}
+
+#[tauri::command]
+pub async fn company_page(office: O<'_>) -> Result<CompanyPage> {
+    office.company_page()
+}
+
+#[tauri::command]
+pub async fn save_company_page(office: O<'_>, text: String) -> Result<CompanyPage> {
+    office.save_company_page(&text)
 }
 
 #[tauri::command]
@@ -427,6 +476,11 @@ pub async fn refresh_usage(office: O<'_>) -> Result<UsageLimits> {
 }
 
 #[tauri::command]
+pub async fn use_signed_in_account(office: O<'_>) -> Result<Company> {
+    office.use_signed_in_account().await
+}
+
+#[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<Option<String>> {
     update::check(&app).await
 }
@@ -434,4 +488,30 @@ pub async fn check_update(app: AppHandle) -> Result<Option<String>> {
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<()> {
     update::install(&app).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn documents_and_folders_open_programs_are_only_shown() {
+        assert!(opens_directly(Path::new("/tmp/out/summary.pdf"), false));
+        assert!(opens_directly(Path::new("/tmp/out/Summary.PDF"), false));
+        assert!(opens_directly(Path::new("/tmp/out/reports"), true));
+        assert!(!opens_directly(Path::new("/tmp/out/setup.sh"), false));
+        assert!(!opens_directly(Path::new("/tmp/out/X.app"), true));
+        assert!(!opens_directly(Path::new("/tmp/out/start.command"), false));
+        assert!(!opens_directly(Path::new("/tmp/out/tool"), false));
+    }
+
+    #[test]
+    fn report_paths_must_be_full() {
+        assert_eq!(report_path("out/summary.pdf").unwrap_err().message, "out/summary.pdf is not a full path");
+        assert_eq!(report_path("/tmp/summary.pdf").unwrap(), PathBuf::from("/tmp/summary.pdf"));
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(report_path("~/summary.pdf").unwrap(), home.join("summary.pdf"));
+        }
+    }
 }

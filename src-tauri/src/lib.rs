@@ -1,4 +1,5 @@
 mod backup;
+mod cards;
 mod catalog;
 mod claude;
 mod commands;
@@ -10,6 +11,7 @@ mod model;
 mod office;
 mod org;
 mod own_skills;
+mod power;
 mod reader;
 mod schedule;
 mod store;
@@ -19,7 +21,7 @@ mod update;
 mod watch;
 
 use log::log;
-use model::{AppSettings, BackupStatus, HireProposal, HumanRequest, Run, RunEvent, UsageLimits};
+use model::{AppSettings, BackupStatus, Build, HireProposal, HumanRequest, Run, RunEvent, UsageLimits};
 use office::{EventSink, Office};
 use std::sync::{Arc, OnceLock};
 use tauri::menu::{Menu, MenuItem};
@@ -111,6 +113,29 @@ fn build_tray(app: &tauri::App, office: Office, sink: &TauriSink) -> tauri::Resu
     Ok(())
 }
 
+/// The standard menu, with Cmd+Q closing the window instead of quitting: schedules only run while
+/// the app does. Quit stays in the tray and the Dock.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    use tauri::menu::MenuItemKind;
+    let menu = Menu::default(app)?;
+    let Some(MenuItemKind::Submenu(app_submenu)) = menu.items()?.into_iter().next() else {
+        log!("could not find the app menu to replace Quit");
+        return Ok(menu);
+    };
+    let quit = app_submenu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Predefined(p) if p.text().is_ok_and(|t| t.starts_with("Quit")) => Some(p),
+        _ => None,
+    });
+    let Some(quit) = quit else {
+        log!("could not find Quit in the app menu");
+        return Ok(menu);
+    };
+    app_submenu.remove(&quit)?;
+    app_submenu.append(&MenuItem::with_id(app, "keep-running", "Close and Keep Running", true, Some("CmdOrCtrl+Q"))?)?;
+    Ok(menu)
+}
+
 fn autostart() -> tauri::plugin::TauriPlugin<Wry> {
     let b = tauri_plugin_autostart::Builder::new().args(["--background"]);
     #[cfg(target_os = "macos")]
@@ -120,8 +145,18 @@ fn autostart() -> tauri::plugin::TauriPlugin<Wry> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    log::catch_crashes();
     let background = std::env::args().any(|a| a == "--background");
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu).on_menu_event(|app, ev| {
+        if ev.id() == "keep-running" {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+            }
+        }
+    });
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A login-item relaunch while already running must not pop the window.
             if !args.iter().any(|a| a == "--background") {
@@ -138,8 +173,11 @@ pub fn run() {
             if let Err(e) = std::fs::create_dir_all(&data_dir).and_then(|_| log::to_file(&data_dir.join("omega.log"))) {
                 log!("could not open omega.log: {e}");
             }
+            // `package_info` carries a version set with `tauri build --config`, as dogfood builds do.
+            let build = Build::new(app.package_info().version.to_string());
+            log!("Omega Star {} started ({} build {}) on {}", build.version, format!("{:?}", build.channel).to_lowercase(), build.commit, data_dir.display());
             let sink = Arc::new(TauriSink { app: app.handle().clone(), pause_item: OnceLock::new() });
-            let office = match tauri::async_runtime::block_on(Office::open(data_dir.clone(), sink.clone())) {
+            let office = match tauri::async_runtime::block_on(Office::open(data_dir.clone(), sink.clone(), build)) {
                 Ok(office) => office,
                 Err(e) => {
                     // Without this the app would vanish: there is no window yet and release builds abort.
@@ -155,6 +193,7 @@ pub fn run() {
             };
             office.spawn_scheduler();
             office.spawn_usage_monitor();
+            office.spawn_account_monitor();
             office.spawn_backup_monitor();
             office.spawn_tidy_monitor();
             office.spawn_watch_monitor();
@@ -193,6 +232,7 @@ pub fn run() {
             commands::open_attachment,
             commands::read_image,
             commands::open_image,
+            commands::open_report_path,
             commands::new_chat,
             commands::chat,
             commands::runs,
@@ -200,10 +240,10 @@ pub fn run() {
             commands::archived,
             commands::conversations,
             commands::thread,
-            commands::chat_briefs,
             commands::set_archived,
             commands::reply_to_run,
             commands::approve_blocked,
+            commands::answer_card,
             commands::open_asks,
             commands::employee_skills,
             commands::skill_health,
@@ -214,6 +254,8 @@ pub fn run() {
             commands::drop_check,
             commands::read_skill_file,
             commands::save_skill_file,
+            commands::company_page,
+            commands::save_company_page,
             commands::skill_history,
             commands::revert_revision,
             commands::promote_skill,
@@ -243,6 +285,7 @@ pub fn run() {
             commands::open_backup_dir,
             commands::usage_limits,
             commands::refresh_usage,
+            commands::use_signed_in_account,
             commands::check_update,
             commands::install_update,
         ])

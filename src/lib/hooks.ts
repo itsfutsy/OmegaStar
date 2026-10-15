@@ -239,7 +239,7 @@ export type Conversation = { turns: LiveRun[] | null; error: string | null; relo
 export function useChat(employeeId: string): Conversation {
   const { runs, ...rest } = useLiveRuns(
     () => call("chat", { employeeId }).then((rs) => details(rs.map((r) => r.id))),
-    (r) => r.employeeId === employeeId && r.kind.type === "chat",
+    (r) => r.employeeId === employeeId && (r.kind.type === "chat" || (r.kind.type === "answered" && r.kind.chat)),
     [employeeId],
   );
   return { turns: runs, ...rest };

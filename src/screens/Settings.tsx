@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { call, errorMessage } from "../api/client";
-import type { AppSettings, BackupFrequency, BackupSettings, BackupStatus, BusinessHours, CheckFrequency, IsoWeekday, WatchSettings } from "../api/types";
+import type { AppSettings, BackupFrequency, BackupSettings, BackupStatus, BuildChannel, BusinessHours, CheckFrequency, IsoWeekday, SetupStatus, WatchSettings } from "../api/types";
 import { refreshOrg, rescanSkills, useQuery, useSkillScan, type SkillScan } from "../lib/hooks";
 import { toast } from "../lib/toasts";
 import { clockHM, relTime, whenShort } from "../lib/format";
@@ -139,10 +139,29 @@ export function SettingsScreen() {
             </SettingsGroup>
 
             <BackupsCard settings={s} save={save} onOpenData={() => void openData()} />
+
+            <SettingsGroup title="About">
+              <Row title="Omega Star" desc={aboutDesc(st)}>
+                <span className="pill">{CHANNELS[st.build.channel]}</span>
+              </Row>
+            </SettingsGroup>
           </>
         )}
     </PageColumn>
   );
+}
+
+const CHANNELS: Record<BuildChannel, string> = { release: "Release", dogfood: "Test build", dev: "Developer build" };
+
+/** This build, then the Claude Code version and organisation the same status found, when known. */
+function aboutDesc(st: SetupStatus): string {
+  const app = `Version ${st.build.version}, built from ${st.build.commit}.`;
+  const version = st.claude.version;
+  const org = st.account?.orgName ?? null;
+  if (version && org) return `${app} Claude Code ${version}, signed in to ${org}.`;
+  if (version) return `${app} Claude Code ${version}.`;
+  if (org) return `${app} Signed in to ${org}.`;
+  return app;
 }
 
 const FREQUENCIES: { value: BackupFrequency; label: string }[] = [
@@ -164,6 +183,8 @@ function LastBackup({ st, frequency }: { st: BackupStatus; frequency: BackupFreq
     <>
       {st.running ? "Backing up the office…" : st.lastAt ? <>{whenShort(st.lastAt)} · {st.lastBytes != null ? size(st.lastBytes) : null}</> : "No backups yet."}
       {!st.running && st.skipped > 0 ? <span className="set-note">{st.skipped === 1 ? "1 file" : `${st.skipped} files`} couldn't be read and {st.skipped === 1 ? "was" : "were"} left out.</span> : null}
+      {!st.running && st.leftOut > 0 ? <span className="set-note">{st.leftOut} large files and build folders were left out.</span> : null}
+      {!st.running && st.lastAt && st.checkedAt && Date.parse(st.checkedAt) > Date.parse(st.lastAt) ? <span className="set-note">Nothing has changed since. Checked {relTime(st.checkedAt)}.</span> : null}
       {failed ? <span className="set-note set-err">Last attempt {relTime(st.lastAttemptAt)} failed: {st.lastError}</span> : null}
       {frequency !== "off" && st.nextAt && !st.running ? <span className="set-note">Next backup {Date.parse(st.nextAt) <= Date.now() ? "within a minute" : whenShort(st.nextAt)}</span> : null}
     </>
@@ -206,7 +227,7 @@ function BackupsCard({ settings: s, save, onOpenData }: { settings: AppSettings;
       <Row title="Office folder" desc={<span className="mono">{s.dataDir}</span>}>
         <button className="btn" onClick={onOpenData}><Icon name="folder" size={13} /> Open</button>
       </Row>
-      <Row title="Automatic backups" desc={b.frequency === "off" ? "Only when you back up by hand." : "A copy of the whole office: employees, their history and skills. Catches up if one was missed."}>
+      <Row title="Automatic backups" desc={b.frequency === "off" ? "Only when you back up by hand." : "A copy of the office: employees, their history, skills and notes. Skipped when nothing has changed. Large files (over 10 MB), node_modules and app builds in employees' folders are left out."}>
         <div className="seg" role="group" aria-label="Backup frequency">
           {FREQUENCIES.map((f) => (
             <button key={f.value} aria-pressed={b.frequency === f.value} onClick={() => void setBackup({ frequency: f.value })}>{f.label}</button>
@@ -219,7 +240,7 @@ function BackupsCard({ settings: s, save, onOpenData }: { settings: AppSettings;
           <button className="btn" onClick={() => void open()}><Icon name="folder" size={13} /> Open</button>
         </div>
       </Row>
-      <Row title="Backups to keep" desc="Older backups in the folder are deleted automatically.">
+      <Row title="Backups to keep" desc={<>Older backups in the folder are deleted automatically.{b.keep === 1 && b.frequency !== "off" ? <span className="set-note set-warn">One copy is a single restore point: a mistake you notice after the next backup can't be undone. Keep at least 3.</span> : null}</>}>
         <div className="stepper">
           <button className="btn btn-icon stepper-btn" aria-label="Fewer" disabled={b.keep <= 1} onClick={() => void setBackup({ keep: b.keep - 1 })}>−</button>
           <span className="mono num stepper-value">{b.keep}</span>

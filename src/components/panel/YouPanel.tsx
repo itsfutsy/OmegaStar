@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { Company } from "../../api/types";
 import { firstName, initials } from "../../lib/format";
-import { refreshOrg, useDraft, useOrg } from "../../lib/hooks";
+import { refreshOrg, useDraft, useOrg, useQuery } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import { aboveYou, lineAboveYou, reportsToEffect } from "../../lib/org";
 import { Icon } from "../Icon";
-import { ErrorNote, SlideOver } from "../ui";
+import { Markdown } from "../Markdown";
+import { ErrorNote, Section, Skeleton, SlideOver } from "../ui";
 import "./Panel.css";
 import "../Sheet.css";
 
@@ -106,6 +107,7 @@ function YouProfile({ company }: { company: Company }) {
             {!people.length ? <span className="field-help faint">Add a person to the org chart first if you report to someone.</span> : null}
           </label>
         </div>
+        <div style={{ marginTop: 28 }}><CompanyPageSection /></div>
       </div>
       {dirty || err ? (
         <div className="savebar">
@@ -116,5 +118,54 @@ function YouProfile({ company }: { company: Company }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** The page every employee reads at the start of every run. */
+function CompanyPageSection() {
+  const q = useQuery(() => call("company_page"), [], ["run:updated"]);
+  const [text, setText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (text === null) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      q.set(await call("save_company_page", { text }));
+      setText(null);
+      toast("Saved", "ok");
+    } catch (x) {
+      setErr(errorMessage(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const edit = text === null && q.data ? <button className="btn btn-sm" onClick={() => { setText(q.data?.text ?? ""); setErr(null); }}><Icon name="edit" size={12} /> Edit</button> : null;
+  return (
+    <Section title="Company page" action={edit}>
+      <span className="field-help">Every employee reads this at the start of every run. They change it in a conversation with you; you can edit it here too.</span>
+      {q.error ? <ErrorNote text={q.error} onRetry={q.reload} /> : null}
+      {q.data === undefined && !q.error ? <Skeleton h={120} r={12} /> : null}
+      {text !== null ? (
+        <>
+          <textarea className="textarea mono fileview-editor" value={text} onChange={(ev) => setText(ev.target.value)} spellCheck={false} autoFocus
+            onKeyDown={(ev) => { if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") { ev.preventDefault(); void save(); } }} />
+          <div className="row" style={{ gap: 8 }}>
+            {err ? <ErrorNote text={err} /> : null}
+            <span className="grow" />
+            <button className="btn btn-ghost" onClick={() => setText(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
+          </div>
+        </>
+      ) : q.data ? (
+        <>
+          {q.data.findings.map((f) => <span key={f.kind} className="muted" style={{ fontSize: "var(--t-sm)" }}>{f.detail}</span>)}
+          <div className="fileview-doc">{q.data.text.trim() ? <Markdown text={q.data.text} /> : <span className="faint">The page is empty.</span>}</div>
+        </>
+      ) : null}
+    </Section>
   );
 }

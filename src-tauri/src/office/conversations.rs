@@ -120,14 +120,14 @@ mod tests {
 
         let report = run(&db, &ada, RunKind::Manual, RunState::Succeeded, 60, None);
         let replied = run(&db, &ada, RunKind::Manual, RunState::Succeeded, 50, None);
-        let reply = Run::new(&ada.id, RunKind::Reply { to_run_id: replied.id.clone(), label: "Manual run".into(), task: false }, "ok".into(), now());
+        let reply = Run::new(&ada.id, RunKind::Reply { to_run_id: replied.id.clone(), label: "Manual run".into(), task: false, card: false }, "ok".into(), now());
         db.insert_run(&reply, &replied.id).unwrap();
         let open_task = run(&db, &ada, task("Draft it"), RunState::Running, 0, None);
         let sub_report = run(&db, &bo, RunKind::Manual, RunState::Succeeded, 40, None);
-        let sub_reply = Run::new(&bo.id, RunKind::Reply { to_run_id: sub_report.id.clone(), label: "Manual run".into(), task: false }, "and?".into(), now());
+        let sub_reply = Run::new(&bo.id, RunKind::Reply { to_run_id: sub_report.id.clone(), label: "Manual run".into(), task: false, card: false }, "and?".into(), now());
         db.insert_run(&sub_reply, &sub_report.id).unwrap();
         let live = run(&db, &ada, RunKind::Manual, RunState::Running, 0, None);
-        let quiet = RunKind::Scheduled { schedule_id: "s".into(), slot: now(), label: "Sweep".into(), quiet: true };
+        let quiet = RunKind::Scheduled { schedule_id: "s".into(), slot: now(), label: "Sweep".into(), quiet: true, model: None, effort: None, review: false };
         let live_quiet = run(&db, &ada, quiet, RunState::Running, 0, None);
         let live_sub = run(&db, &bo, RunKind::Manual, RunState::Queued, 0, None);
 

@@ -1,12 +1,13 @@
-import type { EmployeeView, NewAttachment, Run, Thread } from "../api/types";
+import type { CardReply, EmployeeView, NewAttachment, Run, Thread } from "../api/types";
 import { dateLong, firstName, relTime, timeOrDay, whenInline } from "../lib/format";
 import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openMember } from "../lib/router";
 import { toolName } from "../lib/rules";
-import { activityAt, didNotFinish, isStreak, lastFrom, lastReply, latestFinished, rowThreads, threadFocus } from "../lib/threads";
+import { activityAt, didNotFinish, isStreak, isTeamWeek, lastFrom, lastReply, latestFinished, openCard, rowThreads, threadFocus } from "../lib/threads";
 import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
+import { CardView } from "../components/conversation/CardView";
 import { lines } from "../components/conversation/RowHistory";
 import { DoneButton, SnoozeButton, ThreadView } from "../components/conversation/ThreadView";
 import type { Item } from "../components/conversation/useStatuses";
@@ -25,15 +26,26 @@ function digest(t: Thread): { run: Run; title: string; preview: string } {
   return { run, title: failed ? (run.id === t.root.id ? "This run didn't finish" : "This reply didn't finish") : "No report", preview: run.error ?? "" };
 }
 
+/** A team week's title: the first names of everyone in it, as "Aura, Mace, Cynthia and 3 more". */
+function teamNames(threads: Thread[], employees: EmployeeView[]): string {
+  const names = [...new Set(threads.map((x) => x.root.employeeId))]
+    .flatMap((id) => employees.find((x) => x.id === id) ?? [])
+    .map((x) => firstName(x.name));
+  if (names.length > 3) return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "";
+}
+
 /** What an Inbox row can do to its thread. */
 export type ItemActions = {
-  /** Mark it done; `brief` tells the employee's ongoing chat what was decided. */
-  done: (brief: boolean) => Promise<void>;
+  /** Mark it done. */
+  done: () => Promise<void>;
   snooze: (until: Date) => void;
   wake: () => void;
   reopen: () => void;
   /** Reply and mark it done in one go. */
   sendDone: (text: string, attachments: NewAttachment[]) => Promise<void>;
+  /** Answer the card on `run`, which moves the row to the Archive. */
+  answer: (run: Run, reply: CardReply) => Promise<void>;
 };
 
 /** One Inbox row: a thread collapsed to its digest, or open in place as the whole conversation. Its head carries
@@ -62,8 +74,17 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
   // The rest of the row: a hand-off's other runs, or a schedule's earlier failures.
   const runsInRow = rowThreads(t);
   const streak = isStreak(t);
+  // A week of the team's reviews reads as the team's, not as one employee's.
+  const teamWeek = isTeamWeek(t);
   const others = [...new Set(runsInRow.map((x) => x.root.employeeId))].filter((id) => id !== r.employeeId)
     .flatMap((id) => employees.find((x) => x.id === id) ?? []);
+  // Every card in the row waiting on you, each with the employee who raised it; a chore shows once, since Done
+  // answers everyone waiting on it. A card holds the row until you answer it, so Done steps aside.
+  const cards = runsInRow.flatMap((x) => openCard(x) ?? []).filter((c, i, all) => {
+    const ask = c.card?.ask;
+    return ask?.type !== "chore" || all.findIndex((o) => o.card?.ask.type === "chore" && o.card.ask.subject === ask.subject) === i;
+  });
+  const carded = cards.length > 0;
   return (
     <article className={`item ${open ? "item-open" : ""} ${status.unread ? "item-unread" : ""}`} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
       <div
@@ -80,21 +101,25 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
         ) : <Avatar name={e.name} hue={e.hue} size={30} presence={busy ? "working" : undefined} />}
         <div className="item-main">
           <span className="item-context">
-            <b>{e.name}</b>
-            <span className="muted"> · {context}</span>
+            {teamWeek ? <b>Your team's week</b> : <><b>{e.name}</b><span className="muted"> · {context}</span></>}
           </span>
           {open ? null : <span className="item-title">
             {run.needsYou.length ? <Icon name="bell" size={13} className="item-bell" /> : null}
             {failed ? <Icon name="alert" size={13} className="item-failed" /> : null}
-            <span>{title}</span>
+            <span>{teamWeek ? teamNames(runsInRow, employees) : title}</span>
           </span>}
           {!open && preview ? <span className="item-preview">{preview}</span> : null}
+          {open ? null : cards.map((c) => (
+            <div key={c.id} className="item-card">
+              <CardView run={c} e={employees.find((x) => x.id === c.employeeId) ?? e} onAnswer={(reply) => actions.answer(c, reply)} />
+            </div>
+          ))}
           {n > 0 || run.needsYou.length > 1 || (run.denials.length > 0 && run.needsYou.length > 0 && !done && !busy) || runsInRow.length > 1 ? (
             <span className="item-tags">
               {streak ? (
                 <span className="item-tag-err"><Icon name="alert" size={11} /> Failed {runsInRow.length} times in a row since {timeOrDay(runsInRow[0].root.createdAt)}</span>
               ) : runsInRow.length > 1 ? (
-                <span title="Everything this hand-off set off, in one row">{others.length ? `With ${others.map((x) => firstName(x.name)).join(", ")} · ` : ""}{runsInRow.length} runs</span>
+                <span title={teamWeek ? "The team's reviews this week, in one row" : "Everything this hand-off set off, in one row"}>{others.length ? `With ${others.map((x) => firstName(x.name)).join(", ")} · ` : ""}{runsInRow.length} runs</span>
               ) : null}
               {n > 0 ? (
                 <span className={busy ? "item-tag-live" : ""}>
@@ -118,7 +143,7 @@ export function InboxItem({ item, employees, open, onToggle, onHover, actions }:
           ) : (
             <>
               <SnoozeButton snoozedUntil={status.snoozedUntil} onSnooze={actions.snooze} onWake={actions.wake} />
-              <DoneButton name={who} task={r.kind.type === "task"} replies={n} disabled={busy} onDone={actions.done} />
+              {carded ? null : <DoneButton name={who} task={r.kind.type === "task"} disabled={busy} onDone={actions.done} />}
             </>
           )}
           <button className="btn btn-ghost btn-sm btn-icon" title={`Open on ${who}'s panel`} aria-label={`Open on ${who}'s panel`} onClick={() => openMember(e.id, "chat", threadFocus(r.id))}>
