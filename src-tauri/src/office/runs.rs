@@ -236,7 +236,7 @@ impl Office {
         let usage = self.usage_limits();
         let held = usage.held_until.is_some_and(|t| t > at);
         let account_ok = self.account_cached().is_some() && usage.account_issue.is_none();
-        let awake = self.0.awake.load(Ordering::Relaxed);
+        let awake = !GATE_DARK_WAKE || self.0.awake.load(Ordering::Relaxed);
         let db = self.db();
         // One unit: a run marked running here must be returned, or it would never start.
         let claimed = db.tx(|| {
@@ -938,6 +938,10 @@ enum Gate {
 /// talking with you, so it never tidies a skill the conversation is still changing; and a dark wake
 /// starts no work you are not in. A report coming back as a chat turn is not you: nobody may be
 /// watching when it lands. Pure.
+/// Off until omega.log shows its "dark wake" lines only during real dark wakes (`pmset -g log`), never
+/// while the display merely sleeps in a full wake: a wrong reading would hold every routine overnight.
+const GATE_DARK_WAKE: bool = false;
+
 fn gate(kind: &RunKind, held: bool, account_ok: bool, talking: bool, awake: bool) -> Gate {
     let background = !matches!(kind, RunKind::Chat | RunKind::Task { .. } | RunKind::Reply { .. });
     if held || (background && !account_ok) || (matches!(kind, RunKind::Tidy { .. }) && talking) || (background && !awake) {

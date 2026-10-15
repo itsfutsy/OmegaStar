@@ -225,7 +225,7 @@ impl Office {
                 // Read here, off any lock, so claiming runs never waits for ioreg.
                 let awake = tokio::task::spawn_blocking(crate::power::full_wake).await.unwrap_or(true);
                 if office.0.awake.swap(awake, Ordering::Relaxed) != awake {
-                    log!("{}", if awake { "full wake: background runs can start" } else { "dark wake: background runs wait" });
+                    log!("{}", if awake { "full wake" } else { "dark wake" });
                 }
                 if let Err(e) = office.tick(now()) {
                     log!("scheduler tick failed: {e}");
