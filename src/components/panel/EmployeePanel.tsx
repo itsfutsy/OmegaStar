@@ -5,9 +5,9 @@ import { firstName, relTime, whenInline } from "../../lib/format";
 import { useOrg } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import { openMember, openRun, type PanelTab } from "../../lib/router";
+import { Conversation } from "../../screens/Conversation";
 import { Icon } from "../Icon";
 import { Avatar, Popover, SlideOver, Tabs } from "../ui";
-import { ChatTab } from "./ChatTab";
 import { WorkTab } from "./WorkTab";
 import { SkillsTab } from "./SkillsTab";
 import { ProfileTab } from "./ProfileTab";
@@ -17,6 +17,8 @@ const TABS: { id: PanelTab; label: string }[] = [
   { id: "chat", label: "Chat" }, { id: "work", label: "Work" }, { id: "skills", label: "Skills" }, { id: "profile", label: "Profile" },
 ];
 
+/** An employee's slide-over on the org chart: who they are, then their conversations on the Chat tab (where it
+ *  opens), their Work, Skills and Profile. */
 export function EmployeePanel({ employee: e, tab, focus, onClose }: { employee: EmployeeView; tab: PanelTab | null; focus: string | null; onClose: () => void }) {
   const { snap } = useOrg();
   const current = tab ?? "chat";
@@ -40,7 +42,7 @@ export function EmployeePanel({ employee: e, tab, focus, onClose }: { employee: 
       </header>
       <Tabs tabs={TABS} value={current} onChange={(t) => openMember(e.id, t, null, true)} />
       <div className="panel-body">
-        {current === "chat" ? <ChatTab e={e} focus={focus} /> : null}
+        {current === "chat" ? <Conversation e={e} focus={focus} variant="panel" /> : null}
         {current === "work" ? <WorkTab e={e} /> : null}
         {current === "skills" ? <SkillsTab e={e} focus={focus} /> : null}
         {current === "profile" ? <ProfileTab e={e} onGone={onClose} /> : null}

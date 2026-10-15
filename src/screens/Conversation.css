@@ -1,0 +1,31 @@
+/* ------------------------------------------------ a conversation, full window or on an employee's panel */
+.convo { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.convo-wait { padding: 20px; }
+.convo-head { flex: none; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 20px; border-bottom: 1px solid var(--line); min-width: 0; }
+.convo-id { display: flex; flex-direction: column; min-width: 0; flex: 0 1 auto; }
+.convo-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.convo-sub { align-self: flex-start; max-width: 100%; font-size: var(--t-sm); color: var(--muted); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px; }
+.convo-sub:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.convo-head .state-pill { flex: none; }
+.convo-actions { flex: none; display: flex; align-items: center; gap: 4px; }
+/* The conversation fills the window, but lines stay a readable length. */
+.convo .chat-inner, .convo .composer-wrap { width: 100%; max-width: 860px; margin-left: auto; margin-right: auto; }
+
+/* ------------------------------------------------ the conversation on an employee's panel */
+.convo-panel { flex: 1; height: auto; }
+/* The panel header already says who it is, so this one is compact, and its actions wrap under the title when narrow. */
+.convo-panel .convo-head { min-height: 48px; padding: 8px 12px 8px 20px; flex-wrap: wrap; row-gap: 6px; }
+.convo-panel .convo-title { font-size: 14px; min-width: 0; flex: 0 1 auto; }
+/* With many conversations the chips stop at about three rows and the rest scroll, so the conversation keeps its room. */
+.thread-switch { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 12px 20px 10px; max-height: 123px; overflow-y: auto; border-bottom: 1px solid var(--line); }
+.thread-chip { max-width: 240px; }
+.thread-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.thread-chip-n { min-width: 16px; height: 16px; padding: 0 5px; border-radius: 999px; background: var(--sunken); color: var(--muted); font-size: 10.5px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.chip[aria-pressed="true"] .thread-chip-n { background: color-mix(in oklab, var(--canvas) 18%, transparent); color: var(--canvas); }
+.thread-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); flex: none; }
+.thread-chip-dot-live { animation: pulseDot 1.6s ease-in-out infinite; }
+.thread-chip-dot-warn { background: var(--warn); }
+.chip-new { width: 28px; padding: 0; justify-content: center; color: var(--muted); }
+.task-chip-wait { border-style: dashed; }
+.task-chip-wait:not([aria-pressed="true"]) { color: var(--muted); }
+.task-chip-wait .thread-chip-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--live); }

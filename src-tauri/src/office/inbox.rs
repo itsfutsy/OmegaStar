@@ -1,4 +1,4 @@
-//! The Inbox: threads, rows, replies, archiving and approving blocked tools.
+//! Threads and Inbox rows, replies, archiving and approving blocked tools.
 
 use super::*;
 
@@ -6,13 +6,6 @@ use super::*;
 const ARCHIVE_ROWS: u32 = 200;
 
 impl Office {
-    /// The Inbox: one row per piece of work, most recently active first. A row is a thread (a report and
-    /// your exchange on it) with the threads that belong with it in `related`: everything a hand-off
-    /// between employees set off, or a schedule's earlier failures in a row.
-    pub fn inbox(&self) -> Result<Vec<Thread>> {
-        Self::rows(&self.db(), false)
-    }
-
     /// Colleague asks still in flight, for the Inbox's "With colleagues" list.
     pub fn open_asks(&self) -> Result<Vec<Run>> {
         self.db().open_asks()
@@ -24,7 +17,7 @@ impl Office {
     }
 
     /// The employees who report to you.
-    fn top_ids(employees: &[Employee]) -> HashSet<String> {
+    pub(super) fn top_ids(employees: &[Employee]) -> HashSet<String> {
         employees.iter().filter(|e| e.manager_id.is_none()).map(|e| e.id.clone()).collect()
     }
 
@@ -41,8 +34,11 @@ impl Office {
         Some(format!("{schedule_id}@{since}"))
     }
 
-    /// The Inbox, or with `archive` the Archive, as rows (`threads::file`).
-    fn rows(db: &Store, archive: bool) -> Result<Vec<Thread>> {
+    /// The Inbox, or with `archive` the Archive, as rows (`threads::file`): one row per piece of work, most
+    /// recently active (or archived) first. A row is a thread (a report and your exchange on it) with the
+    /// threads that belong with it in `related`: everything a hand-off between employees set off, or a
+    /// schedule's earlier failures in a row.
+    pub(super) fn rows(db: &Store, archive: bool) -> Result<Vec<Thread>> {
         let employees = db.employees()?;
         let top = Self::top_ids(&employees);
         let all: Vec<String> = employees.into_iter().map(|e| e.id).collect();
@@ -101,34 +97,6 @@ impl Office {
         Self::thread_in(&self.db(), run_id)
     }
 
-    /// The employee's open threads, for their Chat tab: their tasks, oldest first so each keeps its
-    /// place, then reports you replied to, most recently active first. Archived ones are left out.
-    pub fn threads(&self, employee_id: &str) -> Result<Vec<Thread>> {
-        let db = self.db();
-        let mut grouped = threads::group(db.reply_runs(Some(employee_id))?);
-        let mut out: Vec<Thread> = db
-            .open_tasks(employee_id)?
-            .into_iter()
-            .map(|root| {
-                let replies = grouped.remove(&root.id).unwrap_or_default();
-                Thread::new(root, replies)
-            })
-            .collect();
-        let ids: Vec<String> = grouped.keys().cloned().collect();
-        let mut reports: Vec<Thread> = db
-            .runs_by_id(&ids)?
-            .into_iter()
-            .filter(|r| r.archived_at.is_none() && !matches!(r.kind, RunKind::Task { .. }))
-            .map(|root| {
-                let replies = grouped.remove(&root.id).unwrap_or_default();
-                Thread::new(root, replies)
-            })
-            .collect();
-        reports.sort_by_key(|t| std::cmp::Reverse(threads::activity_at(&t.root, &t.replies)));
-        out.extend(reports);
-        Ok(out)
-    }
-
     /// The briefs left for the employee's current chat conversation, oldest first.
     pub fn chat_briefs(&self, employee_id: &str) -> Result<Vec<Brief>> {
         let db = self.db();
@@ -162,7 +130,7 @@ impl Office {
     }
 
     /// Archives a report with its thread and the rest of its Inbox row (they leave the Inbox and the
-    /// Chat tab), or moves them all back. Archiving a thread you replied in, or a task, leaves a brief
+    /// employee's chips), or moves them all back. Archiving a thread you replied in, or a task, leaves a brief
     /// for its employee's ongoing chat, unless `brief` is `Some(false)`. `run_id` may be any run in the row.
     pub fn set_archived(&self, run_id: &str, archived: bool, brief: Option<bool>) -> Result<Run> {
         let (root, changed, briefed) = {

@@ -11,7 +11,6 @@
 .item-open { background: var(--sunken); }
 .item-open .item-head { border-radius: 10px 10px 0 0; }
 .item-head:focus-visible { box-shadow: var(--focus); }
-.item-noav { width: 30px; height: 30px; flex: none; }
 .item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .item-context { font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-context b { font-weight: 600; }
@@ -31,39 +30,25 @@
 .item-side { flex: none; display: flex; align-items: center; gap: 8px; padding-top: 2px; }
 .item-when { font-size: var(--t-sm); white-space: nowrap; }
 .item-actions { position: absolute; top: 8px; right: 12px; display: flex; gap: 2px; padding: 2px; border-radius: 9px; border: 1px solid var(--line-card); background: var(--surface); box-shadow: var(--shadow-float); opacity: 0; pointer-events: none; transition: opacity var(--d-ui) var(--ease); }
-.item-head:hover .item-actions, .item-head:focus-within .item-actions { opacity: 1; pointer-events: auto; }
-.item-detail { padding: 4px 14px 14px 54px; border-radius: 0 0 10px 10px; }
-.item-meta { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.item-meta .pill { height: 20px; font-size: var(--t-xs); }
-.item-reply { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
-.item-reply .textarea { min-height: 56px; background: var(--surface); }
-.item-hint { font-size: var(--t-sm); }
+.item-head:hover .item-actions, .item-head:focus-within .item-actions, .item-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+/* An open row's head keeps its actions in line, in place of when it moved. */
+.item-open .item-side { display: none; }
+.item-open .item-actions { position: static; align-self: center; opacity: 1; pointer-events: auto; padding: 0; border: 0; background: none; box-shadow: none; }
+/* The open row's thread: the same conversation as on the employee's panel, as a card inside the row. */
+.item-thread { margin: 0 8px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
 
 .report-new { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
-.report-body { position: relative; font-size: var(--t-base); }
-.report-body .md { font-size: var(--t-base); line-height: 1.65; }
 .report-grew { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-sm); color: var(--ok-text); }
 .report-needs { list-style: none; margin: 4px 0 12px; padding: 9px 12px; display: flex; flex-direction: column; gap: 6px; border-radius: 10px; background: var(--warn-soft); }
 .report-needs li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; }
 .report-needs svg { flex: none; margin-top: 3px; color: var(--warn); }
-@media (max-width: 560px) { .item-detail { padding-left: 14px; } }
 
-/* ------------------------------------------------ the thread under a report */
+/* ------------------------------------------------ a row's history, at the top of its thread */
 .thread-strip { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
 .thread-strip-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--line); font-size: var(--t-sm); color: var(--muted); }
 .thread-strip-head > svg { color: var(--muted); flex: none; }
 .thread-strip-title { font-weight: 600; color: var(--ink); }
 .thread-strip-toggle { margin-left: 4px; height: 22px; padding: 0 6px; color: var(--muted); }
-.thread-reply { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
-.thread-reply + .thread-reply { border-top: 1px solid var(--line); }
-.thread-reply-you { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
-.thread-reply-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
-.thread-reply-them { display: flex; gap: 8px; align-items: flex-start; }
-.thread-reply-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.thread-reply-who { font-weight: 600; font-size: var(--t-sm); color: var(--ink); flex: none; }
-.thread-reply-when { font-size: var(--t-xs); white-space: nowrap; }
-.thread-reply-md.md { font-size: 13px; line-height: 1.55; }
-.thread-reply-live { align-self: flex-start; height: 20px; font-size: var(--t-xs); }
 
 /* ------------------------------------------------ a row's other runs: a hand-off, or failures in a row */
 .item-avs { position: relative; width: 30px; height: 30px; flex: none; }

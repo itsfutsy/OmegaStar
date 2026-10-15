@@ -3,7 +3,7 @@ import { call, errorMessage } from "../api/client";
 import type { EmployeeView, HireProposal, OrgSnapshot } from "../api/types";
 import { firstName, relTime } from "../lib/format";
 import { toast } from "../lib/toasts";
-import { openMember, openRun } from "../lib/router";
+import { openChat, openRun } from "../lib/router";
 import { Icon } from "./Icon";
 import { Avatar, ErrorNote } from "./ui";
 import "./RequestCard.css";
@@ -43,7 +43,7 @@ export function ProposalCard({ p, proposer, snap, onReview }: {
       <header className="req-head">
         {proposer ? <Avatar name={proposer.name} hue={proposer.hue} size={20} /> : null}
         <span className="req-who">
-          <button className="req-name" onClick={() => proposer && openMember(proposer.id, "chat")}>{who}</button>
+          <button className="req-name" onClick={() => proposer && openChat(proposer.id)}>{who}</button>
           <span className="muted"> wants to hire</span>
           <span className="faint"> · {relTime(p.createdAt)}</span>
         </span>

@@ -180,6 +180,19 @@ export type NewAttachment = { name: string; data: string /* base64 */ };
  *  and `related` holds the row's other threads, oldest first: the rest of a hand-off, or a schedule's earlier
  *  failures in a row. Empty elsewhere. */
 export type Thread = { root: Run; replies: Run[]; related: Thread[] };
+/** Where an employee's ongoing chat stands: read from its current session's turns. */
+export type ChatHead = {
+  employeeId: string;
+  lastEndedAt: string | null;  // when the newest finished turn ended
+  live: boolean;               // a turn is running
+  queued: boolean;             // a turn is waiting to start
+};
+/** Every conversation across the office, for the Inbox and each employee's chips. */
+export type Conversations = {
+  threads: Thread[];           // open threads of every employee, one per root, most recently active first
+  inbox: string[];             // root ids of the threads that lead an Inbox row: reports that reached you
+  chats: ChatHead[];           // one per current employee
+};
 /** What an employee's ongoing chat is told about a thread or task you archived; the chat shows it as a card. */
 export type Brief = {
   id: string; employeeId: string; rootRunId: string;
@@ -293,12 +306,11 @@ export type Commands = {
   chat: { args: { employeeId: string }; ret: Run[] };
   runs: { args: { employeeId: string | null; limit: number }; ret: Run[] };
   run_detail: { args: { runId: string }; ret: RunDetail };
-  inbox: { args: Record<string, never>; ret: Thread[] };
   archived: { args: Record<string, never>; ret: Thread[] };
+  /** Every open thread, which of them lead an Inbox row, and each employee's ongoing chat. */
+  conversations: { args: Record<string, never>; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
-  /** The employee's open threads, not archived: their tasks oldest first, then reports you replied to, most recently active first. */
-  threads: { args: { employeeId: string }; ret: Thread[] };
   /** Briefs left for the employee's current chat conversation, oldest first. */
   chat_briefs: { args: { employeeId: string }; ret: Brief[] };
   /** Archives a thread (any run in it) or moves it back. Archiving one you replied in briefs the ongoing chat unless `brief: false`. */

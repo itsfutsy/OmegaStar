@@ -18,13 +18,13 @@ export function groupByDay(runs: Run[]): { day: string; runs: Run[] }[] {
   return out;
 }
 
-/** What an employee does: their schedules, then every run, live ones first. Chat turns stay in the Chat tab. */
+/** What an employee does: their schedules, then every run, live ones first. Chat turns stay in their ongoing chat. */
 export function WorkTab({ e }: { e: EmployeeView }) {
   const { snap } = useOrg();
   const [editing, setEditing] = useState<ScheduleDraft | null>(null);
   const q = useQuery(() => call("runs", { employeeId: e.id, limit: 100 }), [e.id], ["run:updated"]);
   // Anything going right now, whichever lane it is in: asking for work in chat is how most of it starts.
-  // Everything else is history, and finished chat turns stay in the Chat tab.
+  // Everything else is history, and finished chat turns stay in the ongoing chat.
   const live = useMemo(() => (q.data ?? []).filter((r) => r.state === "running" || r.state === "queued"), [q.data]);
   const work = useMemo(() => (q.data ?? []).filter((r) => r.kind.type !== "chat"), [q.data]);
   const groups = useMemo(() => groupByDay(work.filter((r) => !live.includes(r))), [work, live]);

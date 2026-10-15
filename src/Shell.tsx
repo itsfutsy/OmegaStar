@@ -1,6 +1,5 @@
 // The app once you have a company: sidebar, the current page, and the sheets and palette any page can open.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { call } from "./api/client";
 import type { HireProposal } from "./api/types";
 import { Icon, LogoMark, type IconName } from "./components/Icon";
 import { CommandPalette } from "./components/CommandPalette";
@@ -9,13 +8,14 @@ import { AddPersonSheet } from "./components/AddPersonSheet";
 import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
 import { Avatar } from "./components/ui";
+import { usePruneMarks, useStatuses } from "./components/conversation/useStatuses";
 import { firstName, initials } from "./lib/format";
 import { openMember, openYou, useRoute } from "./lib/router";
 import { YOU_ID } from "./lib/org";
-import { useOrg, useProposals, useQuery } from "./lib/hooks";
+import { useOrg, useProposals } from "./lib/hooks";
 import { storageGet, storageSet } from "./lib/storage";
-import { activityAt, lastFrom } from "./lib/threads";
 import { OrgScreen } from "./screens/Org";
+import { ConversationScreen } from "./screens/Conversation";
 import { InboxScreen } from "./screens/Inbox";
 import { ActivityScreen } from "./screens/Activity";
 import { SettingsScreen } from "./screens/Settings";
@@ -37,8 +37,6 @@ export const useShell = () => useContext(ShellCtx);
 
 const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 const COLLAPSE_KEY = "omega.sidebarCollapsed";
-// The newest Inbox activity you have seen. Threads that moved since, with the employee speaking last, are new.
-const INBOX_SEEN_KEY = "omega.inboxSeen";
 
 export function Shell() {
   const route = useRoute();
@@ -48,8 +46,8 @@ export function Shell() {
   const [sheetKey, setSheetKey] = useState(0);
   const [palette, setPalette] = useState(false);
   const [collapsed, setCollapsed] = useState(() => storageGet(COLLAPSE_KEY) === "1");
-  const inbox = useQuery(() => call("inbox"), [], ["run:updated"]);
-  const [seen, setSeen] = useState(() => storageGet(INBOX_SEEN_KEY) ?? new Date(Date.now() - 86_400_000).toISOString());
+  const { items } = useStatuses();
+  usePruneMarks();
 
   const api = useMemo<ShellApi>(() => {
     const open = (s: Sheet) => { setSheet(s); setSheetKey((k) => k + 1); };
@@ -68,17 +66,10 @@ export function Shell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  // Looking at the Inbox sees everything in it.
-  const onInbox = route.page === "inbox";
-  const newest = inbox.data?.[0] ? activityAt(inbox.data[0]) : null;
-  useEffect(() => {
-    if (onInbox && newest && newest > seen) { storageSet(INBOX_SEEN_KEY, newest); setSeen(newest); }
-  }, [onInbox, newest, seen]);
-
   const proposals = useProposals();
   const waiting = (snap?.people ?? []).reduce((s, p) => s + p.openRequests, 0) + (proposals ?? []).filter((p) => p.state === "open").length;
-  const unreadReports = onInbox ? 0 : (inbox.data ?? []).filter((t) => activityAt(t) > seen && lastFrom(t) !== "you").length;
-  const inboxCount = waiting + unreadReports;
+  const unread = (items ?? []).filter((i) => i.status.inbox && i.status.unread).length;
+  const inboxCount = waiting + unread;
 
   const closeSheet = useCallback(() => setSheet(null), []);
   const toggleCollapsed = () => setCollapsed((c) => { storageSet(COLLAPSE_KEY, c ? "0" : "1"); return !c; });
@@ -87,7 +78,8 @@ export function Shell() {
   let page: ReactNode;
   switch (route.page) {
     case "org": page = <OrgScreen route={route} />; break;
-    case "inbox": page = <InboxScreen inbox={inbox} seen={seen} />; break;
+    case "chat": page = <ConversationScreen route={route} />; break;
+    case "inbox": page = <InboxScreen />; break;
     case "activity": page = <ActivityScreen view={route.view} />; break;
     case "settings": page = <SettingsScreen />; break;
     case "run": page = <RunView key={route.runId} runId={route.runId} />; break;
@@ -168,6 +160,7 @@ export function Shell() {
   );
 }
 
+/** One of the sidebar's pages, with an optional count; its name moves to a tooltip when the sidebar is collapsed. */
 function NavItem({ href, icon, label, active, badge, collapsed }: { href: string; icon: IconName; label: string; active: boolean; badge?: number | null; collapsed: boolean }) {
   return (
     <a href={href} className={`side-item ${active ? "side-item-on" : ""}`} aria-current={active ? "page" : undefined} data-tip={collapsed ? (badge ? `${label} · ${badge}` : label) : undefined}>

@@ -42,7 +42,7 @@ export function ActivityScreen({ view }: { view: ActivityView }) {
 function Runs({ who, name, employees }: { who: string | null; name: string | null; employees: EmployeeView[] }) {
   const { snap } = useOrg();
   const q = useQuery(() => call("runs", { employeeId: null, limit: 300 }), [], ["run:updated"]);
-  // Chat turns stay in each employee's Chat tab.
+  // Chat turns stay in each employee's ongoing chat.
   const runs = useMemo(() => (q.data ?? []).filter((r) => (who === null || r.employeeId === who) && r.kind.type !== "chat"), [q.data, who]);
   const groups = useMemo(() => groupByDay(runs), [runs]);
 

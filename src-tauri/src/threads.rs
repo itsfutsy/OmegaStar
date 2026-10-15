@@ -1,7 +1,7 @@
 //! Threads: a report and the replies you exchanged on it. A thread is a root run plus every Reply run
 //! whose `to_run_id` is that root. These are pure functions over runs; the Office loads the runs and
-//! the Inbox, the Archive and the Chat tab all show the same threads. A task is a thread too: its root
-//! is your first message rather than a report, and it lives only in the Chat tab.
+//! the Inbox, the Archive and each employee's chips show the same threads. A task is a thread too: its root
+//! is your first message rather than a report, and it is never filed into an Inbox row.
 //!
 //! Inbox rows group threads that belong together, so you see one row per piece of work rather than
 //! one per run: a report with everything it set off in conversation, or an ask a report made with
@@ -77,7 +77,7 @@ pub fn broke(r: &Run) -> bool {
 /// Whether a finished run reaches your Inbox. `quiet_chain`: it is part of a hand-off a quiet report
 /// started, so like that report it speaks up only when it flags something or breaks. `top`: its
 /// employee reports to you; an agent below another agent reports to that manager unless it flags you.
-/// A task never does: you follow it in the employee's Chat tab.
+/// A task never does: you follow it as a conversation of its own.
 pub fn reaches_you(r: &Run, quiet_chain: bool, top: bool) -> bool {
     if r.kind.lane() != Lane::Work || matches!(r.kind, RunKind::Reply { .. } | RunKind::ReplyCheck { .. } | RunKind::Task { .. }) || !r.state.is_finished() {
         return false;

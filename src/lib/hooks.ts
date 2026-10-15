@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call, errorMessage, subscribe } from "../api/client";
-import type { EventName, HireProposal, OrgSnapshot, Run, SkillInfo, SkillSources, UsageLimits } from "../api/types";
+import type { Conversations, EventName, HireProposal, OrgSnapshot, Run, SkillInfo, SkillSources, UsageLimits } from "../api/types";
 import { createStore, useStore } from "./store";
 import { applyChild, applyEvents, applyRun, emptyLiveRun, isChildOf, liveRunOf, type LiveRun } from "./runs";
 import { toast } from "./toasts";
@@ -71,6 +71,37 @@ function wireOrg() {
 export function useOrg(): OrgState {
   useEffect(wireOrg, []);
   return useStore(org);
+}
+
+// ---------------------------------------------------------------- conversations (shared)
+
+type ConversationsState = { data: Conversations | null; error: string | null };
+const conversations = createStore<ConversationsState>({ data: null, error: null });
+let conversationsWired = false;
+let conversationsSeq = 0;
+
+/** Rereads every conversation. */
+function refreshConversations() {
+  const n = ++conversationsSeq;
+  call("conversations").then(
+    (data) => { if (n === conversationsSeq) conversations.set({ data, error: null }); },
+    (e) => { if (n === conversationsSeq) conversations.set({ data: conversations.get().data, error: errorMessage(e) }); },
+  );
+}
+function wireConversations() {
+  if (conversationsWired) return;
+  conversationsWired = true;
+  let t: number | undefined;
+  const kick = () => { window.clearTimeout(t); t = window.setTimeout(refreshConversations, 120); };
+  subscribe("run:updated", kick);
+  subscribe("org:changed", kick);
+  refreshConversations();
+}
+
+/** Every conversation across the office, for the Inbox and each employee's chips; one read shared by every reader. */
+export function useConversations(): ConversationsState {
+  useEffect(wireConversations, []);
+  return useStore(conversations);
 }
 
 // ---------------------------------------------------------------- skill catalog + sources (shared)
