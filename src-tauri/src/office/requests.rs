@@ -455,7 +455,7 @@ has to start that work, hand it back with what they need to start it instead of 
         self.publish(&changed, &[], &notices);
 
         let program = claude::locate(settings.claude_path.as_deref());
-        let proxy_env = settings.proxy.env();
+        let proxy_env = self.proxy_env(&settings.proxy);
         let cwd = self.0.data_dir.join("judge");
         if !judging.is_empty() {
             fs::create_dir_all(&cwd)?;

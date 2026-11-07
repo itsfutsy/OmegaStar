@@ -5,6 +5,8 @@ use super::*;
 /// The first transcript sweep, a while after launch, and the time between sweeps.
 const SWEEP_FIRST: Duration = Duration::from_secs(300);
 const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+const SKIP_SIGN_IN_FOR: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+const TELL_AGAIN_AFTER: chrono::TimeDelta = chrono::TimeDelta::days(1);
 
 impl Office {
     pub fn company(&self) -> Result<Option<Company>> {
@@ -393,6 +395,26 @@ impl Office {
         }
     }
 
+    pub(super) fn proxy_env(&self, proxy: &ProxySettings) -> Vec<(String, String)> {
+        if lock(&self.0.sign_in_expired_at).is_some_and(|t| now() - t < SKIP_SIGN_IN_FOR) {
+            proxy.pool_env()
+        } else {
+            proxy.env()
+        }
+    }
+
+    pub(super) fn sign_in_expired(&self) {
+        let at = now();
+        let last = lock(&self.0.sign_in_expired_at).replace(at);
+        if last.is_none_or(|t| at - t > TELL_AGAIN_AFTER) {
+            log!("Claude Code's sign-in expired: runs go through the proxy's accounts");
+            self.sink().notify(
+                "Claude Code's sign-in expired",
+                "Runs carry on through the proxy's accounts, without Claude in Chrome. Run claude auth login in Terminal to sign in again.",
+            );
+        }
+    }
+
     /// Holds the office until `until`, when the usage limit resets or a rate limit has had time to ease: no run
     /// starts before then. Tells you once, when the hold is new.
     pub(super) fn hold_until(&self, until: Ts, why: Limit) {
@@ -417,6 +439,7 @@ impl Office {
             match why {
                 Limit::Usage => self.sink().notify("Waiting for the usage limit", &format!("Work starts again at {time}, when the limit resets.")),
                 Limit::Transient => self.sink().notify("Waiting out a rate limit", &format!("Claude is turning requests away for now, so work starts again at {time}.")),
+                Limit::SignIn => {}
             }
         }
     }
@@ -629,6 +652,45 @@ mod tests {
         fn run_updated(&self, _run: &Run) {}
         fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
         fn request_updated(&self, _request: &HumanRequest) {}
+    }
+
+    #[derive(Default)]
+    struct NoticeCount(std::sync::atomic::AtomicUsize);
+    impl EventSink for NoticeCount {
+        fn org_changed(&self) {}
+        fn run_updated(&self, _run: &Run) {}
+        fn run_events(&self, _run_id: &str, _events: &[RunEvent]) {}
+        fn request_updated(&self, _request: &HumanRequest) {}
+        fn notify(&self, _title: &str, _body: &str) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expired_sign_in_sends_runs_through_the_proxys_accounts_and_tells_you_once() {
+        let dir = std::env::temp_dir().join(format!("omegastar-sign-in-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let told = Arc::new(NoticeCount::default());
+        let office = Office::open(dir.clone(), told.clone(), Build::new("0.0.0".into())).await.unwrap();
+        let proxy = ProxySettings { url: "http://127.0.0.1:8317".into(), api_key: "k1".into(), management_key: String::new() };
+        let told_times = || told.0.load(Ordering::SeqCst);
+        assert_eq!(office.proxy_env(&proxy), proxy.env());
+
+        office.sign_in_expired();
+        office.sign_in_expired();
+        assert_eq!(office.proxy_env(&proxy), proxy.pool_env());
+        assert_eq!(told_times(), 1);
+
+        *lock(&office.0.sign_in_expired_at) = Some(now() - chrono::Duration::minutes(31));
+        assert_eq!(office.proxy_env(&proxy), proxy.env(), "after a while, a run tries the sign-in again");
+        office.sign_in_expired();
+        assert_eq!(told_times(), 1, "still expired: nothing new to tell");
+
+        *lock(&office.0.sign_in_expired_at) = Some(now() - chrono::Duration::days(2));
+        office.sign_in_expired();
+        assert_eq!(told_times(), 2, "expired again long after: you hear it again");
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

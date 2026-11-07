@@ -1956,12 +1956,21 @@ impl ProxySettings {
     /// goes in a header because ANTHROPIC_AUTH_TOKEN would replace the claude.ai sign-in, and
     /// Claude in Chrome and claude.ai connectors only load with that sign-in.
     pub fn env(&self) -> Vec<(String, String)> {
+        self.env_with("ANTHROPIC_CUSTOM_HEADERS", format!("x-api-key: {}", self.api_key))
+    }
+
+    /// As `env`, with the key as ANTHROPIC_AUTH_TOKEN in place of the claude.ai sign-in.
+    pub fn pool_env(&self) -> Vec<(String, String)> {
+        self.env_with("ANTHROPIC_AUTH_TOKEN", self.api_key.clone())
+    }
+
+    fn env_with(&self, key_var: &str, key: String) -> Vec<(String, String)> {
         if self.url.is_empty() {
             return vec![];
         }
         let mut env = vec![("ANTHROPIC_BASE_URL".to_string(), self.url.clone())];
         if !self.api_key.is_empty() {
-            env.push(("ANTHROPIC_CUSTOM_HEADERS".into(), format!("x-api-key: {}", self.api_key)));
+            env.push((key_var.into(), key));
         }
         env
     }
@@ -2417,8 +2426,10 @@ mod tests {
         let proxy = ProxySettings { url: "http://127.0.0.1:8317".into(), api_key: "k1".into(), management_key: String::new() };
         let env = |vars: &[(&str, &str)]| vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
         assert_eq!(proxy.env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"), ("ANTHROPIC_CUSTOM_HEADERS", "x-api-key: k1")]));
+        assert_eq!(proxy.pool_env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"), ("ANTHROPIC_AUTH_TOKEN", "k1")]));
         let keyless = ProxySettings { api_key: String::new(), ..proxy };
         assert_eq!(keyless.env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]));
         assert!(ProxySettings::default().env().is_empty());
+        assert!(ProxySettings::default().pool_env().is_empty());
     }
 }

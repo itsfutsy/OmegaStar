@@ -25,6 +25,8 @@ pub enum Limit {
     Usage,
     /// Claude, or a proxy in front of it, turning requests away for now (HTTP 429 or 529) with no time it resets.
     Transient,
+    /// Claude Code's own claude.ai sign-in expired or was revoked.
+    SignIn,
 }
 
 impl Limit {
@@ -32,6 +34,7 @@ impl Limit {
         match self {
             Limit::Usage => "the usage limit",
             Limit::Transient => "a rate limit",
+            Limit::SignIn => "an expired sign-in",
         }
     }
 }
@@ -162,6 +165,10 @@ fn limit_of(v: &Value, ok: bool) -> Option<Limit> {
         return Some(Limit::Usage);
     }
     let text = v["result"].as_str().unwrap_or("");
+    // Claude Code's words for a sign-in it cannot use; an API's refusal reads "Failed to authenticate. API Error".
+    if !ok && text.starts_with("Failed to authenticate: ") {
+        return Some(Limit::SignIn);
+    }
     let turned_away = matches!(v["api_error_status"].as_u64(), Some(429 | 529)) || TURNED_AWAY.iter().any(|t| text.contains(t));
     (!ok && turned_away).then_some(Limit::Transient)
 }
@@ -1065,6 +1072,16 @@ mod tests {
         let older = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1800000000,"rateLimitType":"five_hour"},"session_id":"sess-9"}"#;
         let p = parse_line(older, home());
         assert!(p.limited.is_some() && !p.throttled);
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_a_limit_of_its_own() {
+        let partway = r#"{"type":"result","subtype":"success","is_error":true,"num_turns":12,"duration_ms":90000,"duration_api_ms":84000,"result":"Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login` to sign in again.","permission_denials":[],"terminal_reason":"api_error","session_id":"sess-11"}"#;
+        assert_eq!(last_outcome(partway).limit, Some(Limit::SignIn), "partway through a run");
+        let at_start = r#"{"type":"result","subtype":"success","is_error":true,"num_turns":1,"duration_ms":150,"duration_api_ms":0,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","permission_denials":[],"session_id":"sess-12"}"#;
+        assert_eq!(last_outcome(at_start).limit, Some(Limit::SignIn), "before the run asked Claude anything");
+        let refused = r#"{"type":"result","subtype":"success","is_error":true,"num_turns":1,"duration_ms":400,"duration_api_ms":380,"result":"Failed to authenticate. API Error: 401 invalid api key","permission_denials":[],"api_error_status":401,"session_id":"sess-13"}"#;
+        assert_eq!(last_outcome(refused).limit, None, "a proxy turning down its key is no fault of the sign-in");
     }
 
     #[test]

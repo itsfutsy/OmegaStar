@@ -546,7 +546,7 @@ impl Office {
             employee_dir,
             run_dir: self.run_dir(&run.id),
             mcp_url: format!("http://127.0.0.1:{}/mcp/{token}", self.0.mcp_port),
-            proxy_env: settings.as_ref().map(|s| s.proxy.env()).unwrap_or_default(),
+            proxy_env: settings.as_ref().map(|s| self.proxy_env(&s.proxy)).unwrap_or_default(),
             company,
             employee: e,
             manager,
@@ -617,6 +617,7 @@ impl Office {
                 self.hold_until(reset.unwrap_or_else(|| now() + chrono::Duration::minutes(15)), Limit::Usage);
             }
             Some(Limit::Transient) => self.hold_for_transient_limit(),
+            Some(Limit::SignIn) => self.sign_in_expired(),
             None => {}
         }
         if let Some(limit) = requeue_for_limit(limit, &run) {
@@ -729,8 +730,7 @@ impl Office {
         self.sink().org_changed();
     }
 
-    /// Puts a run a limit stopped back in the queue with what it changed so far. `execute` has already held
-    /// the office until the limit resets or the rate limit has had time to ease.
+    /// Puts a run a limit stopped back in the queue with what it changed so far.
     fn requeue_after_limit(&self, mut run: Run, e: Ended, limit: Limit) {
         // Recorded from the attempt that saw them, which `reset_for_requeue` forgets.
         let since = run.started_at.unwrap_or(run.created_at);
@@ -1128,7 +1128,7 @@ impl Office {
         let denied = outcome.as_ref().map(|o| o.denials.clone()).unwrap_or_default();
         let (blocks, mut notes) = signals.sort_denials(denied, |d| covered(&snap.employee, &rules, d), !run.kind.is_conversation());
         notes.extend(omega_notes);
-        Ok(Ended { outcome, exit, stderr, changes, limited, blocks, notes, context, claude_version, cost })
+        Ok(Ended { outcome, exit, stderr, changes, limited, proxied, blocks, notes, context, claude_version, cost })
     }
 
     /// The session's running cost total before this attempt, as Claude Code last reported it: in an earlier attempt
@@ -1282,6 +1282,8 @@ struct Ended {
     changes: Vec<Seen>,
     /// The usage limit stopped it; it resets then.
     limited: Option<Ts>,
+    /// It went through the CLI proxy, whose own accounts can stand in for an expired sign-in.
+    proxied: bool,
     /// The denials that really blocked it.
     blocks: Vec<Denial>,
     /// Lines for its report, such as a safety check that stopped a step.
@@ -1354,22 +1356,22 @@ fn gate(run: &Run, held: bool, account_ok: bool, busy: bool, awake: bool) -> Gat
 /// the result names it: older Claude Code builds report the usage limit as a bare 429. Pure.
 fn hit_limit(cancelled: bool, ended: &Result<Ended>) -> Option<Limit> {
     match ended {
-        Ok(Ended { outcome: Some(o), limited, .. }) if !cancelled && !o.ok => match o.limit? {
+        Ok(Ended { outcome: Some(o), limited, proxied, .. }) if !cancelled && !o.ok => match o.limit? {
             Limit::Transient if limited.is_some() => Some(Limit::Usage),
+            Limit::SignIn if !proxied => None,
             limit => Some(limit),
         },
         _ => None,
     }
 }
 
-/// Times a run goes back to the queue for the usage limit, and, counted apart, for a rate limit.
-const USAGE_RETRIES: u32 = 3;
+const LIMIT_RETRIES: u32 = 3;
 const TRANSIENT_RETRIES: u32 = 8;
 
 /// The limit a run goes back to the queue for, while it has retries left for that kind. Pure.
 fn requeue_for_limit(limit: Option<Limit>, run: &Run) -> Option<Limit> {
     limit.filter(|l| match l {
-        Limit::Usage => run.limit_retries.saturating_sub(run.transient_retries) < USAGE_RETRIES,
+        Limit::Usage | Limit::SignIn => run.limit_retries.saturating_sub(run.transient_retries) < LIMIT_RETRIES,
         Limit::Transient => run.transient_retries < TRANSIENT_RETRIES,
     })
 }
@@ -1412,6 +1414,8 @@ fn error_class(run: &Run, limit: Option<Limit>) -> &'static str {
         "usage limit"
     } else if limit == Some(Limit::Transient) {
         "rate limit"
+    } else if limit == Some(Limit::SignIn) {
+        "expired sign-in"
     } else if error.contains("No space left on device") {
         "disk full"
     } else if error.starts_with("could not start Claude Code") || error.starts_with("Claude Code was not found") {
@@ -1681,7 +1685,7 @@ mod tests {
     }
 
     fn ended(o: Option<Outcome>, stderr: &str) -> Result<Ended> {
-        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
+        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, proxied: true, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
     }
 
     /// A temp store in its own folder.
@@ -2302,6 +2306,21 @@ mod tests {
     }
 
     #[test]
+    fn an_expired_sign_in_shares_the_usage_limits_retries() {
+        let expired = ended(Some(outcome(false, "success", "Failed to authenticate: OAuth token revoked.", Some(Limit::SignIn))), "");
+        let mut run = Run::new("e1", RunKind::Manual, "go".into(), now());
+        for _ in 0..LIMIT_RETRIES {
+            assert_eq!(requeue_for_limit(hit_limit(false, &expired), &run), Some(Limit::SignIn));
+            reset_for_requeue(&mut run, &[], Limit::SignIn);
+        }
+        assert_eq!(requeue_for_limit(hit_limit(false, &expired), &run), None);
+        let direct = expired.map(|e| Ended { proxied: false, ..e });
+        assert_eq!(hit_limit(false, &direct), None, "with no proxy, nothing can stand in for the sign-in");
+        run.state = RunState::Failed;
+        assert_eq!(error_class(&run, Some(Limit::SignIn)), "expired sign-in");
+    }
+
+    #[test]
     fn each_limit_has_its_own_retries() {
         let usage = ended(Some(outcome(false, "success", "You have hit your limit.", Some(Limit::Usage))), "");
         let rate = ended(Some(outcome(false, "success", "API Error: Server is temporarily limiting requests.", Some(Limit::Transient))), "");
@@ -2311,7 +2330,7 @@ mod tests {
             reset_for_requeue(&mut run, &[], Limit::Transient);
         }
         assert_eq!(requeue_for_limit(hit_limit(false, &rate), &run), None, "eight rate limits, then it fails");
-        for _ in 0..USAGE_RETRIES {
+        for _ in 0..LIMIT_RETRIES {
             assert_eq!(requeue_for_limit(hit_limit(false, &usage), &run), Some(Limit::Usage), "rate limits never use up the usage limit's retries");
             reset_for_requeue(&mut run, &[], Limit::Usage);
         }

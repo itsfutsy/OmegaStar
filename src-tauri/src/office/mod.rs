@@ -153,6 +153,7 @@ struct Inner {
     crashed: bool,
     /// The last `claude auth status` and when it was checked; `None` until the first check.
     account: Mutex<Option<(Ts, Option<Account>)>>,
+    sign_in_expired_at: Mutex<Option<Ts>>,
     /// The Mac is in a full wake, not a Power Nap dark wake: background runs may start.
     awake: AtomicBool,
     /// Quit has begun: runs it kills stay running for the next start to put back in the queue, and none start.
@@ -241,6 +242,7 @@ impl Office {
             build,
             crashed,
             account: Mutex::new(None),
+            sign_in_expired_at: Mutex::new(None),
             awake: AtomicBool::new(true),
             closing: AtomicBool::new(false),
             company_saved: Mutex::new(None),
