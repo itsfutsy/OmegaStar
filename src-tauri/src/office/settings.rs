@@ -6,7 +6,7 @@ use super::*;
 const SWEEP_FIRST: Duration = Duration::from_secs(300);
 const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const SKIP_SIGN_IN_FOR: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
-const TELL_AGAIN_AFTER: chrono::TimeDelta = chrono::TimeDelta::days(1);
+const NEW_LAPSE_AFTER: chrono::TimeDelta = chrono::TimeDelta::days(1);
 
 impl Office {
     pub fn company(&self) -> Result<Option<Company>> {
@@ -406,7 +406,7 @@ impl Office {
     pub(super) fn sign_in_expired(&self) {
         let at = now();
         let last = lock(&self.0.sign_in_expired_at).replace(at);
-        if last.is_none_or(|t| at - t > TELL_AGAIN_AFTER) {
+        if last.is_none_or(|t| at - t > NEW_LAPSE_AFTER) {
             log!("Claude Code's sign-in expired: runs go through the proxy's accounts");
             self.sink().notify(
                 "Claude Code's sign-in expired",

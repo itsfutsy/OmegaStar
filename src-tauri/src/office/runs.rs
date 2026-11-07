@@ -753,6 +753,7 @@ impl Office {
         }
         self.sink().run_updated(&run);
         self.sink().org_changed();
+        self.pump();
     }
 
     /// Holds the office for a rate limit: 5 minutes for the first since a run last succeeded, then longer each
@@ -1128,7 +1129,8 @@ impl Office {
         let denied = outcome.as_ref().map(|o| o.denials.clone()).unwrap_or_default();
         let (blocks, mut notes) = signals.sort_denials(denied, |d| covered(&snap.employee, &rules, d), !run.kind.is_conversation());
         notes.extend(omega_notes);
-        Ok(Ended { outcome, exit, stderr, changes, limited, proxied, blocks, notes, context, claude_version, cost })
+        let pool = self.settings().is_ok_and(|s| s.proxy.has_pool());
+        Ok(Ended { outcome, exit, stderr, changes, limited, pool, blocks, notes, context, claude_version, cost })
     }
 
     /// The session's running cost total before this attempt, as Claude Code last reported it: in an earlier attempt
@@ -1282,8 +1284,8 @@ struct Ended {
     changes: Vec<Seen>,
     /// The usage limit stopped it; it resets then.
     limited: Option<Ts>,
-    /// It went through the CLI proxy, whose own accounts can stand in for an expired sign-in.
-    proxied: bool,
+    /// The CLI proxy's own accounts could take it in place of Claude Code's sign-in.
+    pool: bool,
     /// The denials that really blocked it.
     blocks: Vec<Denial>,
     /// Lines for its report, such as a safety check that stopped a step.
@@ -1356,9 +1358,9 @@ fn gate(run: &Run, held: bool, account_ok: bool, busy: bool, awake: bool) -> Gat
 /// the result names it: older Claude Code builds report the usage limit as a bare 429. Pure.
 fn hit_limit(cancelled: bool, ended: &Result<Ended>) -> Option<Limit> {
     match ended {
-        Ok(Ended { outcome: Some(o), limited, proxied, .. }) if !cancelled && !o.ok => match o.limit? {
+        Ok(Ended { outcome: Some(o), limited, pool, .. }) if !cancelled && !o.ok => match o.limit? {
             Limit::Transient if limited.is_some() => Some(Limit::Usage),
-            Limit::SignIn if !proxied => None,
+            Limit::SignIn if !pool => None,
             limit => Some(limit),
         },
         _ => None,
@@ -1685,7 +1687,7 @@ mod tests {
     }
 
     fn ended(o: Option<Outcome>, stderr: &str) -> Result<Ended> {
-        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, proxied: true, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
+        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, pool: true, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
     }
 
     /// A temp store in its own folder.
@@ -2314,8 +2316,8 @@ mod tests {
             reset_for_requeue(&mut run, &[], Limit::SignIn);
         }
         assert_eq!(requeue_for_limit(hit_limit(false, &expired), &run), None);
-        let direct = expired.map(|e| Ended { proxied: false, ..e });
-        assert_eq!(hit_limit(false, &direct), None, "with no proxy, nothing can stand in for the sign-in");
+        let direct = expired.map(|e| Ended { pool: false, ..e });
+        assert_eq!(hit_limit(false, &direct), None, "with no proxy key, nothing can stand in for the sign-in");
         run.state = RunState::Failed;
         assert_eq!(error_class(&run, Some(Limit::SignIn)), "expired sign-in");
     }

@@ -1959,6 +1959,11 @@ impl ProxySettings {
         self.env_with("ANTHROPIC_CUSTOM_HEADERS", format!("x-api-key: {}", self.api_key))
     }
 
+    /// Its own accounts can take a run when the claude.ai sign-in cannot, which needs a key to stand in for it.
+    pub fn has_pool(&self) -> bool {
+        !self.url.is_empty() && !self.api_key.is_empty()
+    }
+
     /// As `env`, with the key as ANTHROPIC_AUTH_TOKEN in place of the claude.ai sign-in.
     pub fn pool_env(&self) -> Vec<(String, String)> {
         self.env_with("ANTHROPIC_AUTH_TOKEN", self.api_key.clone())
@@ -2427,8 +2432,9 @@ mod tests {
         let env = |vars: &[(&str, &str)]| vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
         assert_eq!(proxy.env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"), ("ANTHROPIC_CUSTOM_HEADERS", "x-api-key: k1")]));
         assert_eq!(proxy.pool_env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317"), ("ANTHROPIC_AUTH_TOKEN", "k1")]));
-        let keyless = ProxySettings { api_key: String::new(), ..proxy };
+        let keyless = ProxySettings { api_key: String::new(), ..proxy.clone() };
         assert_eq!(keyless.env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]));
+        assert!(proxy.has_pool() && !keyless.has_pool() && !ProxySettings::default().has_pool());
         assert!(ProxySettings::default().env().is_empty());
         assert!(ProxySettings::default().pool_env().is_empty());
     }

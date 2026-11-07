@@ -376,9 +376,9 @@ fn model_args(kind: &RunKind, e: &Employee) -> Vec<String> {
     args
 }
 
-/// The first message of a run that goes again after the usage limit or a rate limit stopped it: the
+/// The first message of a run that goes again after a limit or an expired sign-in stopped it: the
 /// conversation it resumes already holds the message it was answering.
-pub const LIMIT_RETRY_NOTE: &str = "Omega Star: the usage limit or a rate limit stopped you before you could answer. It has passed now, so carry on with the message above.";
+pub const LIMIT_RETRY_NOTE: &str = "Omega Star: the usage limit, a rate limit or an expired sign-in stopped you before you could answer. You can go on now, so carry on with the message above.";
 
 /// The first message of a run that goes again after Omega Star stopped while it was in progress. Its live cards
 /// went with it, so it is told to raise again any it still needs.
