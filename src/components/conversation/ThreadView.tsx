@@ -244,7 +244,7 @@ export async function markDone(...rootIds: string[]): Promise<boolean> {
 
 /** Tries a run that did not finish again: it carries on from where it stopped, or a hand-off runs again for whoever
  *  handed it over. It stays disabled once it went, while the retry takes over. */
-export function RetryButton({ run, name, disabled = false }: { run: Run; name: string; disabled?: boolean }) {
+function RetryButton({ run, name }: { run: Run; name: string }) {
   const [busy, setBusy] = useState(false);
   const retry = async () => {
     setBusy(true);
@@ -257,7 +257,7 @@ export function RetryButton({ run, name, disabled = false }: { run: Run; name: s
     }
   };
   return (
-    <button className="btn btn-sm" disabled={disabled || busy} title="Try it again from where it stopped" onClick={() => void retry()}>
+    <button className="btn btn-sm" disabled={busy} title="Try it again from where it stopped" onClick={() => void retry()}>
       <Icon name="refresh" size={13} /> Retry
     </button>
   );
@@ -281,32 +281,9 @@ export async function sendAndDone(rootId: string, name: string, text: string, at
   toast(`Sent to ${name}. It comes back only if the answer needs you.`, "ok");
 }
 
-/** Archive files the thread away: it leaves the Inbox and the employee's chips, and comes back if the employee raises
- *  something new. */
-export function DoneButton({ name, label = "Archive", disabled, onDone, ghost = false }: {
-  /** Quiet, like Later beside it (the conversation's header). */
-  ghost?: boolean;
-  /** The employee's first name. */
-  name: string;
-  label?: string;
-  /** The thread is still working, so it cannot be archived yet. */
-  disabled: boolean;
-  onDone: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      className={`btn btn-sm ${ghost ? "btn-ghost" : ""}`} disabled={disabled || busy} title={disabled ? `${name} is still working on it` : "Move it to the Archive (E)"}
-      onClick={async () => { setBusy(true); try { await onDone(); } finally { setBusy(false); } }}
-    >
-      <Icon name="archive" size={13} /> {label} <kbd className="kbd">E</kbd>
-    </button>
-  );
-}
-
 /** Later puts the thread away until a time, then brings it back to the Inbox as unread. While it is away
  *  (`snoozedUntil`), Wake now. Its menu takes focus as it opens, so keys work in it. */
-export function SnoozeButton({ snoozedUntil, onSnooze, onWake, icon = false }: { snoozedUntil: string | null; onSnooze: (until: Date) => void; onWake: () => void; icon?: boolean }) {
+export function SnoozeButton({ snoozedUntil, onSnooze, onWake }: { snoozedUntil: string | null; onSnooze: (until: Date) => void; onWake: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -314,9 +291,7 @@ export function SnoozeButton({ snoozedUntil, onSnooze, onWake, icon = false }: {
     if (open) requestAnimationFrame(() => menu.current?.querySelector<HTMLButtonElement>("button")?.focus());
   }, [open]);
   if (snoozedUntil) {
-    return icon ? (
-      <button className="btn btn-ghost btn-icon btn-sm" aria-label="Wake now" data-tip="Wake now" onClick={onWake}><Icon name="clock" size={14} /></button>
-    ) : (
+    return (
       <button className="btn btn-ghost btn-sm" onClick={onWake}>
         <Icon name="clock" size={13} /> Wake now
       </button>
@@ -325,15 +300,9 @@ export function SnoozeButton({ snoozedUntil, onSnooze, onWake, icon = false }: {
   const presets = open ? snoozePresets(new Date()) : [];
   return (
     <>
-      {icon ? (
-        <button ref={ref} className="btn btn-ghost btn-icon btn-sm" data-later aria-label="Later" data-tip="Later" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          <Icon name="clock" size={14} />
-        </button>
-      ) : (
-        <button ref={ref} className="btn btn-ghost btn-sm" data-later aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          <Icon name="clock" size={13} /> Later
-        </button>
-      )}
+      <button ref={ref} className="btn btn-ghost btn-sm" data-later aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <Icon name="clock" size={13} /> Later
+      </button>
       <Popover anchor={ref} open={open} onClose={() => setOpen(false)} width={232} align="end">
         <div ref={menu} className="menu" role="menu" aria-label="Bring it back" data-esc-stop>
           {presets.map((s) => (

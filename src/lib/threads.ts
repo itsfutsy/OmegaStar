@@ -35,14 +35,6 @@ export const isTask = (t: Thread): boolean => startedByYou(t.root);
 /** The employee is answering (a conversation's first message or a later turn is queued or running). */
 export const threadBusy = (t: Thread): boolean => isLive(t.root) || t.replies.some(isLive);
 
-/** Who spoke last: the employee once their newest reply finished, you while it is still on its way. A
- *  conversation's first message counts as a reply; a report does not. */
-export function lastFrom(t: Thread): "you" | "them" | null {
-  const l = lastReply(t) ?? (isTask(t) ? t.root : undefined);
-  if (!l) return null;
-  return l.endedAt ? "them" : "you";
-}
-
 /** An Inbox row's threads, oldest first: the one it leads with and the others filed with it. */
 export const rowThreads = (t: Thread): Thread[] =>
   [t, ...t.related].sort((a, b) => a.root.createdAt.localeCompare(b.root.createdAt));

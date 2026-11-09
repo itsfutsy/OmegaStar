@@ -30,13 +30,13 @@ function MemberOptions({ g }: { g: Groups }) {
 }
 
 /** An employee's manager: you or anyone below you. Never someone above you (see lib/org). */
-export function EmployeeManagerSelect({ value, onChange, snap, selfId, id }: {
-  value: string | null; onChange: (v: string | null) => void; snap: OrgSnapshot; selfId: string | null; id?: string;
+export function EmployeeManagerSelect({ value, onChange, snap, selfId }: {
+  value: string | null; onChange: (v: string | null) => void; snap: OrgSnapshot; selfId: string | null;
 }) {
   const allowed = employeeManagerOptions(snap, selfId);
   const ids = new Set(allowed.filter((m): m is string => m !== null));
   return (
-    <select id={id} className="select" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+    <select className="select" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
       <option value="">{youLabel(snap.company)}</option>
       <MemberOptions g={groupsOf(snap, ids)} />
     </select>
@@ -48,13 +48,13 @@ const encodeManager = (m: PersonManager) => (m.type === "you" ? "" : m.type === 
 const decodeManager = (v: string): PersonManager => (v === "" ? { type: "you" } : v === TOP_VALUE ? { type: "top" } : { type: "member", id: v });
 
 /** A person's manager: you, a member, or (only for the top of your line) nobody. */
-export function PersonManagerSelect({ value, onChange, snap, selfId, id }: {
-  value: PersonManager; onChange: (v: PersonManager) => void; snap: OrgSnapshot; selfId: string | null; id?: string;
+export function PersonManagerSelect({ value, onChange, snap, selfId }: {
+  value: PersonManager; onChange: (v: PersonManager) => void; snap: OrgSnapshot; selfId: string | null;
 }) {
   const allowed = personManagerOptions(snap, selfId);
   const ids = new Set(allowed.flatMap((m) => (m.type === "member" ? [m.id] : [])));
   return (
-    <select id={id} className="select" value={encodeManager(value)} onChange={(e) => onChange(decodeManager(e.target.value))}>
+    <select className="select" value={encodeManager(value)} onChange={(e) => onChange(decodeManager(e.target.value))}>
       {allowed.some((m) => m.type === "you") ? <option value="">{youLabel(snap.company)}</option> : null}
       {allowed.some((m) => m.type === "top") ? <option value={TOP_VALUE}>Nobody, top of the company</option> : null}
       <MemberOptions g={groupsOf(snap, ids)} />
@@ -118,8 +118,8 @@ const EFFORTS: { value: Effort | null; label: string }[] = [
 
 type Advanced = { model: string | null; effort: Effort | null; browser: boolean; autoTidy: boolean; workspaces: string[] };
 
-export function AdvancedFields({ value, onChange, defaultOpen = false }: { value: Advanced; onChange: (v: Advanced) => void; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+export function AdvancedFields({ value, onChange }: { value: Advanced; onChange: (v: Advanced) => void }) {
+  const [open, setOpen] = useState(false);
   const alias = MODEL_ALIASES.find((a) => a.value === value.model);
   // "Other" stays chosen while its ID is being typed, even if that text happens to match a listed model.
   const [other, setOther] = useState(() => value.model !== null && !alias && !KNOWN_MODELS.has(value.model));

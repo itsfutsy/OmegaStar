@@ -74,13 +74,12 @@ const P = {
 
 export type IconName = keyof typeof P;
 
-export function Icon({ name, size = 16, className, strokeWidth = 1.5, title }: { name: IconName; size?: number; className?: string; strokeWidth?: number; title?: string }) {
+export function Icon({ name, size = 16, className, strokeWidth = 1.5 }: { name: IconName; size?: number; className?: string; strokeWidth?: number }) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={strokeWidth}
-      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden={title ? undefined : true} role={title ? "img" : undefined}
+      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden
     >
-      {title ? <title>{title}</title> : null}
       {P[name]}
     </svg>
   );

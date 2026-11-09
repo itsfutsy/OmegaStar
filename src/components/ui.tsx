@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Presence, Run } from "../api/types";
-import { initials, skillsChanged } from "../lib/format";
+import type { Presence } from "../api/types";
+import { initials } from "../lib/format";
 import { ms, rollAnimations } from "../lib/motion";
 import { useScrollFade } from "../lib/scrollFade";
 import { dismissToast, useToasts, type Toast } from "../lib/toasts";
@@ -381,13 +381,13 @@ export function PageHeader({ title, children }: { title: string; children?: Reac
   );
 }
 
-/** The one content column every page but the Org chart uses: a header that stays put over a column that scrolls. */
-export function PageColumn({ title, actions, children, className }: { title: string; actions?: ReactNode; children: ReactNode; className?: string }) {
+/** A page's content column: a header that stays put over a column that scrolls. */
+export function PageColumn({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
   // Content scrolling under the header fades at that edge (and at the foot while more is below), never sliced.
   const scroll = useScrollFade<HTMLDivElement>();
   return (
     <div className={`pagecol ${className ?? ""}`}>
-      <PageHeader title={title}>{actions}</PageHeader>
+      <PageHeader title={title} />
       <div ref={scroll} className="pagecol-scroll scroll-fade">
         <div className="pagecol-inner">{children}</div>
       </div>
@@ -413,7 +413,7 @@ export function Section({ title, count, action, children, id, className }: {
 export type MenuItem = { label: string; icon?: IconName; onSelect: () => void; disabled?: boolean; danger?: boolean };
 
 /** A "More" button whose menu holds the actions that do not need to be on screen all the time. */
-export function MenuButton({ items, label = "More actions", size = "btn-sm" }: { items: MenuItem[]; label?: string; size?: "" | "btn-sm" }) {
+export function MenuButton({ items, label = "More actions" }: { items: MenuItem[]; label?: string }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -424,7 +424,7 @@ export function MenuButton({ items, label = "More actions", size = "btn-sm" }: {
   if (!shown.length) return null;
   return (
     <>
-      <button ref={anchor} type="button" className={`btn btn-ghost btn-icon ${size}`} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button ref={anchor} type="button" className="btn btn-ghost btn-icon btn-sm" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Icon name="more" size={14} />
       </button>
       <Popover anchor={anchor} open={open} onClose={() => setOpen(false)} width={236}>
@@ -483,15 +483,9 @@ export function Skeleton({ h = 14, w = "100%", r = 3 }: { h?: number; w?: number
   return <span className="skeleton" style={{ height: h, width: w, borderRadius: r }} />;
 }
 
-/** The chip under a report naming the skills the run changed, so the report itself need not say so. */
-export function SkillsGrew({ run }: { run: Pick<Run, "skillChanges"> }) {
-  const g = skillsChanged(run.skillChanges);
-  return <span className="report-grew" title={g.title}><Icon name="teach" size={12} /> {g.label}</span>;
-}
-
 /** A state in a pill: a still dot, then the word. `wait` is work waiting to start ("Up next"): a hollow ring and a quiet
- *  word, never ultramarine. (`pulse` is kept for callers; a live dot holds still.) */
-export function StatePill({ tone, children }: { tone: "accent" | "wait" | "ok" | "warn" | "err" | "neutral"; children: ReactNode; pulse?: boolean }) {
+ *  word, never ultramarine. */
+export function StatePill({ tone, children }: { tone: "accent" | "wait" | "ok" | "warn" | "err" | "neutral"; children: ReactNode }) {
   return (
     <span className={`pill ${tone === "neutral" ? "" : tone === "accent" ? "pill-live" : `pill-${tone}`} state-pill`}>
       <span className="state-dot" />
