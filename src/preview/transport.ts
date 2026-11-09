@@ -625,13 +625,6 @@ export function previewTransport(): PreviewTransport {
       emitRun(r);
       return r;
     },
-    allow_rule: ({ employeeId, rule }) => {
-      const e = w.employees.find((x) => x.id === employeeId);
-      if (!e) throw notFound("They no longer work here.");
-      e.allowRules = [...new Set([...e.allowRules, rule])];
-      changed();
-      return e;
-    },
     add_person: ({ draft }) => {
       const p = { ...draft, id: nextId("person"), addedAt: iso(Date.now()) };
       w.people.push(p);

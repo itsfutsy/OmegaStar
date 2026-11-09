@@ -450,7 +450,6 @@ export type Commands = {
   import_originals: { args: { runId: string }; ret: OriginalSkill[] };
   remove_originals: { args: { runId: string; names: string[] }; ret: string[] };
   settle_originals: { args: { runId: string }; ret: Run };
-  allow_rule: { args: { employeeId: string; rule: string }; ret: Employee };
   add_person: { args: { draft: PersonDraft }; ret: Person };
   update_person: { args: { person: Person }; ret: Person };
   remove_person: { args: { personId: string }; ret: null };

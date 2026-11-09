@@ -393,7 +393,6 @@ pub fn run() {
             commands::import_originals,
             commands::remove_originals,
             commands::settle_originals,
-            commands::allow_rule,
             commands::add_person,
             commands::update_person,
             commands::remove_person,

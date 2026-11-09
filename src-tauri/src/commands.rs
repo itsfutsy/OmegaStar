@@ -387,11 +387,6 @@ pub async fn settle_originals(office: O<'_>, run_id: String) -> Result<Run> {
 }
 
 #[tauri::command]
-pub async fn allow_rule(office: O<'_>, employee_id: String, rule: String) -> Result<Employee> {
-    office.allow_rule(&employee_id, &rule)
-}
-
-#[tauri::command]
 pub async fn add_person(office: O<'_>, draft: PersonDraft) -> Result<Person> {
     office.add_person(draft)
 }
