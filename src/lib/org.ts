@@ -45,7 +45,7 @@ function chain(o: OrgShape, from: string): string[] | null {
 const reportsUpToYou = (o: OrgShape, id: string) => chain(o, id)?.includes(YOU_ID) ?? false;
 
 /** The people you report up through: your manager first, the top of the company last. */
-export function lineAboveYou(o: OrgShape): string[] {
+function lineAboveYou(o: OrgShape): string[] {
   return chain(o, YOU_ID) ?? [];
 }
 

@@ -13,7 +13,7 @@ import { TimelineItem } from "./SkillsOverview";
 
 const folder = (name: string): OwnSkill => ({ name, description: "", role: false, managed: false, files: [], updatedAt: "" });
 /** Files recorded like skills that are not skills: a tidy's notes in workspace/, the company page, and what the employee owns. */
-export const PSEUDO_FOLDERS: Record<string, OwnSkill> = { "@workspace": folder("@workspace"), "@company": folder("@company"), "@own": folder("@own") };
+const PSEUDO_FOLDERS: Record<string, OwnSkill> = { "@workspace": folder("@workspace"), "@company": folder("@company"), "@own": folder("@own") };
 export const pseudoFolder = (name: string): OwnSkill | undefined => (name.startsWith("@") ? PSEUDO_FOLDERS[name] : undefined);
 
 export function FileView({ e, skill, file, history, onBack, onOpenRev, onChanged }: {

@@ -45,7 +45,7 @@ export function setMark(key: string, patch: Mark) {
 }
 
 /** You looked at the conversation now. A snooze that has ended is settled by looking. */
-export function markSeen(key: string) {
+function markSeen(key: string) {
   const now = new Date().toISOString();
   const until = store.get()[key]?.snoozedUntil;
   setMark(key, { seenAt: now, snoozedUntil: until && until > now ? until : undefined });

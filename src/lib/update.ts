@@ -3,7 +3,7 @@
 import { call, errorMessage } from "../api/client";
 import { createStore, useStore } from "./store";
 
-export type UpdateCheck = {
+type UpdateCheck = {
   checking: boolean;
   /** The newer version, once a check found one. A failed check keeps what the last one found. */
   version: string | null;

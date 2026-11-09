@@ -4,7 +4,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { storageGet, storageSet } from "./storage";
 
-export const RAIL_BELOW = 1180;
+const RAIL_BELOW = 1180;
 /** The saved choice at RAIL_BELOW px and wider: "1" collapsed to the rail. */
 export const COLLAPSE_KEY = "omega.sidebarCollapsed";
 /** The saved choice below RAIL_BELOW px: "1" expanded (the rail is the default there). */

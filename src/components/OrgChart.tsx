@@ -16,7 +16,7 @@ type Org = { company: Company; employees: EmployeeView[]; people: PersonView[] }
 // ---------------------------------------------------------------- what a member's card and row say
 
 /** The first sentence of what was asked, whole: without "Please" and its closing full stop, never cut. */
-export function firstSentence(text: string): string {
+function firstSentence(text: string): string {
   const line = text.split("\n").map((l) => l.trim().replace(/^[#>\-* ]+/, "").replace(/[*_`]/g, "")).find((l) => l) ?? "";
   const s = line.replace(/^(please|can you|could you|would you)[, ]+/i, "");
   const ends = [". ", "? ", "! "].map((e) => s.indexOf(e)).filter((i) => i >= 0);

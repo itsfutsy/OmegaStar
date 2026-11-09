@@ -57,7 +57,7 @@ const stateOf = (f: Facts): State => RULES.find(([, when]) => when(f))![0];
 const ms = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : 0);
 
 /** Who spoke last in a thread: the employee once its newest run (the report, or your last reply) has ended. */
-export function lastSpeaker(t: Thread): "you" | "them" {
+function lastSpeaker(t: Thread): "you" | "them" {
   return (lastReply(t) ?? t.root).endedAt ? "them" : "you";
 }
 

@@ -14,9 +14,9 @@ export const COMPACT: ChartMetrics = { w: 208, gapX: 28, gapY: 28, stackGap: 10,
 
 /** Every node, you (YOU_ID) included. `parentId` null: the top of the company. `h`: the card's height. */
 type LayoutInput = { id: string; parentId: string | null; h: number }[];
-export type Box = { id: string; x: number; y: number; w: number; h: number; depth: number };
-export type Edge = { id: string; from: string; to: string; d: string };
-export type Layout = { boxes: Map<string, Box>; edges: Edge[]; width: number; height: number };
+type Box = { id: string; x: number; y: number; w: number; h: number; depth: number };
+type Edge = { id: string; from: string; to: string; d: string };
+type Layout = { boxes: Map<string, Box>; edges: Edge[]; width: number; height: number };
 
 type Node = { id: string; h: number; children: Node[] };
 type Pt = [number, number];

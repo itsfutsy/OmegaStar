@@ -64,7 +64,7 @@ function ownName(r: Run, employees: EmployeeView[], people: PersonView[]): strin
 
 /** What an entry is about rather than how it came: the thread's own name, and on a hand-off who it is for (or, for an
  *  answer that came back, who it is from), as "Pricing page for Bo". */
-export function topic(t: Thread, employees: EmployeeView[], people: PersonView[]): string {
+function topic(t: Thread, employees: EmployeeView[], people: PersonView[]): string {
   const r = t.root;
   const names = kindNames(r, employees, people);
   const them = handOff(r) ? names.asker ?? names.manager : undefined;
@@ -89,7 +89,7 @@ const Count = (n: number) => NUMS[n] ?? String(n);
 const tidyAsks = (r: Run): boolean => r.kind.type === "tidy" && !!r.proposed && !r.approvedAt && !r.archivedAt;
 
 /** The word for what a decision needs. */
-export function wordOf(d: Decision<Item>): Word {
+function wordOf(d: Decision<Item>): Word {
   switch (d.type) {
     case "card": {
       if (d.cards.length > 1) return "Answer";
@@ -156,7 +156,7 @@ function verbOf(d: Decision<Item>): string {
 }
 
 /** When a decision started waiting on you. */
-export const since = (d: Decision<Item>) => d.run.endedAt ?? activityAt(d.item.thread);
+const since = (d: Decision<Item>) => d.run.endedAt ?? activityAt(d.item.thread);
 
 /** "just now", "5 minutes ago", "3 hours ago", "2 days ago", else the date. */
 function ageLong(iso: string | null): string {
@@ -173,7 +173,7 @@ function ageLong(iso: string | null): string {
 export type RowContext = { employees: EmployeeView[]; people: PersonView[] };
 
 /** What a row shows in the list: who, the title, the line under it, its word and its age. */
-export type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | null; side: string; sideTip: string; unread: boolean };
+type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | null; side: string; sideTip: string; unread: boolean };
 
 export function rowView(row: Row, { employees, people }: RowContext): RowView {
   if (row.kind === "hire") {

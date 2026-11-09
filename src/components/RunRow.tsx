@@ -51,7 +51,7 @@ export function workLabel(run: Run, employees: EmployeeView[], people: PersonVie
 }
 
 /** Who handed a delegated run over, as its second line says it: "From Juniper". */
-export function handedBy(run: Run, employees: EmployeeView[], people: PersonView[]): string | null {
+function handedBy(run: Run, employees: EmployeeView[], people: PersonView[]): string | null {
   if (run.kind.type !== "delegated") return null;
   const m = kindNames(run, employees, people).manager;
   return m ? `From ${m}` : "From their manager";

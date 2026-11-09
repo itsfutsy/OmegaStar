@@ -2,7 +2,7 @@
 // the file picker. Each composer listens for its own conversation's draft key.
 import { useEffect, useRef } from "react";
 
-export type ComposerAsk = { type: "prefill"; text: string } | { type: "attach" };
+type ComposerAsk = { type: "prefill"; text: string } | { type: "attach" };
 
 const EVENT = "omega:composer";
 

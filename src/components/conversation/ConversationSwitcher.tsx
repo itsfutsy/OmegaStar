@@ -17,7 +17,7 @@ import { markDone, reopen, WHERE_ARE_WE } from "./ThreadView";
 import { employeeItems, useStatuses, type Item } from "./useStatuses";
 
 /** Where a conversation stands, for its header and its actions: its runs, its state, and whether it can be archived. */
-export type ThreadState = {
+type ThreadState = {
   root: Run | null; runs: Run[]; title: string; status: Status | null; archived: boolean; task: boolean;
   /** It finished and nothing is running, so Archive can file it. */
   ready: boolean;

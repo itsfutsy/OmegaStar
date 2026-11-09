@@ -77,7 +77,7 @@ export const openCards = (t: Thread): OpenCard[] =>
 
 /** A conversation you are in: one going on (not archived, with replies) that you started or typed into. Turns Omega
  *  Star wrote from a tap alone do not make one. Mirrors Rust `threads::talking`. */
-export const talking = (t: Thread): boolean =>
+const talking = (t: Thread): boolean =>
   !t.root.archivedAt && t.replies.length > 0 && (isTask(t) || t.replies.some((r) => !r.omegaWrote && !r.aboutCard));
 
 /** A card waiting on you holds up Archive on `thread`, a thread of the Inbox row `row`: a card in the thread itself, or

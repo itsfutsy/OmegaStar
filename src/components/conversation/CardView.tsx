@@ -21,7 +21,7 @@ export type AimTarget = { key: string; label: string; name: string; send: (text:
 export const CardAim = createContext<{ aim: (target: AimTarget | null) => void; aimed: string | null } | null>(null);
 
 /** Ids like INV-2291 or PR-88 kept whole, never broken at their hyphen. */
-export function keepIds(text: string): ReactNode {
+function keepIds(text: string): ReactNode {
   const parts = text.split(/\b([A-Z][A-Z0-9]*-\d+)\b/);
   return parts.length === 1 ? text : parts.map((p, i) => (i % 2 ? <span key={i} className="nowrap">{p}</span> : p));
 }

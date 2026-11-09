@@ -41,8 +41,6 @@ type ShellApi = {
 const ShellCtx = createContext<ShellApi>({ hire: () => {}, reviewProposal: () => {}, addPerson: () => {}, palette: () => {} });
 export const useShell = () => useContext(ShellCtx);
 
-// Kept for onboarding, which matches the band to the sidebar: src/lib/sidebar.ts holds the rule now.
-export { COLLAPSE_KEY } from "./lib/sidebar";
 /** The palette's leaving fade (--d-ui), with a frame to spare. */
 const PALETTE_LEAVE_MS = 160;
 
