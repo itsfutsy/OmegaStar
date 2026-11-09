@@ -252,11 +252,6 @@ pub async fn reply_to_run(office: O<'_>, run_id: String, text: String, archive: 
 }
 
 #[tauri::command]
-pub async fn steer_run(office: O<'_>, run_id: String, text: String) -> Result<SteerHow> {
-    office.steer_run(&run_id, &text)
-}
-
-#[tauri::command]
 pub async fn approve_blocked(office: O<'_>, run_id: String, rules: Vec<String>, always: bool) -> Result<Run> {
     office.approve_blocked(&run_id, rules, always)
 }

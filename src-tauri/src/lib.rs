@@ -366,7 +366,6 @@ pub fn run() {
             commands::unarchive_runs,
             commands::retry_run,
             commands::reply_to_run,
-            commands::steer_run,
             commands::approve_blocked,
             commands::answer_card,
             commands::card_file,

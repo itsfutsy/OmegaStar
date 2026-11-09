@@ -358,58 +358,6 @@ impl Office {
         true
     }
 
-    /// Your words to a run you are watching from its page. While it works they go straight in, saying who is speaking
-    /// unless it is a conversation with you. While it waits to start for the first time they join what it starts with.
-    /// Otherwise (it finished, or could not take a message just then) they are your reply in its thread, which is also
-    /// how a conversation turn takes them, as its composer sends them. Whichever way they went, a run that is not a
-    /// conversation keeps its report for you in the Inbox (`Run::steered`).
-    pub fn steer_run(&self, run_id: &str, text: &str) -> Result<SteerHow> {
-        let text = text.trim();
-        if text.is_empty() {
-            return Err(AppError::invalid("message is empty"));
-        }
-        let watched = {
-            let db = self.db();
-            let mut run = db.run(run_id)?.ok_or_else(|| AppError::not_found("run not found"))?.run;
-            if !run.kind.is_conversation() {
-                let ceo = ceo_of(&db)?;
-                match run.state {
-                    // Never started, as `tools::untouched` has it: a run back in the queue resumes past what it started with.
-                    RunState::Queued if run.restarts == 0 && run.limit_retries == 0 => {
-                        run.prompt = format!("{}\n\n{ceo} added before you started: {text}", run.prompt);
-                        run.steered = true;
-                        db.save_run(&run)?;
-                        drop(db);
-                        self.sink().run_updated(&run);
-                        return Ok(SteerHow::Added);
-                    }
-                    // Marked under the store lock, so the run's end, which keeps the mark (`execute`), cannot miss it.
-                    RunState::Running if self.steer_as(run_id, text, &steer_words(&run, &ceo, text)) => {
-                        run.steered = true;
-                        db.save_run(&run)?;
-                        return Ok(SteerHow::Steered);
-                    }
-                    _ => {}
-                }
-            }
-            !run.kind.is_conversation()
-        };
-        let reply = self.reply_to_run(run_id, text, false, vec![])?;
-        // Your words reached it all the same, as your reply in its thread, so its report waits for you too.
-        if watched {
-            let marked = {
-                let db = self.db();
-                let run = db.run(run_id)?.map(|r| r.run).filter(|r| !r.steered).map(|r| Run { steered: true, ..r });
-                run.map(|r| db.save_run(&r).map(|_| r)).transpose()?
-            };
-            if let Some(r) = marked {
-                self.sink().run_updated(&r);
-            }
-        }
-        // A run that just started can take it after all: the reply went into it.
-        Ok(if reply.id == run_id { SteerHow::Steered } else { SteerHow::Replied })
-    }
-
     /// Writes into a run's open stdin without recording it as your message: for notes Omega Star writes,
     /// such as Chrome dropping. `false` when the run no longer takes messages.
     pub(super) fn tell(&self, run_id: &str, text: &str) -> bool {
@@ -1293,8 +1241,8 @@ struct Ended {
     cost: Option<f64>,
 }
 
-/// What you did to a run while it worked, after the copy its end holds was taken: you wrote into it (`steer_run`), or
-/// replied in its thread (`reply_to_run`). Kept when its end saves that copy over `stored`. Pure.
+/// What you did to a run while it worked, after the copy its end holds was taken: you wrote into it, or replied in
+/// its thread (both `reply_to_run`). Kept when its end saves that copy over `stored`. Pure.
 fn keep_yours(run: &mut Run, stored: &Run) {
     run.steered |= stored.steered;
     run.replied_at = run.replied_at.max(stored.replied_at);
@@ -1768,96 +1716,6 @@ mod tests {
             assert!(office.db().insert_run(r, &r.id).unwrap());
         }
         office
-    }
-
-    /// Registers `run` as working, with its transcript, and returns what it hears. `open`: it still takes messages.
-    fn working(office: &Office, run: &Run, open: bool) -> tokio::sync::mpsc::UnboundedReceiver<String> {
-        let (input, heard) = tokio::sync::mpsc::unbounded_channel();
-        fs::create_dir_all(office.run_dir(&run.id)).unwrap();
-        let transcript = Arc::new(Mutex::new(File::create(office.run_dir(&run.id).join("transcript.jsonl")).unwrap()));
-        let a = Active {
-            token: "t".into(),
-            employee_id: run.employee_id.clone(),
-            beside: false,
-            pid: None,
-            cancelled: false,
-            needs_you: vec![],
-            cards: vec![],
-            score: None,
-            proposed: None,
-            verdict: false,
-            title: None,
-            transcript: Some(transcript),
-            input: open.then_some(input),
-            waiting: vec![],
-        };
-        lock(&office.0.active).insert(run.id.clone(), a);
-        heard
-    }
-
-    #[tokio::test]
-    async fn your_words_reach_a_run_you_watch_however_far_along_it_is() {
-        let dir = std::env::temp_dir().join(format!("omegastar-steer-{}", uuid::Uuid::new_v4()));
-        let ada = employee(Clearance::Supervised);
-        let bo = Employee { id: uuid::Uuid::new_v4().to_string(), slug: "bo".into(), name: "Bo".into(), chat_session: "chat-bo".into(), ..employee(Clearance::Supervised) };
-        let run = |kind: RunKind, prompt: &str, state: RunState| {
-            let mut r = Run::new(&ada.id, kind, prompt.into(), now());
-            r.state = state;
-            r
-        };
-        let handed = run(RunKind::Asked { parent_run_id: "r-bo".into(), asked_by: bo.id.clone(), task: true }, "Count the stock.", RunState::Running);
-        let talk = run(task("Draft the memo"), "Draft the memo.", RunState::Running);
-        let waiting = run(RunKind::Manual, "Sweep the inbox.", RunState::Queued);
-        let mut again = run(RunKind::Manual, "Pay the invoices.", RunState::Queued);
-        again.limit_retries = 1;
-        let mut done = run(RunKind::Manual, "Book the venue.", RunState::Succeeded);
-        done.ended_at = Some(now());
-        done.summary = Some("Booked the hall for Friday.".into());
-        let office = held_office(&dir, &[&ada, &bo], &[&handed, &talk, &waiting, &again, &done]).await;
-
-        // Working, it hears you at its next step, told who is speaking, and its events show your own words. The
-        // message goes in tagged, waiting to be taken, so a restart before then sends it again.
-        let mut heard = working(&office, &handed, true);
-        assert_eq!(office.steer_run(&handed.id, "  Count the back room too. ").unwrap(), SteerHow::Steered);
-        let transcript = fs::read_to_string(office.run_dir(&handed.id).join("transcript.jsonl")).unwrap();
-        let [(id, text)] = &claude::unheard(&transcript)[..] else { panic!("one message waits: {transcript}") };
-        assert_eq!(text, "Count the back room too.");
-        assert_eq!(heard.try_recv().unwrap(), claude::steer_line("Pat is watching this run and says: Count the back room too.", id));
-        assert_eq!(lock(&office.0.active)[&handed.id].waiting, vec![id.clone()]);
-        assert_eq!(claude::steered(&transcript), vec!["Count the back room too.".to_string()]);
-        assert!(office.run(&handed.id).unwrap().steered, "its report waits for you");
-
-        // Once its turn is over, your words are your reply in its thread, which resumes its session.
-        lock(&office.0.active).get_mut(&handed.id).unwrap().input = None;
-        assert_eq!(office.steer_run(&handed.id, "And the shelves.").unwrap(), SteerHow::Replied);
-        assert_eq!(office.thread(&handed.id).unwrap().replies.iter().map(|r| r.prompt.as_str()).collect::<Vec<_>>(), vec!["And the shelves."]);
-
-        // A conversation with you needs nobody named.
-        let mut heard = working(&office, &talk, true);
-        assert_eq!(office.steer_run(&talk.id, "Keep it short.").unwrap(), SteerHow::Steered);
-        assert!(heard.try_recv().unwrap().contains(r#""content":"Keep it short.""#));
-
-        // Waiting to start, your words join what it starts with.
-        assert_eq!(office.steer_run(&waiting.id, "Skip the newsletters.").unwrap(), SteerHow::Added);
-        let w = office.run(&waiting.id).unwrap();
-        assert_eq!(w.prompt, "Sweep the inbox.\n\nPat added before you started: Skip the newsletters.");
-        assert!(w.steered && w.state == RunState::Queued);
-
-        // Back in the queue after a limit, it resumes past what it started with, so they wait as your reply.
-        assert_eq!(office.steer_run(&again.id, "Only the overdue ones.").unwrap(), SteerHow::Replied);
-        assert_eq!(office.run(&again.id).unwrap().prompt, "Pay the invoices.");
-        assert_eq!(office.thread(&again.id).unwrap().replies.len(), 1);
-        assert!(office.run(&again.id).unwrap().steered, "you wrote into it, so its report waits for you");
-
-        // Finished, they follow up its report in its thread.
-        assert!(!office.run(&done.id).unwrap().steered);
-        assert_eq!(office.steer_run(&done.id, "Why that hall?").unwrap(), SteerHow::Replied);
-        let t = office.thread(&done.id).unwrap();
-        assert!(matches!(&t.replies[..], [r] if r.prompt.ends_with("Pat's reply:\n\nWhy that hall?")), "{:?}", t.replies);
-        assert!(t.root.steered);
-        assert_eq!(office.steer_run(&done.id, "  ").unwrap_err().message, "message is empty");
-        drop(office);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -238,10 +238,6 @@ export type Run = {
   costUsd: number | null;      // what it cost in US dollars as Claude Code reckons it, over all its attempts; null when unknown
 };
 export type NewAttachment = { name: string; data: string /* base64 */ };
-/** Where your words to a run you watch went: into it as it works, into what it starts with, or into its thread as your
- *  reply (it had finished, or could not take a message just then). */
-export type SteerHow = "steered" | "added" | "replied";
-
 /** A report and the replies you exchanged on it, oldest first. A conversation you started is one too, and an answer
  *  a colleague brought back into it is one of its replies. In the Inbox and the Archive a thread leads a row,
  *  and `related` holds the row's other threads, oldest first: the rest of a hand-off, or a schedule's earlier
@@ -417,9 +413,6 @@ export type Commands = {
   retry_run: { args: { runId: string }; ret: Run };
   /** Your reply in a report's thread (`runId`: any run in it). `archive` means "don't bring the answer back unless it needs me". */
   reply_to_run: { args: { runId: string; text: string; archive: boolean; attachments?: NewAttachment[] }; ret: Run };
-  /** Your words to a run you are watching: into it while it works, into its instructions while it waits to start for
-   *  the first time, else your reply in its thread. Its report then waits for you in the Inbox. */
-  steer_run: { args: { runId: string; text: string }; ret: SteerHow };
   /** Allow what a finished run was blocked on and send it back to retry. `rules` must come from its denials
    *  (a denial's suggestedRule, or `mcp__<server>__*` for an MCP tool). `always` saves them to the employee;
    *  otherwise they apply to the retry only. Archives the blocked report. Returns the retry run. */

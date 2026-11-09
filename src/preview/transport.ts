@@ -538,21 +538,6 @@ export function previewTransport(): PreviewTransport {
       if (!w.open.includes(root.id)) w.open.unshift(root.id);
       return respond(newRun(root.employeeId, { type: "reply", toRunId: root.id, label: root.title ?? "Report", task: startedByYou(root), card: false }, text, { attachments: (attachments ?? []).map((a) => a.name) }));
     },
-    steer_run: ({ runId, text }) => {
-      const r = need(runId);
-      if (r.state === "running") {
-        r.steered = true;
-        steer(r, text);
-        return "steered";
-      }
-      if (r.state === "queued") {
-        r.prompt = `${r.prompt}\n\n${text}`;
-        emitRun(r);
-        return "added";
-      }
-      h.reply_to_run({ runId, text, archive: false });
-      return "replied";
-    },
     approve_blocked: ({ runId, rules, always }) => {
       const r = need(runId);
       const e = w.employees.find((x) => x.id === r.employeeId);

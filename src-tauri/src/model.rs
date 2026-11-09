@@ -1772,18 +1772,6 @@ pub enum TaskOutcome {
     Stopped,
 }
 
-/// Where your words to a run you watch went (`Office::steer_run`).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum SteerHow {
-    /// Into the run as it works.
-    Steered,
-    /// Into what it starts with, as it had not started yet.
-    Added,
-    /// Into its thread as your reply: it had finished, or could not take a message just then.
-    Replied,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunDetail {
