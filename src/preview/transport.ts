@@ -376,7 +376,7 @@ export function previewTransport(): PreviewTransport {
 
   function hire(draft: Commands["hire"]["args"]["draft"]): Employee {
     const slug = draft.name.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "") || "new-hire";
-    const e: Employee = { ...draft, id: slug, slug, chatSession: "", hiredAt: iso(Date.now()) };
+    const e: Employee = { ...draft, id: slug, slug, hiredAt: iso(Date.now()) };
     w.employees.push(e);
     w.skills[e.id] = [own(slug, `${draft.name.split(" ")[0]}'s role: ${draft.objective || draft.title}`, iso(Date.now()), ["SKILL.md"], { role: true }), CRAFT(iso(Date.now()))];
     w.schedules.push({ ...review(e.id), nextFire: onDay(7, 16) });

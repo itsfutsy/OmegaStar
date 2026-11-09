@@ -21,10 +21,9 @@ export type Employee = {
   autoTidy: boolean;                        // tidies their own skills and notes when Omega Star finds something to tidy; on unless you turn it off
   workspaces: string[]; hue: number;        // 0-359, avatar colour
   image?: string | null;                    // display image as a data: URL, shown in place of their initials
-  chatSession: string;                      // the session of the one long chat older builds kept; nothing reads it
   hiredAt: string;
 };
-export type EmployeeDraft = Omit<Employee, "id" | "slug" | "chatSession" | "hiredAt">;
+export type EmployeeDraft = Omit<Employee, "id" | "slug" | "hiredAt">;
 
 export type Presence = "idle" | "working" | "queued" | "attention";
 export type EmployeeView = Employee & {

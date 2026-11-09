@@ -204,7 +204,7 @@ function employee(id: string, name: string, title: string, o: Partial<Employee>)
   return {
     id, slug: name.toLowerCase().replace(/[^a-z]+/g, "-"), name, title, description: "", objective: "", managerId: null,
     skills: { builtins: true, keys: [] }, clearance: "supervised", allowRules: [], model: null, effort: null, browser: false,
-    autoTidy: true, workspaces: [], hue: 210, chatSession: "", hiredAt: onDay(-40, 10), ...o,
+    autoTidy: true, workspaces: [], hue: 210, hiredAt: onDay(-40, 10), ...o,
   };
 }
 
