@@ -121,7 +121,7 @@ export function AddPersonSheet({ open, managerId, onClose }: { open: boolean; ma
         <aside className="sheet-preview" aria-label="Preview">
           <span className="msg-label">Preview</span>
           <div className="preview-card preview-card-person">
-            <div className="mcard-head">
+            <div className="preview-head">
               {draft.name.trim() || draft.image ? <Avatar name={draft.name} hue={hue} image={draft.image} size={40} person /> : <span className="av av-person" style={{ "--h": hue, width: 40, height: 40, flex: "none" } as React.CSSProperties} aria-hidden />}
               <div className="stack grow" style={{ minWidth: 0 }}>
                 <span className="card-name">{draft.name.trim() || "Their name"}</span>

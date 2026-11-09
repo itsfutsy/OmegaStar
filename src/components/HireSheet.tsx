@@ -239,7 +239,7 @@ export function HireSheet({ open, managerId, template, proposal, onClose, return
         <aside className="sheet-preview" aria-label="Preview">
           <span className="msg-label">Preview</span>
           <div className="preview-card">
-            <div className="mcard-head">
+            <div className="preview-head">
               <button
                 type="button" className="preview-av" title="Try another colour" aria-label="Try another avatar colour"
                 onClick={() => { setHueTouched(true); set("hue", (hue + 47) % 360); }}
