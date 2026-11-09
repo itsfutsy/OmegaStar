@@ -1,6 +1,7 @@
 import type { HireProposal, PersonView, RequestKind, RunEvent, SkillChangeKind } from "../api/types";
 import { firstName } from "../lib/format";
 import { navigate } from "../lib/router";
+import { toolName } from "../lib/rules";
 import { Icon, type IconName } from "./Icon";
 import { Avatar } from "./ui";
 import "./Transcript.css";
@@ -116,8 +117,6 @@ const searchOf = (brief: string) => {
   const m = /^"(.*)"\s+in\s+(.+)$/.exec(brief.trim());
   return m ? { pattern: m[1].replace(/\\(.)/g, "$1"), where: m[2] } : null;
 };
-/** "mcp__claude_ai_Atlassian_Rovo__searchConfluenceUsingCql" -> "searchConfluenceUsingCql" */
-export const toolName = (tool: string) => tool.replace(/^mcp__.+?__/, "");
 
 /** A step in words: "Read" and "templates/customer-email.md" (mono), or "Reading" while it runs. */
 export function stepWords(tool: string, brief: string, running = false): { verb: string; object: string; icon: IconName; code: boolean } {

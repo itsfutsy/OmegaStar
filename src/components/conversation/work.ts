@@ -4,6 +4,7 @@
 import type { EmployeeView, Run } from "../../api/types";
 import { firstName } from "../../lib/format";
 import type { LiveRun, TaskView } from "../../lib/runs";
+import { isLive } from "../../lib/threads";
 import type { IconName } from "../Icon";
 import { saidElsewhere, skillWords, stepWords, toItems, type ToolItem, type TranscriptItem } from "../Transcript";
 
@@ -21,7 +22,6 @@ export type WorkRow = {
 /** One stretch of a reply: what you said to start it (after the first), its items, and how the talk reads them. */
 export type Part = { said: string | null; items: TranscriptItem[]; opener: TextItem | null; notes: TextItem[]; answer: TextItem[] };
 
-export const isRunning = (r: Run) => r.state === "running" || r.state === "queued";
 // Not a skill change: Omega Star records those after the run ends, so one would always fall after the answer and fold it
 // into the work line. Its row still shows (rowsOf).
 const isWork = (it: TranscriptItem) => it.kind === "tools" || it.kind === "delegated" || it.kind === "requested" || it.kind === "proposed" || it.kind === "visual";
@@ -87,7 +87,7 @@ const skillsOf = (items: TranscriptItem[]) => new Set(items.flatMap((it) => (it.
  *  working. Sub-agents whose call was not recorded (an old transcript) are rows of the whole reply. */
 export function rowsOf(turn: LiveRun, employees: EmployeeView[], part?: Part): WorkRow[] {
   const id = turn.run.id;
-  const running = isRunning(turn.run);
+  const running = isLive(turn.run);
   const all = toItems(turn.events);
   const notes = new Set(partsOf(all).flatMap((p) => p.notes.map((n) => n.key)));
   const skills = skillsOf(all);
