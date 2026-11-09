@@ -37,7 +37,7 @@ Employee pages (the `show` tool) get this file too: `src-tauri` embeds it, so `-
 | Inputs | `.input` `.textarea` `.select` `.input-affix`; `.field` `.field-label` (`.hint`) `.field-help` `.field-error`; `aria-invalid` for the error ring |
 | Choosing | `.seg` (buttons with `aria-pressed`), `Tabs`, `Switch`, `.chip` (round filter, `aria-pressed`, a count in `.n`) |
 | Labels | `.tag` (square kind: `.tag-attn` `.tag-live` `.tag-warn` `.tag-hire`), `.pill` (`.pill-live` `.pill-wait` `.pill-ok` `.pill-warn` `.pill-err`), `.kbd` |
-| Status | A word first, colour saying the same: `StatePill` (tones `accent` working, `wait` up next, `ok`, `warn`, `err`, `neutral`), `.status` (`.status-live` `.status-wait` `.status-attn` `.status-fail` `.status-ok` `.status-plain`), `.dot` (`.dot-live` `.dot-wait` `.dot-attn` `.dot-ok` `.dot-warn`). Nothing pulses. `runStateLabel` and `runStateTone` (`src/lib/format.ts`) give a run's word and tone; queued is "Up next" on `wait`. |
+| Status | A word first, colour saying the same: `StatePill` (tones `accent` working, `wait` up next, `ok`, `warn`, `err`, `neutral`), `.status` (`.status-live` `.status-wait` `.status-attn` `.status-fail` `.status-ok` `.status-plain`), `.dot` (`.dot-live` `.dot-wait` `.dot-attn` `.dot-ok`). Nothing pulses. `runStateLabel` and `runStateTone` (`src/lib/format.ts`) give a run's word and tone; queued is "Up next" on `wait`. |
 | Avatars | `Avatar` with `person` (ringed), `proposed` (dashed), `you` (ink disc) and `presence` (a still dot ringed in `--av-ring`) |
 | Menus and tips | `Popover`, `MenuButton`, `.menu` `.menu-item` (`.menu-item-danger`) `.menu-sep`. A tooltip: put `data-tip="..."` on anything; `TipLayer` (mounted once in `App`) draws it to the right, or the left near the window's edge, above every layer, so no scrolling sidebar or panel clips it, and follows the text if it changes while shown. `data-tip-key="K"` adds the key that does the same, as a keycap. A `.tip-words` child holding the same words keeps the tip quiet until a narrow layout hides them. |
 | Sheets | `SlideOver` (flush right, full height; `modal` adds the scrim; `returnFocus` is where focus goes on close); `.sheet-head` `.sheet-body` `.sheet-form` `.sheet-foot`. `useShell()`'s `hire`, `reviewProposal` and `addPerson` take the opening button last (`from`), because WebKit does not focus a button on click; the hire sheet sends focus back to it, and ⌘ or Ctrl+Enter hires or approves. |
@@ -67,7 +67,7 @@ version (a crossfade over `--d-fade`; nothing travels).
 
 `pulseDot`, `breathe` and `shimmer` are gone, so the loops that used them are already still. Areas: delete the
 leftover references (`OrgChart`, `Transcript`, `ChatTab`, `Panel`, `Conversation`), and switch coral words from
-`color: var(--err)` to `--err-text` (`Activity`, `Inbox`, `Settings`, `Transcript`, `SubAgents`,
+`color: var(--err)` to `--err-text` (`Activity`, `Inbox`, `Settings`, `Transcript`,
 `Schedules`, `SkillsTab`). `.copycmd` now lives in `src/components/CopyCommand.css`; the Settings agent deletes its
 copy from `Settings.css`.
 

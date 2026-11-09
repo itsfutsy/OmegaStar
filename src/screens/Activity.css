@@ -31,8 +31,6 @@
 .act-day { padding: 22px 12px 6px; font-size: var(--t-sm); font-weight: 600; color: var(--muted); }
 .act-list > .act-day:first-child { padding-top: 2px; }
 .act-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.act-empty { padding-top: 56px; }
-.act-empty-filter { padding-top: 32px; }
 /* Inside the Failed filter a row needn't say Failed again. */
 .act-list[data-filter="failed"] .runrow[data-state="failed"] .runrow-status { visibility: hidden; }
 

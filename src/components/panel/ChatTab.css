@@ -41,7 +41,6 @@
 .who-line b { font-size: 13.5px; font-weight: 700; color: var(--ink); }
 .who-line > .av { flex: none; }
 .who-meta { white-space: nowrap; }
-.who-live { color: var(--live-text); font-weight: 550; }
 .msg-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* Conversation prose at reading size. Cards and files keep their own. */
 .msg-body > .md, .chat-inner .report-body > .md { font-size: var(--t-md); line-height: 1.6; }
@@ -138,7 +137,6 @@
 .composer-input:focus-visible { box-shadow: none; }
 .composer-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px; min-width: 0; }
 .composer-bar > .btn, .composer-bar > .confirm { flex: none; }
-.composer-hint { font-size: var(--t-xs); margin-right: 8px; }
 .composer-send { border-radius: var(--r-input); }
 .composer-send.btn-sm { width: 30px; height: 30px; }
 .chat .composer-send { background: var(--sunken); color: var(--faint); box-shadow: none; }
@@ -170,7 +168,6 @@
 
 /* ------------------------------------------------ a thread */
 .thread { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.thread-time { font-size: var(--t-xs); white-space: nowrap; }
 /* What Omega Star flagged on a run, apart from its cards: it needs you, so it leads like a card does. */
 .flags { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .flags li { display: flex; gap: 8px; align-items: flex-start; font-size: var(--t-md); font-weight: 650; line-height: 1.45; color: var(--ink); }

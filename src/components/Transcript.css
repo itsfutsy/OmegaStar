@@ -1,51 +1,10 @@
-/* ------------------------------------------------ steps: one line each, the verb then what it acted on */
-.tools { display: flex; flex-direction: column; }
-.tool + .tool { border-top: 1px solid var(--line); }
-.tool-row {
-  width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) 16px; align-items: center; gap: 10px;
-  min-height: 34px; padding: 0 6px; text-align: left; font-size: 12.5px; color: var(--ink-2); border-radius: var(--r-inner);
-  transition: background var(--d-ui) var(--ease);
-}
-.tool-row:hover { background: var(--sunken); }
-.tool-icon { color: var(--muted); }
-.tool-text { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.tool-name { flex: none; font-weight: 650; color: var(--ink); }
-.tool-brief { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.tool-brief.mono { font-size: 11.5px; color: var(--ink-2); }
+/* ------------------------------------------------ a step's mark: a tick, a cross, a still dot or a ring */
 .tool-status { display: inline-flex; justify-content: center; align-items: center; width: 16px; }
 .tool-ok { color: var(--ok); }
 .tool-err { color: var(--err); }
-.tool-err-text { color: var(--err-text); }
 /* A step still running holds a still dot; one that ended with its run, a hollow ring. Nothing pulses. */
 .tool-pending { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
 .tool-stopped { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--muted); }
-.tool-detail { padding: 2px 6px 10px 32px; font-size: 11.5px; line-height: 1.6; color: var(--ink-2); overflow-wrap: anywhere; }
-.tool-more { width: 100%; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 6px; font-size: var(--t-sm); color: var(--muted); border-radius: var(--r-inner); }
-.tool-more:hover { color: var(--ink); background: var(--sunken); }
-.tools-compact .tool-row { min-height: 30px; }
-
-/* ------------------------------------------------ a skill the employee wrote or refined, as a ref */
-.skill-chip {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 28px; max-width: 100%; padding: 0 10px 0 8px;
-  border-radius: var(--r-input); box-shadow: inset 0 0 0 1px var(--line-strong); font-size: 12.5px; color: var(--ink-2);
-  transition: background var(--d-ui) var(--ease), box-shadow var(--d-ui) var(--ease);
-}
-.skill-chip:hover:not(:disabled) { background: var(--raised); box-shadow: inset 0 0 0 1px var(--muted); }
-.skill-chip > svg { flex: none; color: var(--muted); }
-.skill-chip-verb { flex: none; font-weight: 600; color: var(--ink); white-space: nowrap; }
-.skill-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-
-/* ------------------------------------------------ work handed to a colleague (the run page shows these in place) */
-.delegated {
-  display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 12px 14px; border-radius: var(--r-card);
-  box-shadow: inset 0 0 0 1px var(--line-card); background: var(--surface); transition: box-shadow var(--d-ui) var(--ease);
-}
-.delegated:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
-.delegated-top { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 13px; }
-.delegated-who { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.delegated-who b { font-weight: 650; color: var(--ink); }
-.delegated-go { flex: none; color: var(--muted); }
-.delegated-task { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 
 /* ------------------------------------------------ a person asked, a hire proposed: results, kept in the talk */
 .requested { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-card); box-shadow: inset 0 0 0 1px var(--line-card); }

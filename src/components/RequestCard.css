@@ -20,11 +20,3 @@
 .req-resolved { display: flex; align-items: baseline; gap: 8px; font-size: var(--t-sm); padding-top: 2px; }
 .req-resolved .pill { height: 20px; font-size: var(--t-xs); flex: none; align-self: center; }
 .req-response { color: var(--ink-2); }
-.req-link { color: var(--muted); font-size: var(--t-sm); display: inline-flex; align-items: center; gap: 4px; }
-.req-link:hover { color: var(--ink); }
-
-.prop-hire { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px 0; }
-.prop-name { font-weight: 600; color: var(--ink); font-size: var(--t-base); }
-.prop-sub { font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prop-missing { display: flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--warn); }
-.prop-missing svg { flex: none; }

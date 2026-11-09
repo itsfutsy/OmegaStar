@@ -230,11 +230,3 @@ button.d-also-row:focus-visible::before { box-shadow: var(--focus); }
 }
 /* The slot counts as holding something only for what shows there (the card's own Later is the bar's Later). */
 .d-foot:not(:has(.d-acts > *, .d-slot > * > :not([data-card-later]), .d-next)) { display: none; }
-/* 5. A thread's reply box at the widths the Inbox gives it: its hint goes first, so Send keeps its corner. The
-   composer itself belongs to Conversations, which should make this its own rule. */
-@container detail (max-width: 760px) {
-  .d-thread .composer-hint { display: none; }
-}
-
-/* SkillsGrew's chip (ui.tsx): the skills a run changed, under its report. Card styles live in Conversation's Cards.css. */
-.report-grew { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-sm); color: var(--ok-text); }
