@@ -482,6 +482,33 @@ pub async fn backup_now(office: O<'_>) -> Result<BackupStatus> {
     office.backup_now().await
 }
 
+/// Each typed workspace folder, checked: its full path and whether it is there (`folders::check`).
+#[tauri::command]
+pub fn check_folders(paths: Vec<String>) -> Vec<crate::folders::FolderCheck> {
+    let home = crate::folders::home();
+    paths.iter().map(|p| crate::folders::check(p, &home)).collect()
+}
+
+/// A native folder picker for a workspace folder, starting in the home folder. `None` when cancelled.
+#[tauri::command]
+pub async fn pick_folder(app: AppHandle) -> Result<Option<String>> {
+    let mut dialog = app.dialog().file().set_title("Choose a workspace folder").set_directory(crate::folders::home());
+    if let Some(w) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&w);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    dialog.pick_folder(move |picked| {
+        let _ = tx.send(picked);
+    });
+    match rx.await.ok().flatten() {
+        None => Ok(None),
+        Some(p) => {
+            let p = p.into_path().map_err(|e| AppError::internal(format!("Could not use that folder: {e}")))?;
+            Ok(Some(p.to_string_lossy().into_owned()))
+        }
+    }
+}
+
 /// A native folder picker, run from Rust so the webview needs no dialog or path permissions.
 /// `None` when cancelled.
 #[tauri::command]

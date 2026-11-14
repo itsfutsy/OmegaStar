@@ -387,8 +387,10 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     }
     args.extend(["--disallowedTools".into(), SESSION_ONLY_TOOLS.join(",")]);
     args.extend(model_args(&run.kind, e));
+    // Full paths, so a folder saved as `~/x` before workspaces were checked is not read as `<their folder>/~/x`.
+    let home = crate::folders::home();
     for w in e.workspaces.iter().filter(|w| !w.trim().is_empty()) {
-        args.extend(["--add-dir".into(), w.clone()]);
+        args.extend(["--add-dir".into(), path_arg(&crate::folders::resolve(w, &s.employee_dir, &home))]);
     }
     let mcp = json!({ "mcpServers": { "omega": { "type": "http", "url": s.mcp_url } } });
     let mut env = vec![("MCP_TOOL_TIMEOUT".into(), "900000".into())];
@@ -635,6 +637,16 @@ mod tests {
         assert!(inv.stdin.ends_with(&format!("</omega-star>\n\n{RESTART_NOTE}")), "the latest cause, the restart: {}", inv.stdin);
         let inv = prepare(&snapshot(None, false), &restarted);
         assert!(inv.stdin.ends_with("Archive it."), "a session that never started hears the message itself");
+    }
+
+    #[test]
+    fn workspace_folders_reach_claude_as_full_paths() {
+        let mut s = snap();
+        s.employee.workspaces = vec!["~/dev/site".into(), "/srv/shared/".into(), "notes".into(), " ".into()];
+        let inv = prepare(&s, &run(RunKind::Manual));
+        let dirs: Vec<&str> = inv.args.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].as_str()).collect();
+        let home = crate::folders::home();
+        assert_eq!(dirs, [home.join("dev").join("site").to_string_lossy().as_ref(), "/srv/shared", s.employee_dir.join("notes").to_string_lossy().as_ref()]);
     }
 
     #[test]

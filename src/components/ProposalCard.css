@@ -7,6 +7,11 @@
 .hire-dl dt { color: var(--muted); }
 .hire-dl dd { margin: 0; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .hire-dl .mono { font-size: 12.5px; }
+.hire-folders { display: flex; flex-direction: column; gap: 4px; }
+.hire-folder { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.hire-folder .folder-note { display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-sm); }
+.hire-folder .folder-note-ok { color: var(--ok-text); }
+.hire-folder .folder-note-err { color: var(--err-text); }
 .hire-skills { display: flex; flex-wrap: wrap; gap: 6px; }
 .hire-skill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: var(--r-inner); background: var(--sunken); font-size: 12px; font-weight: 600; color: var(--ink); }
 .hire-skill-missing { background: var(--warn-soft); color: var(--warn); }

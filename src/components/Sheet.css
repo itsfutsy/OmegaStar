@@ -49,6 +49,10 @@
 .advanced-open .advanced-chev { transform: rotate(90deg); }
 .advanced-body { display: flex; flex-direction: column; gap: 16px; padding-top: 14px; animation: riseIn var(--d-ui) var(--ease); }
 .advanced .input-affix .input { padding-left: 22px; }
+/* Whether a workspace folder is there, under the folder. */
+.folder-note { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-sm); padding-left: 2px; overflow-wrap: anywhere; }
+.folder-note-ok { color: var(--ok-text); }
+.folder-note-err { color: var(--err-text); }
 
 /* channels editor */
 .channels { display: flex; flex-direction: column; gap: 8px; }

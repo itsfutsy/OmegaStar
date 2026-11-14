@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { call } from "../api/client";
 import type { Clearance, Company, Effort, ModelOption, OrgSnapshot, PersonManager, PersonView } from "../api/types";
+import { folderNote, useFolderChecks } from "../lib/folders";
 import { useModels } from "../lib/hooks";
 import { aboveYou, employeeManagerOptions, personManagerOptions } from "../lib/org";
 import { Icon } from "./Icon";
@@ -195,28 +197,56 @@ export function AdvancedFields({ value, onChange }: { value: Advanced; onChange:
             </div>
             <span className="field-help">More effort thinks longer and uses more of your limits. Default suits most roles.</span>
           </div>
-          <div className="field">
-            <span className="field-label">Workspace folders <span className="hint">they can read and edit these</span></span>
-            <div className="stack" style={{ gap: 6 }}>
-              {value.workspaces.map((w, i) => (
-                <div key={i} className="row">
-                  <span className="input-affix grow">
-                    <span className="affix"><Icon name="folder" size={13} /></span>
-                    <input className="input mono" value={w} placeholder="C:\\work\\project" style={{ paddingLeft: 30 }}
-                      onChange={(e) => onChange({ ...value, workspaces: value.workspaces.map((x, j) => (j === i ? e.target.value : x)) })} />
-                  </span>
-                  <button type="button" className="btn btn-ghost btn-icon" aria-label="Remove folder" onClick={() => onChange({ ...value, workspaces: value.workspaces.filter((_, j) => j !== i) })}>
-                    <Icon name="close" size={14} />
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="btn btn-sm btn-ghost" style={{ alignSelf: "flex-start" }} onClick={() => onChange({ ...value, workspaces: [...value.workspaces, ""] })}>
-                <Icon name="plus" size={12} /> Add folder
-              </button>
-            </div>
-          </div>
+          <WorkspaceFolders value={value.workspaces} onChange={(workspaces) => onChange({ ...value, workspaces })} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The folders outside their own they can read and edit: each typed or chosen, with a line saying whether it's there. */
+function WorkspaceFolders({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const checks = useFolderChecks(value);
+  const choose = async () => {
+    const picked = await call("pick_folder").catch(() => null);
+    if (picked && !value.includes(picked)) onChange([...value.filter((w) => w.trim()), picked]);
+  };
+  return (
+    <div className="field">
+      <span className="field-label">Workspace folders <span className="hint">they can read and edit these</span></span>
+      <div className="stack" style={{ gap: 6 }}>
+        {value.map((w, i) => {
+          const note = folderNote(w, checks.get(w));
+          return (
+            <div key={i} className="stack" style={{ gap: 2 }}>
+              <div className="row">
+                <span className="input-affix grow">
+                  <span className="affix"><Icon name="folder" size={13} /></span>
+                  <input className="input mono" value={w} placeholder="~/dev/project" style={{ paddingLeft: 30 }} aria-label={`Workspace folder ${i + 1}`}
+                    aria-invalid={note?.tone === "err" || undefined}
+                    onChange={(e) => onChange(value.map((x, j) => (j === i ? e.target.value : x)))} />
+                </span>
+                <button type="button" className="btn btn-ghost btn-icon" aria-label="Remove folder" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+                  <Icon name="close" size={14} />
+                </button>
+              </div>
+              {note ? (
+                <span className={`folder-note folder-note-${note.tone}`} role="status">
+                  <Icon name={note.tone === "ok" ? "check" : "alert"} size={12} />{note.text}
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void choose()}>
+            <Icon name="folder" size={12} /> Choose folder…
+          </button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange([...value, ""])}>
+            <Icon name="plus" size={12} /> Type a path
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

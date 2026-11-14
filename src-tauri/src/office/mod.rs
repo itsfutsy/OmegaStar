@@ -21,6 +21,7 @@ pub use visuals::{image_data_url, image_mime, PAGE_CSP};
 
 use crate::backup;
 use crate::catalog;
+use crate::folders;
 use crate::claude::{self, Limit, Outcome};
 use crate::health;
 use crate::log::log;

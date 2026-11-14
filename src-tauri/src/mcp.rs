@@ -320,7 +320,8 @@ fn tools() -> Value {
                 "objective": { "type": "string", "description": "What success looks like, in one sentence. Their role skill opens with it." },
                 "reason": { "type": "string", "description": "Why the company needs this role now: the gap, what it costs today, and what they would own. The person you work for decides on this." },
                 "skills": { "type": "array", "items": { "type": "string" }, "description": "Names of catalog skills they need (see catalog). Skills not in the catalog are listed as missing." },
-                "reportsTo": { "type": "string", "description": "Omit to have them report to you, or name one of your direct reports." }
+                "reportsTo": { "type": "string", "description": "Omit to have them report to you, or name one of your direct reports." },
+                "workspaces": { "type": "array", "items": { "type": "string" }, "description": "Optional. Folders outside their own that they need to read and edit, as full paths, e.g. '~/dev/site' or 'C:\\work\\site'. The person you work for sees whether each one is there before they approve." }
             }), &["name", "title", "objective", "reason"]),
         },
         {

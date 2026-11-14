@@ -599,7 +599,7 @@ export function fullOffice(): World {
     description: "Writes the blog, help articles and the newsletter's longer pieces.",
     objective: "Publish one useful post a week that studios find through search.",
     managerId: "theo", skills: { builtins: true, keys: ["user:brand-voice"] }, clearance: "supervised" as const, allowRules: [],
-    model: null, effort: null, browser: false, autoTidy: true, workspaces: ["~/Fernbrook/marketing/blog"], hue: 24,
+    model: null, effort: null, browser: false, autoTidy: true, workspaces: ["~/Fernbrook/marketing/blog", "~/Fernbrook/brand-kit"], hue: 24,
   };
   w.proposals = [
     {

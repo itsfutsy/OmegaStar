@@ -606,6 +606,16 @@ yourself. Their answer comes back to you in this conversation. Finish this run n
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
             .unwrap_or_default();
+        // The folders the hire would work in, each made one full path now, so the card shows exactly what a hire saves.
+        let mut workspaces: Vec<String> = vec![];
+        for raw in args.get("workspaces").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|x| x.as_str()).filter(|x| !x.trim().is_empty()) {
+            let full = folders::normalize(raw, &folders::home()).map_err(|why| {
+                AppError::invalid(format!("The workspace folder '{}' {why}. Pass full paths such as ~/dev/site.", raw.trim()))
+            })?;
+            if !workspaces.contains(&full) {
+                workspaces.push(full);
+            }
+        }
         let catalog = self.skill_catalog();
         let (mut keys, mut missing) = (vec![], vec![]);
         for n in &asked {
@@ -651,7 +661,7 @@ yourself. Their answer comes back to you in this conversation. Finish this run n
                     effort: None,
                     browser: false,
                     auto_tidy: true,
-                    workspaces: vec![],
+                    workspaces,
                     hue,
                     image: None,
                 },
@@ -783,10 +793,10 @@ fn open_target(employee_dir: &Path, workspaces: &[String], raw: &str) -> Result<
     if raw.is_empty() {
         return Err(AppError::invalid("Pass the full path of what to open, or an https link."));
     }
-    let path = fs::canonicalize(employee_dir.join(raw))
+    let path = fs::canonicalize(folders::resolve(raw, employee_dir, &folders::home()))
         .map_err(|_| AppError::invalid(format!("Nothing is at '{raw}'. Pass a full path, or an https link.")))?;
     let company = employee_dir.parent().unwrap_or(employee_dir);
-    let mut roots = std::iter::once(company.to_path_buf()).chain(workspaces.iter().map(|w| employee_dir.join(w))).filter_map(|r| fs::canonicalize(r).ok());
+    let mut roots = std::iter::once(company.to_path_buf()).chain(workspaces.iter().map(|w| folders::resolve(w, employee_dir, &folders::home()))).filter_map(|r| fs::canonicalize(r).ok());
     if !roots.any(|r| path.starts_with(r)) {
         return Err(AppError::invalid("You can open what is in your folder, one of your workspaces or the company page's folder, or an https link."));
     }
@@ -805,11 +815,11 @@ pub(super) fn card_image_path(employee_dir: &Path, workspaces: &[String], raw: &
 /// A file a card shows, as a full path: `raw` is full, or from the employee's folder as their runs see it. Links are
 /// followed first, so one cannot lead out of their folder and workspaces.
 fn in_folders(employee_dir: &Path, workspaces: &[String], raw: &str) -> Result<PathBuf> {
-    let path = fs::canonicalize(employee_dir.join(raw))
+    let path = fs::canonicalize(folders::resolve(raw, employee_dir, &folders::home()))
         .ok()
         .filter(|p| p.is_file())
         .ok_or_else(|| AppError::invalid(format!("No file at '{raw}'. Pass the path of the file you wrote, e.g. 'workspace/drafts/reply.md'.")))?;
-    let mut roots = std::iter::once(employee_dir.to_path_buf()).chain(workspaces.iter().map(|w| employee_dir.join(w))).filter_map(|r| fs::canonicalize(r).ok());
+    let mut roots = std::iter::once(employee_dir.to_path_buf()).chain(workspaces.iter().map(|w| folders::resolve(w, employee_dir, &folders::home()))).filter_map(|r| fs::canonicalize(r).ok());
     if !roots.any(|r| path.starts_with(r)) {
         return Err(AppError::invalid("file must be in your folder or one of your workspaces."));
     }
@@ -1018,6 +1028,22 @@ mod tests {
         assert_eq!(saved(&o.db, &r.id).cards.len(), 1);
         assert!(office.propose_company_line_tool(&r.id, &ada, &json!({ "section": "Who to ask", "line": " ", "why": "Asked." })).is_err());
         assert_eq!(told.0.lock().unwrap().len(), 1);
+        drop(office);
+    }
+
+    #[tokio::test]
+    async fn a_proposed_hire_carries_its_workspace_folders_as_full_paths() {
+        let o = office();
+        let ada = employee(&o.db, "Ada", None);
+        let r = saved_run(&o.db, &ada, RunKind::Manual, "Find us a designer.", RunState::Running, 5, None);
+        let (office, _told) = told_office(&o).await;
+        let hire = |title: &str, workspaces: Value| json!({ "name": "Cy", "title": title, "objective": "Ship designs.", "reason": "Design work piles up.", "workspaces": workspaces });
+        office.propose_hire_tool(&r.id, &ada, &hire("Designer", json!(["~/dev/site/", "/srv/brand", "~/dev/site", " "]))).unwrap();
+        let p = office.proposals().unwrap().remove(0);
+        let site = folders::home().join("dev").join("site").to_string_lossy().into_owned();
+        assert_eq!(p.draft.workspaces, vec![site, "/srv/brand".to_string()]);
+        let err = office.propose_hire_tool(&r.id, &ada, &hire("Writer", json!(["dev/site"]))).unwrap_err();
+        assert!(err.message.starts_with("The workspace folder 'dev/site' is not a full path"), "{}", err.message);
         drop(office);
     }
 

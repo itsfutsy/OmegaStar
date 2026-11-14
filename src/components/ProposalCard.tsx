@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { call, errorMessage } from "../api/client";
 import type { EmployeeView, HireProposal, OrgSnapshot, SkillInfo } from "../api/types";
+import { folderNote, useFolderChecks } from "../lib/folders";
 import { firstName } from "../lib/format";
 import { toast } from "../lib/toasts";
 import { openRun } from "../lib/router";
@@ -37,7 +38,7 @@ export function ProposalRecord({ p, proposer, snap, catalog }: {
   const who = proposer ? firstName(proposer.name) : "An employee";
   const d = p.draft;
   const skills = d.skills.keys.map((k) => skillName(k, catalog));
-  const folder = d.workspaces[0] ?? null;
+  const checks = useFolderChecks(d.workspaces);
   return (
     <>
       <section className="hire-rec" aria-label={`${d.name}, proposed`}>
@@ -62,10 +63,27 @@ export function ProposalRecord({ p, proposer, snap, catalog }: {
               </>
             ) : null}
             <dt>Starts as</dt>
-            <dd>
-              {d.clearance === "supervised" ? "Supervised" : "Autonomous"}
-              {folder ? <>, in <span className="mono">{folder}</span></> : ", in their own folder"}
-            </dd>
+            <dd>{d.clearance === "supervised" ? "Supervised" : "Autonomous"}, in their own folder</dd>
+            {d.workspaces.length ? (
+              <>
+                <dt>Also works in</dt>
+                <dd className="hire-folders">
+                  {d.workspaces.map((w) => {
+                    const note = folderNote(w, checks.get(w));
+                    return (
+                      <span key={w} className="hire-folder">
+                        <span className="mono">{w}</span>
+                        {note ? (
+                          <span className={`folder-note folder-note-${note.tone}`}>
+                            <Icon name={note.tone === "ok" ? "check" : "alert"} size={12} />{note.tone === "ok" ? "Found" : "Not found"}
+                          </span>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                </dd>
+              </>
+            ) : null}
           </dl>
         </div>
       </section>

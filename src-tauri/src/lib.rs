@@ -4,6 +4,7 @@ mod catalog;
 mod claude;
 mod commands;
 mod error;
+mod folders;
 #[cfg(test)]
 mod fixtures;
 mod health;
@@ -409,6 +410,8 @@ pub fn run() {
             commands::backup_status,
             commands::backup_now,
             commands::pick_backup_dir,
+            commands::pick_folder,
+            commands::check_folders,
             commands::open_backup_dir,
             commands::usage_limits,
             commands::refresh_usage,

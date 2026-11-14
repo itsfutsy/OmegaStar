@@ -716,6 +716,15 @@ export function previewTransport(): Transport {
       return w.backup;
     },
     pick_backup_dir: () => `${HOME}/Backups/Omega Star`,
+    pick_folder: () => `${HOME}/Fernbrook/web`,
+    // Fernbrook's folders are there, except the brand kit nobody has made yet; anything else is "not found".
+    check_folders: (a) => a.paths.map((raw) => {
+      const t = raw.trim();
+      const path = t === "~" ? HOME : t.startsWith("~/") ? `${HOME}${t.slice(1)}` : t;
+      if (!path.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(path)) return { raw, path: null, found: false, problem: "is not a full path. Start it with / or ~/ (or a drive such as C:\\ on Windows)" };
+      const clean = path.replace(/\/+$/, "");
+      return { raw, path: clean, found: clean.startsWith(`${HOME}/Fernbrook/`) && !clean.includes("brand-kit"), problem: null };
+    }),
     open_backup_dir: () => null,
     usage_limits: () => w.usage,
     refresh_usage: () => {

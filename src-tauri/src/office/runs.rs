@@ -458,6 +458,7 @@ impl Office {
         };
         drop(db);
         let employee_dir = self.employee_dir(&e.id);
+        missing_workspaces(&e, &employee_dir)?;
         if let Some(o) = opening.as_mut() {
             o.notes = own_skills::changed_notes(&employee_dir.join("workspace"), o.since.unwrap_or(o.now - chrono::Duration::days(7)));
         }
@@ -1322,6 +1323,7 @@ pub(super) fn log_failed(run: &Run, slug: &str, limit: Option<Limit>) {
 
 const NOT_FOUND: &str = "Claude Code was not found";
 const NOT_STARTED: &str = "could not start Claude Code";
+const NO_FOLDER: &str = "The run did not start";
 const TURN_LIMIT: &str = "Stopped: the run reached its turn limit";
 const NO_RESULT: &str = "Claude Code exited without a result";
 
@@ -1336,7 +1338,7 @@ fn error_class(run: &Run, limit: Option<Limit>) -> &'static str {
         "rate limit"
     } else if error.contains("No space left on device") {
         "disk full"
-    } else if error.starts_with(NOT_STARTED) || error.starts_with(NOT_FOUND) {
+    } else if error.starts_with(NOT_STARTED) || error.starts_with(NOT_FOUND) || error.starts_with(NO_FOLDER) {
         "could not start"
     } else if error.starts_with(TURN_LIMIT) {
         "turn limit"
@@ -1396,6 +1398,21 @@ fn replace_older_cards_in(db: &Store, newer: &Run, at: Ts) -> Result<Vec<Run>> {
 fn covered(e: &Employee, rules: &[String], d: &Denial) -> bool {
     e.clearance == Clearance::Autonomous
         || rules.iter().any(|r| *r == d.suggested_rule || *r == d.tool || claude::mcp_server_rule(&d.tool).as_deref() == Some(r.as_str()))
+}
+
+/// Refuses to start a run when one of the employee's workspace folders is not there, and says which and where to fix
+/// it, so the run fails on a card you can act on instead of working without the folder it was meant to have.
+fn missing_workspaces(e: &Employee, employee_dir: &Path) -> Result<()> {
+    let missing = folders::missing(&e.workspaces, employee_dir, &folders::home());
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let list = missing.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(", ");
+    let (folder, is) = if missing.len() == 1 { ("folder", "is") } else { ("folders", "are") };
+    Err(AppError::invalid(format!(
+        "{NO_FOLDER}: {}'s workspace {folder} {list} {is} not there. Put it back, or change it in {}'s profile under Advanced, then run again.",
+        e.name, e.name
+    )))
 }
 
 /// Safe, distinct file names for attachments: the last path component, with characters Windows
@@ -2241,6 +2258,21 @@ mod tests {
         office.observe_usage(room(), true);
         assert_eq!(office.usage_limits().held_until, None, "a usage check still ends a usage hold");
         drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_run_whose_workspace_folder_is_missing_says_which_and_does_not_start() {
+        let dir = temp_path("omegastar-missing-ws");
+        fs::create_dir_all(dir.join("site")).unwrap();
+        let site = dir.join("site").to_string_lossy().into_owned();
+        let gone = dir.join("gone").to_string_lossy().into_owned();
+        let e = |workspaces: Vec<String>| Employee { name: "Ada".into(), workspaces, ..crate::fixtures::employee() };
+        assert!(missing_workspaces(&e(vec![site.clone()]), &dir).is_ok());
+        let err = missing_workspaces(&e(vec![site, gone.clone()]), &dir).unwrap_err().message;
+        assert_eq!(err, format!("The run did not start: Ada's workspace folder {gone} is not there. Put it back, or change it in Ada's profile under Advanced, then run again."));
+        let failed = Run { state: RunState::Failed, error: Some(err), ..Run::new("e1", RunKind::Manual, "go".into(), now()) };
+        assert_eq!(error_class(&failed, None), "could not start");
         let _ = fs::remove_dir_all(&dir);
     }
 

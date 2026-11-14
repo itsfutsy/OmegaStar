@@ -351,6 +351,9 @@ export type WatchSettings = { hours: BusinessHours; frequency: CheckFrequency; n
 
 export type BackupFrequency = "off" | "hourly" | "daily" | "weekly";
 export type BackupSettings = { frequency: BackupFrequency; dir: string; keep: number };   // keep 1-100
+/** A typed workspace folder, checked: its full path (`~` expanded, tidied), whether it is there, or why it can't be used. */
+export type FolderCheck = { raw: string; path: string | null; found: boolean; problem: string | null };
+
 export type BackupStatus = {
   running: boolean;
   lastAt: string | null;          // the last successful backup
@@ -478,6 +481,8 @@ export type Commands = {
   backup_status: { args: Record<string, never>; ret: BackupStatus };
   backup_now: { args: Record<string, never>; ret: BackupStatus };
   pick_backup_dir: { args: Record<string, never>; ret: string | null };
+  pick_folder: { args: Record<string, never>; ret: string | null };
+  check_folders: { args: { paths: string[] }; ret: FolderCheck[] };
   open_backup_dir: { args: Record<string, never>; ret: null };
   usage_limits: { args: Record<string, never>; ret: UsageLimits };
   refresh_usage: { args: Record<string, never>; ret: UsageLimits };
