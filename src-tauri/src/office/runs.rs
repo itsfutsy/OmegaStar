@@ -3,6 +3,112 @@
 use super::*;
 
 const EVENT_BATCH: Duration = Duration::from_millis(100);
+/// How long a run whose turn is over waits on sub-agents it started with no news from Claude Code, before it stops
+/// waiting: a sub-agent at work sends news every few seconds, so this only stops one that is stuck.
+const HELPERS_QUIET: Duration = Duration::from_secs(30 * 60);
+/// How long a run whose sub-agents have all ended waits, with no news, for the turn that reads what they found.
+/// That turn starts within seconds; this only ends a run whose turn never came.
+const HELPERS_DONE_QUIET: Duration = Duration::from_secs(5 * 60);
+/// How long a run that stopped waiting gets to end by itself once its stdin is closed, before it is stopped.
+const HELPERS_EXIT: Duration = Duration::from_secs(60);
+
+/// When a run's stdin closes. Claude Code ends once its stdin is closed and its turn is done, and stops the sub-agents
+/// still working then. So while sub-agents the employee started still work, stdin stays open past the end of its
+/// turn: each one that ends comes back to the run as one more turn of it, and stdin closes at the end of a turn
+/// with none still working. A run with no news for `HELPERS_QUIET` stops waiting. Pure: the caller gives the time.
+/// Only sub-agents count, not shells or monitors working in the background: a server started in the background
+/// never ends, and would hold every run that started one for the whole wait.
+#[derive(Debug, Default)]
+struct HelperWait {
+    /// The sub-agents it started that have not ended, by task id.
+    working: HashSet<String>,
+    /// A turn of it has ended since its stdin opened.
+    turn_over: bool,
+    /// Its stdin is closed, so it takes no more messages.
+    closed: bool,
+    /// When it last heard anything from Claude Code.
+    news: Option<tokio::time::Instant>,
+    /// When it stopped waiting and closed stdin itself.
+    gave_up: Option<tokio::time::Instant>,
+    /// It was stopped after it did not end by itself.
+    killed: bool,
+}
+
+/// What `HelperWait` asks of the run.
+#[derive(Debug, PartialEq, Eq)]
+enum HelperStep {
+    /// Nothing yet.
+    Wait,
+    /// Close its stdin: its turn is over and no sub-agent works.
+    Close,
+    /// Close its stdin, though this many sub-agents still work: it had no news from them for `HELPERS_QUIET`.
+    GiveUp(usize),
+    /// Stop it: it did not end by itself after it gave up.
+    Kill,
+}
+
+impl HelperWait {
+    /// After each line from Claude Code: its events, and whether it ended a turn (a result).
+    fn line(&mut self, at: tokio::time::Instant, events: &[RunEvent], result: bool) -> HelperStep {
+        self.news = Some(at);
+        for e in events {
+            match e {
+                RunEvent::TaskStarted { task_id, .. } => {
+                    self.working.insert(task_id.clone());
+                }
+                RunEvent::TaskEnded { task_id, .. } => {
+                    self.working.remove(task_id);
+                }
+                _ => {}
+            }
+        }
+        self.turn_over |= result;
+        if result && self.working.is_empty() && !self.closed {
+            self.closed = true;
+            return HelperStep::Close;
+        }
+        HelperStep::Wait
+    }
+
+    /// When the run needs looking at though no line came: while its turn is over and its stdin still open, the
+    /// end of its quiet wait; after it gave up, the end of its time to end by itself.
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        if let Some(t) = self.gave_up {
+            return (!self.killed).then(|| t + HELPERS_EXIT);
+        }
+        if !self.turn_over || self.closed {
+            return None;
+        }
+        let quiet = if self.working.is_empty() { HELPERS_DONE_QUIET } else { HELPERS_QUIET };
+        self.news.map(|t| t + quiet)
+    }
+
+    /// At `at`, with no line since the last: what its deadline, if passed, asks.
+    fn due(&mut self, at: tokio::time::Instant) -> HelperStep {
+        if !self.deadline().is_some_and(|d| at >= d) {
+            return HelperStep::Wait;
+        }
+        if self.gave_up.is_some() {
+            self.killed = true;
+            return HelperStep::Kill;
+        }
+        self.closed = true;
+        if self.working.is_empty() {
+            return HelperStep::Close;
+        }
+        self.gave_up = Some(at);
+        HelperStep::GiveUp(self.working.len())
+    }
+}
+
+/// The report's line when a run stopped waiting on its sub-agents.
+fn gave_up_note(n: usize) -> String {
+    let mins = HELPERS_QUIET.as_secs() / 60;
+    match n {
+        1 => format!("Omega Star stopped waiting on a helper after {mins} minutes with no news from it, so it was stopped."),
+        n => format!("Omega Star stopped waiting on {n} helpers after {mins} minutes with no news from them, so they were stopped."),
+    }
+}
 /// Told to a run whose Chrome dropped, with `{ceo}` filled in.
 const CHROME_NOTE: &str = "Omega Star: Chrome is not connected, so {ceo} has been asked to reconnect it. Do not ask {ceo} about it yourself. Carry on with what does not need Chrome. If the rest needs Chrome, finish with what you have and say what is left; you will be picked up again once it is back.";
 
@@ -867,11 +973,20 @@ impl Office {
         let mut spent: Vec<claude::Spend> = vec![];
         let (mut limited, mut context, mut claude_version) = (None, None, None);
         let mut flush = tokio::time::interval(EVENT_BATCH);
+        let mut helpers = HelperWait::default();
+        let mut gave_up: Option<usize> = None;
+        let close_input = || {
+            if let Some(a) = lock(&self.0.active).get_mut(&run.id) {
+                a.input = None;
+            }
+        };
         loop {
+            let deadline = helpers.deadline();
             tokio::select! {
                 line = lines.next_line() => {
                     let Ok(Some(line)) = line else { break };
                     let parsed = claude::parse_line(&line, &snap.employee_dir);
+                    let step = helpers.line(tokio::time::Instant::now(), &parsed.events, parsed.outcome.is_some());
                     signals.observe(&parsed);
                     if signals.chrome_down(&parsed.events, now()) {
                         self.chrome_down(run, &snap.employee);
@@ -901,9 +1016,10 @@ impl Office {
                     }
                     spent.extend(parsed.spend);
                     if let Some(mut o) = parsed.outcome {
-                        // A message written before this point still runs, as one more turn of this run.
-                        if let Some(a) = lock(&self.0.active).get_mut(&run.id) {
-                            a.input = None;
+                        // A message written before this point still runs, as one more turn of this run. While its
+                        // sub-agents still work, stdin stays open and so does the run (`HelperWait`).
+                        if step == HelperStep::Close {
+                            close_input();
                         }
                         o.limit = signals.limit(&o);
                         outcome = Some(match outcome.take() {
@@ -920,6 +1036,23 @@ impl Office {
                     claude::coalesce_progress(&mut pending);
                     if !pending.is_empty() {
                         self.sink().run_events(&run.id, &std::mem::take(&mut pending));
+                    }
+                }
+                _ = async { tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)).await }, if deadline.is_some() => {
+                    match helpers.due(tokio::time::Instant::now()) {
+                        HelperStep::Wait => {}
+                        HelperStep::Close => close_input(),
+                        HelperStep::GiveUp(n) => {
+                            log!("run {}: no news from its {n} sub-agents for {} minutes, so it stops waiting on them", run.id, HELPERS_QUIET.as_secs() / 60);
+                            gave_up = Some(n);
+                            close_input();
+                        }
+                        HelperStep::Kill => {
+                            log!("run {}: still working a minute after it stopped waiting on its sub-agents, so it is stopped", run.id);
+                            if let Some(pid) = pid {
+                                claude::kill_tree(pid);
+                            }
+                        }
                     }
                 }
             }
@@ -945,6 +1078,7 @@ impl Office {
             log!("run {}: Claude in Chrome did not load, so the run had none of its tools", run.id);
             omega_notes.push("Claude in Chrome did not load in this run, so it worked without your browser.".into());
         }
+        omega_notes.extend(gave_up.map(gave_up_note));
         omega_notes.extend(claude::stopped_helpers(&stderr));
         if let RunKind::Tidy { reason, .. } = &run.kind {
             // What you taught is never lost to a tidy. An approved tidy may prune the rules its plan names. It is
@@ -1575,6 +1709,131 @@ pub(super) fn stderr_tail(stderr: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agent_started(id: &str) -> RunEvent {
+        RunEvent::TaskStarted { task_id: id.into(), tool_use_id: format!("tu-{id}"), name: "Check the totals".into() }
+    }
+    fn task_ended(id: &str) -> RunEvent {
+        RunEvent::TaskEnded { task_id: id.into(), outcome: TaskOutcome::Done, tool_uses: 3, tokens: 100, duration_ms: 1000 }
+    }
+    fn mins(n: u64) -> Duration {
+        Duration::from_secs(n * 60)
+    }
+
+    #[test]
+    fn a_run_with_no_helpers_closes_its_stdin_when_its_turn_ends() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        assert_eq!(w.line(t, &[RunEvent::Text { text: "Working.".into() }], false), HelperStep::Wait);
+        assert_eq!(w.deadline(), None, "nothing to wait for while its turn runs");
+        assert_eq!(w.line(t, &[], true), HelperStep::Close);
+        assert_eq!(w.line(t, &[], true), HelperStep::Wait, "closed once");
+        assert_eq!(w.deadline(), None);
+    }
+
+    #[test]
+    fn a_run_keeps_its_stdin_open_until_its_helpers_end_and_their_turn_is_over() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a"), agent_started("b")], false);
+        assert_eq!(w.line(t, &[], true), HelperStep::Wait, "two helpers still work when its turn ends");
+        assert_eq!(w.line(t + mins(1), &[task_ended("a")], false), HelperStep::Wait);
+        assert_eq!(w.line(t + mins(2), &[], true), HelperStep::Wait, "the turn that read the first one's findings, with one still working");
+        assert_eq!(w.line(t + mins(3), &[task_ended("b")], false), HelperStep::Wait, "the last one ended, but its turn has not run yet");
+        assert_eq!(w.line(t + mins(4), &[], true), HelperStep::Close);
+    }
+
+    #[test]
+    fn a_shell_or_a_helper_it_never_saw_start_does_not_hold_the_run() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        // A background shell's task ends with a TaskEnded too, but only sub-agents start a TaskStarted.
+        assert_eq!(w.line(t, &[task_ended("shell-1")], false), HelperStep::Wait);
+        assert_eq!(w.line(t, &[], true), HelperStep::Close);
+    }
+
+    #[test]
+    fn a_helper_started_in_a_later_turn_holds_the_run_again() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a")], false);
+        w.line(t, &[], true);
+        // You wrote in while it waited: that turn starts another helper, and the first one ends.
+        w.line(t + mins(1), &[agent_started("b"), task_ended("a")], false);
+        assert_eq!(w.line(t + mins(2), &[], true), HelperStep::Wait, "b still works");
+        w.line(t + mins(3), &[task_ended("b")], false);
+        assert_eq!(w.line(t + mins(3), &[], true), HelperStep::Close);
+    }
+
+    #[test]
+    fn news_from_a_helper_at_work_puts_off_the_safety_stop() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a")], false);
+        w.line(t, &[], true);
+        assert_eq!(w.deadline(), Some(t + HELPERS_QUIET));
+        let progress = RunEvent::TaskProgress { task_id: "a".into(), activity: "Reading".into(), last_tool: None, tool_uses: 1, tokens: 10, duration_ms: 10 };
+        w.line(t + mins(29), &[progress], false);
+        assert_eq!(w.deadline(), Some(t + mins(29) + HELPERS_QUIET));
+        assert_eq!(w.due(t + mins(31)), HelperStep::Wait, "it heard from it two minutes ago");
+    }
+
+    #[test]
+    fn a_run_stops_waiting_after_thirty_quiet_minutes_then_is_stopped_if_it_does_not_end() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a"), agent_started("b")], false);
+        w.line(t, &[], true);
+        assert_eq!(HELPERS_QUIET, mins(30));
+        assert_eq!(w.due(t + mins(29)), HelperStep::Wait);
+        let gave_up = t + mins(30);
+        assert_eq!(w.due(gave_up), HelperStep::GiveUp(2));
+        assert_eq!(w.line(gave_up, &[], true), HelperStep::Wait, "its stdin is already closed");
+        assert_eq!(w.deadline(), Some(gave_up + HELPERS_EXIT));
+        assert_eq!(w.due(gave_up + HELPERS_EXIT), HelperStep::Kill);
+        assert_eq!(w.deadline(), None, "stopped once");
+        assert_eq!(gave_up_note(2), "Omega Star stopped waiting on 2 helpers after 30 minutes with no news from them, so they were stopped.");
+        assert_eq!(gave_up_note(1), "Omega Star stopped waiting on a helper after 30 minutes with no news from it, so it was stopped.");
+    }
+
+    #[test]
+    fn a_run_whose_helpers_ended_but_whose_next_turn_never_came_closes_its_stdin() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a")], false);
+        w.line(t, &[], true);
+        w.line(t + mins(1), &[task_ended("a")], false);
+        assert_eq!(w.deadline(), Some(t + mins(1) + HELPERS_DONE_QUIET));
+        assert_eq!(w.due(t + mins(1) + HELPERS_DONE_QUIET), HelperStep::Close, "no note: nothing was cut short");
+        assert_eq!(w.deadline(), None);
+    }
+
+    #[test]
+    fn claude_codes_task_lines_hold_the_run_for_its_own_sub_agents_only() {
+        let home = Path::new("/office/employees/ada");
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        let mut feed = |line: &str| {
+            let p = claude::parse_line(line, home);
+            w.line(t, &p.events, p.outcome.is_some())
+        };
+        let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"Started the checks.","num_turns":2,"duration_ms":10}"#;
+        feed(r#"{"type":"system","subtype":"task_started","task_id":"t1","tool_use_id":"tu1","description":"Check the totals","task_type":"local_agent"}"#);
+        feed(r#"{"type":"system","subtype":"task_started","task_id":"t2","tool_use_id":"tu2","description":"npm run dev","task_type":"local_bash"}"#);
+        feed(r#"{"type":"system","subtype":"task_started","task_id":"t3","tool_use_id":"tu3","description":"Its own helper","task_type":"local_agent","owned_by_subagent":true}"#);
+        assert_eq!(feed(result), HelperStep::Wait, "its sub-agent still works");
+        feed(r#"{"type":"system","subtype":"task_notification","task_id":"t1","status":"completed","usage":{"tool_uses":4,"total_tokens":900,"duration_ms":60000}}"#);
+        assert_eq!(feed(result), HelperStep::Close, "the shell and the sub-agent's own helper do not hold it");
+    }
+
+    #[test]
+    fn a_turn_still_running_is_never_cut_short() {
+        let t = tokio::time::Instant::now();
+        let mut w = HelperWait::default();
+        w.line(t, &[agent_started("a")], false);
+        assert_eq!(w.deadline(), None, "its own turn has no time limit, as before");
+        assert_eq!(w.due(t + mins(600)), HelperStep::Wait);
+    }
     use crate::fixtures::{self, acme, employee_named, open_office, task, temp_dir, temp_path};
 
     fn outcome(ok: bool, subtype: &str, text: &str, limit: Option<Limit>) -> Outcome {
