@@ -508,10 +508,14 @@ impl Office {
         if self.0.closing.load(Ordering::SeqCst) {
             return;
         }
-        let Active { cancelled, needs_you, cards, score, proposed, verdict, title, .. } = lock(&self.0.active).remove(&run.id).unwrap_or_default();
+        let Active { cancelled, needs_you, cards, score, proposed, verdict, title, access, .. } = lock(&self.0.active).remove(&run.id).unwrap_or_default();
         if let Some(stored) = self.db().run(&run.id).ok().flatten() {
             keep_yours(&mut run, &stored.run);
         }
+        // What it asked for with `request_access`, kept through the limit requeue below with what an earlier attempt
+        // asked, and joined to what blocked it once it ends.
+        run.denials.retain(|d| d.asked);
+        run.denials.extend(access);
         run.needs_you.extend(needs_you);
         // Before the limit requeue, so cards raised before the limit stopped the run survive it. The live run
         // started with the run's own cards, so its list holds them all.
@@ -575,7 +579,9 @@ impl Office {
                 run.turns = Some(o.turns);
                 run.summary = Some(o.text.clone()).filter(|t| !t.trim().is_empty());
             }
+            let asked = std::mem::take(&mut run.denials);
             run.denials = e.blocks.clone();
+            run.denials.extend(asked);
             if !e.notes.is_empty() {
                 let notes = e.notes.join("\n");
                 run.summary = Some(match run.summary.take() {
@@ -1305,7 +1311,8 @@ fn reset_for_requeue(run: &mut Run, changes: &[SkillChange], limit: Limit) {
     run.summary = None;
     run.turns = None;
     run.duration_ms = None;
-    run.denials.clear();
+    // What it asked for with `request_access` stays: the next attempt resumes the session and won't ask again.
+    run.denials.retain(|d| d.asked);
     run.limit_retries += 1;
     if limit == Limit::Transient {
         run.transient_retries += 1;
@@ -1700,6 +1707,7 @@ mod tests {
             proposed: None,
             verdict: false,
             title: None,
+            access: vec![],
             transcript: Some(transcript),
             input: open.then_some(input),
             waiting: vec![],
@@ -2174,6 +2182,16 @@ mod tests {
     }
 
     #[test]
+    fn what_a_run_asked_for_survives_a_limit_but_what_blocked_it_does_not() {
+        let mut run = Run::new("e1", RunKind::Manual, "go".into(), now());
+        let asked = crate::access::asked(&["Bash(npm:*)".into()], &[], "To run the tests.");
+        run.denials = vec![Denial { tool: "Bash".into(), brief: "git push".into(), suggested_rule: "Bash(git:*)".into(), ..Default::default() }];
+        run.denials.extend(asked.clone());
+        reset_for_requeue(&mut run, &[], Limit::Usage);
+        assert_eq!(run.denials, asked);
+    }
+
+    #[test]
     fn each_limit_has_its_own_retries() {
         let usage = ended(Some(outcome(false, "success", "You have hit your limit.", Some(Limit::Usage))), "");
         let rate = ended(Some(outcome(false, "success", "API Error: Server is temporarily limiting requests.", Some(Limit::Transient))), "");
@@ -2282,7 +2300,7 @@ mod tests {
         run.state = RunState::Running;
         run.started_at = Some(now());
         run.summary = Some("You have hit your limit.".into());
-        run.denials = vec![Denial { tool: "Bash".into(), brief: "ls".into(), suggested_rule: "Bash(ls:*)".into() }];
+        run.denials = vec![Denial { tool: "Bash".into(), brief: "ls".into(), suggested_rule: "Bash(ls:*)".into(), ..Default::default() }];
         run.restarts = 1;
         run.restarted = true;
         db.save_run(&run).unwrap();
@@ -2492,13 +2510,13 @@ mod tests {
 
     #[test]
     fn only_a_matching_rule_covers_a_supervised_denial() {
-        let d = Denial { tool: "mcp__claude-in-chrome__get_page_text".into(), brief: String::new(), suggested_rule: "mcp__claude-in-chrome__get_page_text".into() };
+        let d = Denial { tool: "mcp__claude-in-chrome__get_page_text".into(), brief: String::new(), suggested_rule: "mcp__claude-in-chrome__get_page_text".into(), ..Default::default() };
         assert!(covered(&Employee { clearance: Clearance::Autonomous, ..fixtures::employee() }, &[], &d));
         let supervised = fixtures::employee();
         assert!(!covered(&supervised, &["Bash(git:*)".into()], &d));
         assert!(covered(&supervised, &[claude::CHROME_RULE.into()], &d));
         assert!(covered(&supervised, std::slice::from_ref(&d.tool), &d));
-        let git = Denial { tool: "Bash".into(), brief: "git push".into(), suggested_rule: "Bash(git:*)".into() };
+        let git = Denial { tool: "Bash".into(), brief: "git push".into(), suggested_rule: "Bash(git:*)".into(), ..Default::default() };
         assert!(covered(&supervised, &["Bash(git:*)".into()], &git));
         assert!(!covered(&supervised, &["Bash(ls:*)".into()], &git));
     }

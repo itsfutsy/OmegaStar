@@ -271,7 +271,7 @@ impl Office {
             std::iter::once(&t.root).chain(&t.replies).flat_map(held_said).collect()
         };
         let said = held.into_iter().chain(Some(text.trim().to_string()).filter(|t| !t.is_empty())).collect::<Vec<_>>().join("\n\n");
-        let reply = self.reply_with(run_id, &said, archive, vec![], attachments, ReplyBy::Ceo)?;
+        let reply = self.reply_with(run_id, &said, archive, Once::default(), attachments, ReplyBy::Ceo)?;
         let sent = {
             let db = self.db();
             db.tx(|| send_held(&db, run_id))?
@@ -319,7 +319,7 @@ impl Office {
                     None => "Your last attempt was stopped before it finished.".to_string(),
                 };
                 let text = format!("{stopped}\n\nCarry on from where you left off and finish.");
-                return self.reply_with(run_id, &text, archive, vec![], vec![], ReplyBy::App);
+                return self.reply_with(run_id, &text, archive, Once::default(), vec![], ReplyBy::App);
             }
             None => {
                 let mut again = Run::new(&run.employee_id, run.kind.clone(), run.prompt.clone(), now());
@@ -491,7 +491,7 @@ impl Office {
             return Err(AppError::conflict("That card was already answered."));
         }
         let said = format!("About your card \"{}\", which stays open until I answer it:\n\n{text}", claude::clip(&card.message, 300));
-        self.reply_with(run_id, &said, false, vec![], vec![], ReplyBy::Question)
+        self.reply_with(run_id, &said, false, Once::default(), vec![], ReplyBy::Question)
     }
 
     /// Sends each run what it no longer holds back (`said`: its answers, each under its own card, from `take_held`)
@@ -506,7 +506,7 @@ impl Office {
                 continue;
             }
             if let Some(said) = said {
-                match self.reply_with(&t.id, said, false, vec![], vec![], ReplyBy::Card) {
+                match self.reply_with(&t.id, said, false, Once::default(), vec![], ReplyBy::Card) {
                     Ok(r) => replies.push(r),
                     Err(e) => {
                         log!("sending your answers on the cards of run {} failed: {e}", t.id);
@@ -526,7 +526,7 @@ impl Office {
     /// A blocked run's way forward: you allow what it was denied, and it resumes to retry. `always`
     /// saves the rules to the employee; otherwise they apply to the retry run only. The rules must
     /// come from what the run was denied: its own suggested rule, or every tool of the same MCP server.
-    pub fn approve_blocked(&self, run_id: &str, rules: Vec<String>, always: bool) -> Result<Run> {
+    pub fn approve_blocked(&self, run_id: &str, rules: Vec<String>, folders: Vec<String>, always: bool) -> Result<Run> {
         let (original, employee, ceo, stays) = {
             let db = self.db();
             let original = db.run(run_id)?.ok_or_else(|| AppError::not_found("run not found"))?.run;
@@ -542,9 +542,13 @@ impl Office {
             let ceo = ceo_of(&db)?;
             (original, employee, ceo, stays)
         };
-        let mut rules: Vec<String> = rules.into_iter().map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
-        rules.dedup();
-        if rules.is_empty() {
+        let tidy = |v: Vec<String>| -> Vec<String> {
+            let mut v: Vec<String> = v.into_iter().map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect();
+            v.dedup();
+            v
+        };
+        let (rules, folders) = (tidy(rules), tidy(folders));
+        if rules.is_empty() && folders.is_empty() {
             return Err(AppError::invalid("choose what to allow"));
         }
         for r in &rules {
@@ -552,22 +556,49 @@ impl Office {
             if !asked_for {
                 return Err(AppError::invalid(format!("'{r}' is not something this run was blocked on")));
             }
+            // Asked for by the employee, so checked again here: one click never grants nearly everything.
+            if access::too_broad(r) {
+                return Err(AppError::invalid(format!("'{r}' would allow almost anything, so it can't be allowed from a card")));
+            }
+        }
+        // Each folder as it was asked for, checked again now: it may have gone since the run ended.
+        let home = self.user_home();
+        let mut given = vec![];
+        for f in &folders {
+            if !original.denials.iter().any(|d| d.folder.as_deref() == Some(f.as_str())) {
+                return Err(AppError::invalid(format!("'{f}' is not a folder this run asked for")));
+            }
+            given.push(access::check_folder(f, &home).map_err(|why| AppError::invalid(format!("The folder {f} {why}.")))?);
         }
         if always {
             for r in &rules {
                 self.allow_rule(&employee.id, r)?;
             }
+            self.add_workspaces(&employee.id, &given)?;
         }
-        let blocked = original.denials.iter().map(|d| format!("- {}: {}", d.tool, d.brief)).collect::<Vec<_>>().join("\n");
+        let blocked = original.denials.iter().map(|d| match (&d.folder, d.asked) {
+            (Some(f), true) if d.suggested_rule.is_empty() => format!("- the folder {f}: {}", d.brief),
+            (_, true) => format!("- {} (you asked: {})", d.suggested_rule, d.brief),
+            _ => format!("- {}: {}", d.tool, d.brief),
+        }).collect::<Vec<_>>().join("\n");
         let scope = if always { "from now on" } else { "for this retry" };
+        let mut allowed = vec![];
+        if !rules.is_empty() {
+            allowed.push(rules.join(", "));
+        }
+        if !given.is_empty() {
+            allowed.push(format!("the folder{} {}", if given.len() == 1 { "" } else { "s" }, given.join(", ")));
+        }
         let text = format!(
             "{ceo} approved what was blocked:\n{blocked}\n\nYou may now use {} {scope}. Retry it and finish the task. \
 Approval covers only what is listed, so if something else is blocked, stop and say what.",
-            rules.join(", ")
+            allowed.join(" and ")
         );
         // Decided, so it leaves the Inbox: the retry comes back only if it needs you again. A conversation you are
-        // in goes on instead, and news you have not seen keeps the thread where you will see it.
-        self.reply_with(run_id, &text, !stays, rules, vec![], ReplyBy::App)
+        // in goes on instead, and news you have not seen keeps the thread where you will see it. Saved for always,
+        // the retry gets them from the employee; for once, from the run itself.
+        let (once_rules, once_folders) = if always { (vec![], vec![]) } else { (rules, given) };
+        self.reply_with(run_id, &text, !stays, Once { rules: once_rules, folders: once_folders }, vec![], ReplyBy::App)
     }
 
     /// A thread's newest turn as stored, and whether the next turn resumes its session: yes while that turn is
@@ -584,14 +615,14 @@ Approval covers only what is listed, so if something else is blocked, stop and s
     /// thread's newest session (the root's, or a fresh one an earlier reply had to start). A plain reply
     /// goes into that session's run while it works; one that carries files or rules, or that Omega Star
     /// wrote (`by`), is a run of its own.
-    fn reply_with(&self, run_id: &str, text: &str, archive: bool, allow_once: Vec<String>, attachments: Vec<NewAttachment>, by: ReplyBy) -> Result<Run> {
+    fn reply_with(&self, run_id: &str, text: &str, archive: bool, once: Once, attachments: Vec<NewAttachment>, by: ReplyBy) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() && attachments.is_empty() {
             return Err(AppError::invalid("reply is empty"));
         }
         let files = Self::decode_attachments(&attachments)?;
         let own_words = matches!(by, ReplyBy::Ceo | ReplyBy::Question);
-        let plain = files.is_empty() && allow_once.is_empty() && own_words;
+        let plain = files.is_empty() && once.rules.is_empty() && once.folders.is_empty() && own_words;
         let (root, mut reply, session, turns) = {
             let db = self.db();
             let t = Self::thread_in(&db, run_id)?;
@@ -629,7 +660,8 @@ Approval covers only what is listed, so if something else is blocked, stop and s
             };
             let card = by == ReplyBy::Card;
             let mut reply = Run::new(&e.id, RunKind::Reply { to_run_id: root.id.clone(), label, task, card }, prompt, now());
-            reply.allow_once = allow_once;
+            reply.allow_once = once.rules;
+            reply.folders_once = once.folders;
             // The never-started wrapper quotes your reply in full, so it still counts as your words.
             reply.omega_wrote = !own_words;
             reply.about_card = by == ReplyBy::Question;
@@ -645,6 +677,13 @@ Approval covers only what is listed, so if something else is blocked, stop and s
         }
         self.enqueue(reply, session)
     }
+}
+
+/// What a retry may use for itself alone, from "Allow once" on a blocked card: rules and folders.
+#[derive(Default)]
+struct Once {
+    rules: Vec<String>,
+    folders: Vec<String>,
 }
 
 /// Archiving a thread (`archived`, at `at`) counts as seeing its news, and moving it back out of the Archive unsees
@@ -1221,12 +1260,12 @@ mod tests {
         };
         let carded = with_card(start("Check the supplier site"), "Order the spare parts?");
         let mut blocked = start("Publish the menu");
-        blocked.denials = vec![Denial { tool: "Bash".into(), brief: "npm publish".into(), suggested_rule: "Bash(npm publish)".into() }];
+        blocked.denials = vec![Denial { tool: "Bash".into(), brief: "npm publish".into(), suggested_rule: "Bash(npm publish)".into(), ..Default::default() }];
         let office = held_office(&dir, &e, &[&carded, &blocked]).await;
         let archived = |r: &Run| office.db().run(&r.id).unwrap().unwrap().run.archived_at.is_some();
         assert_eq!(office.answer_card(&carded.id, 0, CardReply::Choice { index: 1 }).unwrap().len(), 1);
         assert!(!archived(&carded), "the answer goes on in the conversation, as a typed one does");
-        office.approve_blocked(&blocked.id, vec!["Bash(npm publish)".into()], false).unwrap();
+        office.approve_blocked(&blocked.id, vec!["Bash(npm publish)".into()], vec![], false).unwrap();
         assert!(!archived(&blocked), "the retry goes on in the conversation");
         drop(office);
         let _ = fs::remove_dir_all(&dir);
@@ -1718,9 +1757,9 @@ mod tests {
         let dir = temp_dir("approve-news");
         let e = employee_named("Cy");
         let mut blocked = with_news(&e, false);
-        blocked.denials = vec![Denial { tool: "Bash".into(), brief: "git push".into(), suggested_rule: "Bash(git push:*)".into() }];
+        blocked.denials = vec![Denial { tool: "Bash".into(), brief: "git push".into(), suggested_rule: "Bash(git push:*)".into(), ..Default::default() }];
         let office = held_office(&dir, &e, &[&blocked]).await;
-        office.approve_blocked(&blocked.id, vec!["Bash(git push:*)".into()], false).unwrap();
+        office.approve_blocked(&blocked.id, vec!["Bash(git push:*)".into()], vec![], false).unwrap();
         let s = office.db().run(&blocked.id).unwrap().unwrap().run;
         assert!(s.archived_at.is_none() && s.has_news(), "the retry goes, and the news waits to be seen");
         drop(office);
@@ -2075,6 +2114,73 @@ mod tests {
         let stamped: Vec<String> = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         assert_eq!(stamped, vec![report.id.clone()]);
 
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A finished run of `e`, saved, and an office with `e` in it whose home folder has `dev/site` in it.
+    async fn office_with_site(dir: &Path, e: &Employee, run: &Run) -> (Office, String) {
+        let office = held_office(dir, e, &[run]).await;
+        let site = office.user_home().join("dev").join("site");
+        fs::create_dir_all(&site).unwrap();
+        (office, site.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn an_employee_asks_for_a_rule_and_a_folder_and_one_tap_allows_both_for_the_retry() {
+        let dir = temp_dir("ask-access");
+        let e = employee_named("Cy");
+        let mut run = Run::new(&e.id, task("Run the site's tests"), "Run the site's tests.".into(), now());
+        run.state = RunState::Succeeded;
+        run.ended_at = Some(now());
+        let (office, site) = office_with_site(&dir, &e, &run).await;
+        lock(&office.0.active).insert(run.id.clone(), Active { token: "t".into(), employee_id: e.id.clone(), ..Default::default() });
+        let ask = |rules: &[&str], folders: &[&str], why: &str| office.request_access_tool(&run.id, &e, &json!({ "rules": rules, "folders": folders, "why": why }));
+        assert!(ask(&["Bash(*)"], &[], "Everything.").unwrap_err().message.contains("would allow almost anything"));
+        assert_eq!(ask(&[], &["~/dev/missing"], "Tests.").unwrap_err().message, "The folder '~/dev/missing' is not there.");
+        assert_eq!(ask(&[], &[&dir.to_string_lossy()], "Tests.").unwrap_err().message, format!("The folder '{}' is outside your home folder.", dir.display()));
+        assert!(ask(&["Bash(npm:*)"], &[], " ").unwrap_err().message.starts_with("Say in one line why"));
+        let asked = ask(&["Bash(npm:*)"], &["~/dev/site"], "To run the site's tests.").unwrap();
+        assert_eq!(asked["folders"], json!([site]), "kept as a full path");
+        assert_eq!(ask(&["Bash(npm:*)"], &["~/dev/site/"], "Again.").unwrap()["rules"], json!([]), "asked once, carded once");
+        let access = lock(&office.0.active).remove(&run.id).unwrap().access;
+        assert_eq!(access.len(), 1);
+        assert_eq!((access[0].suggested_rule.as_str(), access[0].folder.as_deref(), access[0].asked), ("Bash(npm:*)", Some(site.as_str()), true));
+
+        run.denials = access;
+        office.db().save_run(&run).unwrap();
+        let retry = office.approve_blocked(&run.id, vec!["Bash(npm:*)".into()], vec![site.clone()], false).unwrap();
+        assert_eq!((retry.allow_once.clone(), retry.folders_once.clone()), (vec!["Bash(npm:*)".to_string()], vec![site.clone()]));
+        assert!(retry.prompt.contains(&format!("You may now use Bash(npm:*) and the folder {site} for this retry.")), "{}", retry.prompt);
+        let cy = office.db().employee(&e.id).unwrap().unwrap();
+        assert!(cy.allow_rules.is_empty() && cy.workspaces.is_empty(), "allowed once, nothing saved");
+        drop(office);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn always_allow_saves_the_rule_and_the_folder_but_never_a_rule_too_broad_or_a_folder_not_asked_for() {
+        let dir = temp_dir("always-access");
+        let e = employee_named("Cy");
+        let mut run = Run::new(&e.id, task("Run the site's tests"), "Run the site's tests.".into(), now());
+        run.state = RunState::Succeeded;
+        run.ended_at = Some(now());
+        let site = dir.canonicalize().unwrap().join("home").join("dev").join("site").to_string_lossy().into_owned();
+        run.denials = vec![
+            Denial { tool: "Bash".into(), brief: format!("cd {site} && npm test"), suggested_rule: "Bash(npm:*)".into(), folder: Some(site.clone()), asked: false },
+            // Read back from an older transcript, so never checked when it was asked.
+            Denial { tool: "Bash".into(), brief: "Anything.".into(), suggested_rule: "Bash(*)".into(), folder: None, asked: true },
+        ];
+        let (office, _) = office_with_site(&dir, &e, &run).await;
+        let approve = |rules: &[&str], folders: &[&str]| {
+            office.approve_blocked(&run.id, rules.iter().map(|r| r.to_string()).collect(), folders.iter().map(|f| f.to_string()).collect(), true)
+        };
+        assert!(approve(&["Bash(*)"], &[]).unwrap_err().message.contains("would allow almost anything"));
+        assert_eq!(approve(&[], &["/Users/someone/else"]).unwrap_err().message, "'/Users/someone/else' is not a folder this run asked for");
+        let retry = approve(&["Bash(npm:*)"], &[&site]).unwrap();
+        assert!(retry.allow_once.is_empty() && retry.folders_once.is_empty(), "saved, so the retry needs nothing of its own");
+        let cy = office.db().employee(&e.id).unwrap().unwrap();
+        assert_eq!((cy.allow_rules, cy.workspaces), (vec!["Bash(npm:*)".to_string()], vec![site]));
         drop(office);
         let _ = fs::remove_dir_all(&dir);
     }

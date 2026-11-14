@@ -543,7 +543,7 @@ mod tests {
         r.needs_you.push("The tidy dropped a rule.".into());
         assert!(asks_you(&t(&r)), "a flag Omega Star raised");
         r.needs_you.truncate(1);
-        r.denials = vec![Denial { tool: "Bash".into(), brief: "ls".into(), suggested_rule: "Bash(ls:*)".into() }];
+        r.denials = vec![Denial { tool: "Bash".into(), brief: "ls".into(), suggested_rule: "Bash(ls:*)".into(), ..Default::default() }];
         assert!(asks_you(&t(&r)));
         let mut retried = Run::new("e1", RunKind::Reply { to_run_id: r.id.clone(), label: "Manual run".into(), task: false, card: false }, "ok".into(), chrono::Utc::now());
         retried.state = RunState::Succeeded;

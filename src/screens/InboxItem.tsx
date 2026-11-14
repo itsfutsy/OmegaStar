@@ -123,7 +123,9 @@ function ask(d: Decision<Item>, who: string, employees: EmployeeView[], people: 
       return tidyAsks(d.thread.root) ? { title: `Approve ${who}'s skill changes?`, why: null } : { title: d.text, why: null };
     case "blocked":
       return {
-        title: r.denials.length === 1 ? `Allow ${who} to use ${toolName(r.denials[0].tool)}?` : `Allow ${r.denials.length} actions ${who} was blocked on?`,
+        title: r.denials.every((x) => x.asked)
+          ? `Give ${who} what they asked for?`
+          : r.denials.length === 1 ? `Allow ${who} to use ${toolName(r.denials[0].tool)}?` : `Allow ${r.denials.length} things ${who} needs?`,
         why: r.denials.length === 1 ? r.denials[0].brief : null,
       };
     case "broken": {

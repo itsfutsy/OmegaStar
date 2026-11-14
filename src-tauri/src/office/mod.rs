@@ -19,6 +19,7 @@ mod visuals;
 
 pub use visuals::{image_data_url, image_mime, PAGE_CSP};
 
+use crate::access;
 use crate::backup;
 use crate::catalog;
 use crate::claude::{self, Limit, Outcome};
@@ -126,6 +127,8 @@ struct Active {
     verdict: bool,
     /// The name it gave its own thread with `name_thread`, copied onto the run when it ends.
     title: Option<String>,
+    /// The rules and folders it asked for with `request_access`, added to the run's blocked steps when it ends.
+    access: Vec<crate::model::Denial>,
     /// Opened when the run starts preparing.
     transcript: Option<Arc<Mutex<File>>>,
     /// The run's open stdin, from its start until its turn ends: `Some` while it still takes messages.
@@ -591,6 +594,13 @@ fn settle(run: &mut Run, left: Leftover<'_>, lost: &str) -> Vec<runs::Seen> {
                 });
             }
             run.proposed = claude::office_calls(left.transcript, "mcp__omega__propose_changes").last().and_then(|c| text(c, "plan"));
+            // What it asked for, as `request_access` took it: approving still checks each rule and folder again.
+            if left.supervised {
+                for call in claude::office_calls(left.transcript, "mcp__omega__request_access") {
+                    let list = |k: &str| call[k].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::trim)).filter(|v| !v.is_empty()).map(String::from).collect::<Vec<_>>();
+                    run.denials.extend(crate::access::asked(&list("rules"), &list("folders"), call["why"].as_str().unwrap_or("")));
+                }
+            }
         }
         None if run.restarts < RESTART_RETRIES => {
             run.state = RunState::Queued;

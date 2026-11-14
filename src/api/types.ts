@@ -168,7 +168,9 @@ export type OriginalSkill = {
   notes: string[];             // why removing it could hurt
 };
 export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "lost";
-export type Denial = { tool: string; brief: string; suggestedRule: string };
+/** What a run was blocked on, or asked for with `request_access` (`asked`, and `brief` is their reason). `folder`: a
+ *  folder outside their own it reached or asked for, as a full path. A folder alone has tool "folder" and no rule. */
+export type Denial = { tool: string; brief: string; suggestedRule: string; folder?: string | null; asked?: boolean };
 export type SkillChangeKind = "added" | "modified" | "removed";
 export type SkillChange = { skill: string; file: string; change: SkillChangeKind };
 /** What a run asks you with the answer built in. A run can ask several; each message is also in needsYou. */
@@ -227,6 +229,7 @@ export type Run = {
   deliveredAt: string | null;  // asked and delegated runs: when the answer or report reached whoever handed it over
   check: string | null;        // a due check that came back into the conversation it was set in: the check's id
   allowOnce: string[];         // rules you granted this run only ("Allow once", which retries)
+  foldersOnce?: string[];      // folders you gave this run only, the same way
   proposed: string | null;     // a tidy's bigger changes, waiting for your approval
   approvedAt: string | null;   // a tidy: when you approved what it proposed (a reply to it is no decision)
   attachments: string[];       // file names you attached to a message
@@ -429,7 +432,7 @@ export type Commands = {
   /** Allow what a finished run was blocked on and send it back to retry. `rules` must come from its denials
    *  (a denial's suggestedRule, or `mcp__<server>__*` for an MCP tool). `always` saves them to the employee;
    *  otherwise they apply to the retry only. Archives the blocked report. Returns the retry run. */
-  approve_blocked: { args: { runId: string; rules: string[]; always: boolean }; ret: Run };
+  approve_blocked: { args: { runId: string; rules: string[]; folders?: string[]; always: boolean }; ret: Run };
   /** Your answer on a run's card (`card`: its index in `cards`). It goes to every run asking the same thing. Returns the replies it started.
    *  A question (`ask`) answers nothing: it returns the one reply that carries it. */
   answer_card: { args: { runId: string; card: number; answer: CardReply }; ret: Run[] };

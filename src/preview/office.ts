@@ -796,6 +796,17 @@ export function inboxMoreOffice(): World {
     end: ago(22), mins: 5, summary: filed,
     denials: [{ tool: "mcp__linear__create_issue", brief: "Create \"Flaky: booking/waitlist-promotes-next-in-line\" in Fernbrook QA", suggestedRule: "mcp__linear__create_issue" }],
   }), [init(9), ...tool("l1", "Read", "test-results/flaky.json", "7 tests"), ...tool("l2", "mcp__linear__create_issue", "Flaky: booking/waitlist-promotes-next-in-line", "Blocked: not allowed", false), said(filed)]);
+  // Blocked on a command in a folder outside their own, and asking for a rule and a folder with `request_access`.
+  const mobile = `${HOME}/Fernbrook/mobile`;
+  const e2e = "The web tests pass. I couldn't run the mobile ones: they live outside my folder, and I need the iPhone simulator and the design screens to check against.";
+  addOpen(w, mk("mobile-1", "rafi", { type: "manual" }, "Run the booking tests on the mobile app too, and check the screens match the designs.", {
+    end: ago(9), mins: 7, summary: e2e,
+    denials: [
+      { tool: "Bash", brief: `cd ${mobile} && npm run e2e`, suggestedRule: "Bash(npm:*)", folder: mobile, asked: false },
+      { tool: "Bash", brief: "To start the iPhone simulator the mobile tests run in.", suggestedRule: "Bash(xcrun simctl:*)", folder: null, asked: true },
+      { tool: "folder", brief: "To compare each booking screen with its design.", suggestedRule: "", folder: `${HOME}/Fernbrook/design/screens`, asked: true },
+    ],
+  }), [init(9), ...tool("m1", "Bash", "npx playwright test booking", "12 passed"), ...tool("m2", "Bash", `cd ${mobile} && npm run e2e`, "Blocked: not allowed", false), ...tool("m3", "mcp__omega__request_access", "Bash(xcrun simctl:*), design/screens", "Asked"), said(e2e)]);
   return w;
 }
 

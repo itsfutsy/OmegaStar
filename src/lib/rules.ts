@@ -17,8 +17,12 @@ export function mcpServerName(tool: string): string | null {
   return name === "claude in chrome" ? "Chrome" : name || m[1];
 }
 
+/** The tool name of an ask for a folder alone. Mirrors `access::FOLDER_TOOL` in the backend. */
+export const FOLDER_TOOL = "folder";
+
 /** The tool as a person would say it: "javascript_tool" for `mcp__claude-in-chrome__javascript_tool`. */
 export function toolName(tool: string): string {
+  if (tool === FOLDER_TOOL) return "a folder";
   const m = MCP_TOOL.exec(tool);
   return m ? m[2] : tool;
 }

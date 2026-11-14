@@ -227,6 +227,39 @@ impl Office {
         Ok(())
     }
 
+    /// Your home folder, which folders given from a blocked card must be inside. In tests, a `home` folder in the
+    /// office's own, so tests never look at the real one.
+    pub(super) fn user_home(&self) -> PathBuf {
+        if cfg!(test) {
+            self.0.data_dir.join("home")
+        } else {
+            access::home()
+        }
+    }
+
+    /// Adds folders to the ones the employee works in, as full paths, skipping any they have.
+    pub(super) fn add_workspaces(&self, employee_id: &str, folders: &[String]) -> Result<()> {
+        if folders.is_empty() {
+            return Ok(());
+        }
+        {
+            let db = self.db();
+            let mut e = db.employee(employee_id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
+            let before = e.workspaces.len();
+            for f in folders {
+                if !e.workspaces.contains(f) {
+                    e.workspaces.push(f.clone());
+                }
+            }
+            if e.workspaces.len() == before {
+                return Ok(());
+            }
+            db.save_employee(&e)?;
+        }
+        self.sink().org_changed();
+        Ok(())
+    }
+
     // ------------------------------------------------------------------ people
 
     pub fn add_person(&self, draft: PersonDraft) -> Result<Person> {

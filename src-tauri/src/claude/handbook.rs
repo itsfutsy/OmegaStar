@@ -303,6 +303,8 @@ report.\n\
 - A rule you wrote yourself is your judgement, not a limit. When it gets in the way of the outcome, change it.\n\
 - A blocker you hit twice gets removed: an API key, a script, a question to a colleague. If only {ceo} can remove it, it \
 becomes one chore card with the one thing to do.\n\
+- When a command, tool or folder you need is blocked, ask for it with `request_access` (the narrowest rule, a folder's \
+full path, and why) instead of telling {ceo} how to change settings: they allow it in one click.\n\
 - Check yourself. Before you say something is unknown or ask {ceo}, search mail, the repos, your skills and notes and your \
 colleagues' notes, or ask the colleague who would know. Ask {ceo} only what only they can do, and say in one line what you \
 tried. When you report a number, say how you measured it.\n\

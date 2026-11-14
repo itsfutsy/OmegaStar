@@ -678,7 +678,7 @@ fn the_inbox_query_matches_reaches_you() {
     db.save_employee(&ada).unwrap();
     db.save_employee(&bo).unwrap();
     let states = [RunState::Queued, RunState::Running, RunState::Succeeded, RunState::Failed, RunState::Cancelled, RunState::Lost];
-    let denial = Denial { tool: "Bash".into(), brief: "rm -rf build".into(), suggested_rule: "Bash(rm:*)".into() };
+    let denial = Denial { tool: "Bash".into(), brief: "rm -rf build".into(), suggested_rule: "Bash(rm:*)".into(), ..Default::default() };
 
     let mut all = vec![];
     let mut i = 0;

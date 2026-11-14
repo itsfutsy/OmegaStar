@@ -558,17 +558,18 @@ export function previewTransport(): Transport {
       if (!w.open.includes(root.id)) w.open.unshift(root.id);
       return respond(newRun(root.employeeId, { type: "reply", toRunId: root.id, label: root.title ?? "Report", task: startedByYou(root), card: false }, text, { attachments: attachments.map((a) => a.name) }));
     },
-    approve_blocked: ({ runId, rules, always }) => {
+    approve_blocked: ({ runId, rules, folders = [], always }) => {
       const r = need(runId);
       const e = w.employees.find((x) => x.id === r.employeeId);
       if (always && e) {
         e.allowRules = [...new Set([...e.allowRules, ...rules])];
+        e.workspaces = [...new Set([...e.workspaces, ...folders])];
         changed();
       }
       const root = need(rootOf(r));
       root.archivedAt = iso(Date.now());
       emitRun(root);
-      return respond(newRun(r.employeeId, r.kind, r.prompt, { allowOnce: always ? [] : rules, omegaWrote: true }), "Done. The draft campaign is ready to schedule for 30 January.");
+      return respond(newRun(r.employeeId, r.kind, r.prompt, { allowOnce: always ? [] : rules, foldersOnce: always ? [] : folders, omegaWrote: true }), "Done. The draft campaign is ready to schedule for 30 January.");
     },
     answer_card: answerCard,
     card_file: ({ runId, card }) => {

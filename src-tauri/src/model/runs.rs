@@ -166,12 +166,20 @@ impl RunState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Something a run was blocked on, or asked for with `request_access`, and the rule (and folder) that would allow it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Denial {
     pub tool: String,
     pub brief: String,
+    /// Empty for an ask for a folder alone (`access::FOLDER_TOOL`).
     pub suggested_rule: String,
+    /// The folder outside the employee's own that the step reached or they asked for, as a full path.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// They asked for it with `request_access` instead of being blocked on it; `brief` is their reason.
+    #[serde(default)]
+    pub asked: bool,
 }
 
 /// How this copy of Omega Star was built: a published release, a test build, or a developer's own.
@@ -308,6 +316,10 @@ pub struct Run {
     /// settings and are never saved to the employee.
     #[serde(default)]
     pub allow_once: Vec<String>,
+    /// Folders you gave for this run only ("Allow once"). Claude gets them with `--add-dir`; they are never saved
+    /// to the employee.
+    #[serde(default)]
+    pub folders_once: Vec<String>,
     /// For a Tidy run: the bigger changes it proposes and waits for your approval to make.
     #[serde(default)]
     pub proposed: Option<String>,
@@ -396,6 +408,7 @@ impl Run {
             delivered_at: None,
             check: None,
             allow_once: vec![],
+            folders_once: vec![],
             proposed: None,
             approved_at: None,
             attachments: vec![],

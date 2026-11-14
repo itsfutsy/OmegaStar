@@ -387,7 +387,8 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     }
     args.extend(["--disallowedTools".into(), SESSION_ONLY_TOOLS.join(",")]);
     args.extend(model_args(&run.kind, e));
-    for w in e.workspaces.iter().filter(|w| !w.trim().is_empty()) {
+    // Its folders, then any you gave for this run alone from a blocked card.
+    for w in e.workspaces.iter().chain(&run.folders_once).filter(|w| !w.trim().is_empty()) {
         args.extend(["--add-dir".into(), w.clone()]);
     }
     let mcp = json!({ "mcpServers": { "omega": { "type": "http", "url": s.mcp_url } } });
@@ -635,6 +636,17 @@ mod tests {
         assert!(inv.stdin.ends_with(&format!("</omega-star>\n\n{RESTART_NOTE}")), "the latest cause, the restart: {}", inv.stdin);
         let inv = prepare(&snapshot(None, false), &restarted);
         assert!(inv.stdin.ends_with("Archive it."), "a session that never started hears the message itself");
+    }
+
+    #[test]
+    fn a_folder_given_for_one_run_reaches_claude_after_the_employees_own() {
+        let mut s = snapshot(None, false);
+        s.employee.workspaces = vec!["/Users/pat/dev/site".into()];
+        let mut run = Run::new("e1", RunKind::Chat, "Run the tests.".into(), chrono::Utc::now());
+        run.folders_once = vec!["/Users/pat/dev/api".into()];
+        let inv = prepare(&s, &run);
+        let dirs: Vec<&str> = inv.args.windows(2).filter(|w| w[0] == "--add-dir").map(|w| w[1].as_str()).collect();
+        assert_eq!(dirs, ["/Users/pat/dev/site", "/Users/pat/dev/api"]);
     }
 
     #[test]

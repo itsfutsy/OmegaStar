@@ -3,6 +3,7 @@ import { call } from "../../api/client";
 import type { EmployeeView, Run, ScheduleDraft } from "../../api/types";
 import { dayHeading, firstName } from "../../lib/format";
 import { refreshOrg, useOrg, useQuery } from "../../lib/hooks";
+import { toolName } from "../../lib/rules";
 import { isLive } from "../../lib/threads";
 import { workTitle } from "../../lib/workTitle";
 import { RunRow } from "../RunRow";
@@ -93,7 +94,7 @@ function NeedsALook({ e, run }: { e: EmployeeView; run: Run }) {
   const blocked = run.denials.length > 0;
   const title = blocked ? `${what} is blocked` : run.state === "lost" ? `${what} was interrupted` : `${what} failed`;
   const text = blocked
-    ? `${firstName(e.name)} needs your OK to use ${run.denials.map((d) => d.tool).filter((t, i, a) => a.indexOf(t) === i).join(", ")}. Allow it from the run, and it retries.`
+    ? `${firstName(e.name)} needs your OK to use ${run.denials.map((d) => toolName(d.tool)).filter((t, i, a) => a.indexOf(t) === i).join(", ")}. Allow it from the run, and it retries.`
     : run.error ?? "It stopped before it finished.";
   return (
     <section className="psec needs-look">

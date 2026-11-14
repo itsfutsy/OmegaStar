@@ -133,8 +133,13 @@ fn tool_brief(input: &Value, home: &Path) -> String {
     clip(&one_line(&s), 160)
 }
 
+/// The rule that would allow a blocked step: `Bash(<first word>:*)` for a command, the tool itself otherwise. For
+/// `cd <folder> && <command>` it is the command's rule, since Claude Code checks each part of a `&&` on its own and
+/// `cd` into a folder is allowed by giving the folder (`Denial::folder`), not by a rule.
 fn suggested_rule(tool: &str, input: &Value) -> String {
-    match (tool, input.get("command").and_then(|c| c.as_str()).and_then(|c| c.split_whitespace().next())) {
+    let command = input.get("command").and_then(|c| c.as_str()).unwrap_or("");
+    let command = crate::access::cd_target(command).map(|(_, rest)| rest).unwrap_or(command);
+    match (tool, command.split_whitespace().next()) {
         ("Bash", Some(word)) => format!("Bash({word}:*)"),
         _ => tool.to_string(),
     }
@@ -296,7 +301,14 @@ pub fn parse_line(line: &str, home: &Path) -> Parsed {
                     .flatten()
                     .map(|d| {
                         let tool = str_at(d, "tool_name");
-                        let denial = Denial { brief: tool_brief(&d["tool_input"], home), suggested_rule: suggested_rule(&tool, &d["tool_input"]), tool };
+                        let input = &d["tool_input"];
+                        let denial = Denial {
+                            brief: tool_brief(input, home),
+                            suggested_rule: suggested_rule(&tool, input),
+                            folder: crate::access::folder_of(&tool, input, &crate::access::home()),
+                            asked: false,
+                            tool,
+                        };
                         Denied { tool_use_id: str_at(d, "tool_use_id"), denial }
                     })
                     .collect(),
@@ -821,6 +833,15 @@ mod tests {
         assert!(matches!(&events[0], RunEvent::Result { turns: 3, .. }));
         assert_eq!(events[1], RunEvent::User { text: "Add the totals too.".into(), id: None });
         assert!(matches!(&events[2], RunEvent::Result { turns: 2, .. }));
+    }
+
+    #[test]
+    fn a_blocked_cd_into_a_folder_suggests_the_commands_rule_and_the_folder() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":700,"result":"Done.","permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_cd1","tool_input":{"command":"cd /Users/maren/dev/site && npm test -- --watch=false"}},{"tool_name":"Read","tool_use_id":"toolu_rd1","tool_input":{"file_path":"/Users/maren/dev/site/README.md"}}]}"#;
+        let o = last_outcome(line);
+        let d = &o.denials[0].denial;
+        assert_eq!((d.suggested_rule.as_str(), d.folder.as_deref(), d.asked), ("Bash(npm:*)", Some("/Users/maren/dev/site"), false));
+        assert_eq!(o.denials[1].denial.folder.as_deref(), Some("/Users/maren/dev/site"));
     }
 
     #[test]

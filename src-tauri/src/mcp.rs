@@ -103,6 +103,7 @@ async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<
         "show" => office.show_tool(&run_id, args),
         "open" => office.open_tool(&run_id, &me, s("target")),
         "name_thread" => office.name_thread_tool(&run_id, s("title")),
+        "request_access" => office.request_access_tool(&run_id, &me, args),
         _ => Err(AppError::invalid(format!("unknown tool '{name}'"))),
     }
 }
@@ -205,6 +206,15 @@ fn tools() -> Value {
             "inputSchema": obj(json!({
                 "title": { "type": "string", "description": "At most 60 characters, e.g. 'Spring sale emails'." }
             }), &["title"]),
+        },
+        {
+            "name": "request_access",
+            "description": "Ask the person you work for to let you use a command or tool you were blocked on, or work in a folder outside your own. Use it instead of describing settings steps for them. Ask for the narrowest rule that does the job: Bash(npm test:*) rather than Bash(npm:*), never Bash(*) or *. When the run ends they get one card and allow it all in one click, once or always, and this conversation starts again with it allowed. Do not wait for it: finish what you can and say what is waiting.",
+            "inputSchema": obj(json!({
+                "rules": { "type": "array", "items": { "type": "string" }, "description": "Permission rules, e.g. Bash(git push:*) or mcp__linear__create_issue." },
+                "folders": { "type": "array", "items": { "type": "string" }, "description": "Full paths of folders to work in, e.g. /Users/you/dev/site. Must already exist, inside the home folder." },
+                "why": { "type": "string", "description": "One line, in plain words, of what it is for. It is what they read on the card." }
+            }), &["why"]),
         },
         {
             "name": "close_ask",

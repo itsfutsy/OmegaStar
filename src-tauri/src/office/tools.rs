@@ -711,6 +711,60 @@ you as a new run. Never create the hire any other way."
 
     /// Names the thread the calling run is in (`Run::title`, on its first run): the conversation, or the report and
     /// the replies on it. When that first run is the caller, its end saves the name again, so it keeps it.
+    /// `request_access`: the caller, blocked or about to be, asks you for permission rules and folders outside
+    /// their own. Checked now so the card only offers what can be given; it reaches you on the run's blocked card
+    /// when the run ends, where one click allows it all once or always and retries the run.
+    pub fn request_access_tool(&self, caller_run: &str, me: &Employee, args: &Value) -> Result<Value> {
+        let list = |k: &str| -> Vec<String> {
+            let mut v: Vec<String> = args.get(k).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|x| x.as_str().map(str::trim)).filter(|x| !x.is_empty()).map(String::from).collect();
+            v.dedup();
+            v
+        };
+        let (mut rules, folders) = (list("rules"), list("folders"));
+        let why = args.get("why").and_then(|v| v.as_str()).map(claude::one_line).unwrap_or_default();
+        if rules.is_empty() && folders.is_empty() {
+            return Err(AppError::invalid("Ask for at least one rule or folder."));
+        }
+        if why.is_empty() {
+            return Err(AppError::invalid("Say in one line why you need it: it is what they read on the card."));
+        }
+        for r in &rules {
+            if access::too_broad(r) {
+                return Err(AppError::invalid(format!("'{r}' would allow almost anything. Ask for the narrowest rule that does the job, such as Bash(npm test:*).")));
+            }
+            if r.contains(['\n', '\r']) || r.chars().count() > 200 {
+                return Err(AppError::invalid(format!("'{r}' is not a permission rule. Write one rule per item, such as Bash(git push:*) or mcp__linear__create_issue.")));
+            }
+        }
+        let home = self.user_home();
+        let own_dir = self.employee_dir(&me.id);
+        let held: Vec<PathBuf> = me.workspaces.iter().filter_map(|w| access::full_folder(w, &home).ok()).collect();
+        let mut wanted = vec![];
+        for f in &folders {
+            let path = access::check_folder(f, &home).map_err(|why| AppError::invalid(format!("The folder '{f}' {why}.")))?;
+            let p = PathBuf::from(&path);
+            // Already theirs: their own folder, or inside one they work in.
+            if !p.starts_with(&own_dir) && !held.iter().any(|h| p.starts_with(h)) && !wanted.contains(&path) {
+                wanted.push(path);
+            }
+        }
+        rules.retain(|r| !me.allow_rules.contains(r) && !(me.browser && r == claude::CHROME_RULE));
+        if rules.is_empty() && wanted.is_empty() {
+            return Ok(json!({ "asked": false, "note": "You already have all of that. If a step is still blocked, say exactly what it was and the error it gave." }));
+        }
+        let mut active = lock(&self.0.active);
+        let a = active.get_mut(caller_run).ok_or_else(|| AppError::invalid("this run has ended"))?;
+        rules.retain(|r| !a.access.iter().any(|d| d.suggested_rule == *r));
+        wanted.retain(|f| !a.access.iter().any(|d| d.folder.as_deref() == Some(f.as_str())));
+        a.access.extend(access::asked(&rules, &wanted, &why));
+        Ok(json!({
+            "asked": true,
+            "rules": rules,
+            "folders": wanted,
+            "note": "When this run ends they get one card with Allow once and Always allow. Allowing it starts this conversation again with it allowed. Do not wait or retry now: finish what you can, and say in your report what is waiting on this."
+        }))
+    }
+
     pub fn name_thread_tool(&self, caller_run: &str, title: &str) -> Result<Value> {
         let title = claude::one_line(title);
         if title.is_empty() {
