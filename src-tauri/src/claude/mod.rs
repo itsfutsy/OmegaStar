@@ -88,7 +88,9 @@ pub fn locate(override_path: Option<&str>) -> Option<PathBuf> {
 /// Anthropic credentials or provider settings, so a run uses the signed-in account unless the CLI
 /// proxy's variables are added back.
 pub(crate) fn command(program: &Path) -> tokio::process::Command {
+    let (program, script) = launcher(program, find_node);
     let mut c = tokio::process::Command::new(program);
+    c.args(script);
     if let Some(p) = child_path() {
         c.env("PATH", p);
     }
@@ -99,6 +101,47 @@ pub(crate) fn command(program: &Path) -> tokio::process::Command {
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c
+}
+
+/// What to start for `program`: an npm `.cmd` shim (how `npm install -g` installs `claude` on Windows) becomes node
+/// and the script the shim would hand it, so arguments never pass through cmd.exe's quoting, and stopping the
+/// process stops Claude Code itself rather than a cmd.exe in front of it. Anything else, or a shim whose script or
+/// node can't be found, starts as it is.
+fn launcher(program: &Path, node: impl Fn(&Path) -> Option<PathBuf>) -> (PathBuf, Option<PathBuf>) {
+    let as_is = (program.to_path_buf(), None);
+    if !program.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd")) {
+        return as_is;
+    }
+    let (Some(dir), Ok(text)) = (program.parent(), std::fs::read_to_string(program)) else { return as_is };
+    let Some(script) = npm_shim_script(&text, dir).filter(|s| s.is_file()) else { return as_is };
+    match node(dir) {
+        Some(node) => (node, Some(script)),
+        None => as_is,
+    }
+}
+
+/// The script an npm `.cmd` shim runs with node, from the shim's text and its folder: the quoted `%dp0%\…` (or
+/// older `%~dp0\…`) path ending in .js, .cjs or .mjs on the line that passes the arguments on (`%*`). `None` when the
+/// text is not such a shim. Pure.
+fn npm_shim_script(shim: &str, dir: &Path) -> Option<PathBuf> {
+    let line = shim.lines().rev().find(|l| l.contains("%*"))?;
+    let rel = ["\"%dp0%\\", "\"%~dp0\\"].iter().find_map(|start| {
+        let mut quoted = line.match_indices(start).map(|(i, _)| &line[i + start.len()..]);
+        quoted.find_map(|rest| rest.split_once('"').map(|(path, _)| path).filter(|p| [".js", ".cjs", ".mjs"].iter().any(|ext| p.to_ascii_lowercase().ends_with(ext))))
+    })?;
+    Some(rel.split('\\').filter(|part| !part.is_empty()).fold(dir.to_path_buf(), |path, part| path.join(part)))
+}
+
+/// The node a shim in `dir` would use: its own `node.exe` beside it, or the first `node` on PATH.
+fn find_node(dir: &Path) -> Option<PathBuf> {
+    let beside = dir.join("node.exe");
+    if beside.is_file() {
+        return Some(beside);
+    }
+    match child_path() {
+        Some(path) => which::which_in("node", Some(path), dir).ok(),
+        None => which::which("node").ok(),
+    }
 }
 
 /// The inherited variables a child must not see: Anthropic keys, base URLs and tokens, and the
@@ -552,6 +595,45 @@ mod tests {
     use super::*;
     use crate::claude::fixtures::*;
     use crate::fixtures::{self, scheduled};
+
+    /// npm's shim for `claude` as `npm install -g` writes it on Windows today.
+    const NPM_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n";
+
+    #[test]
+    fn an_npm_shim_names_the_script_it_runs_with_node() {
+        let dir = Path::new("/npm");
+        let cli = dir.join("node_modules").join("@anthropic-ai").join("claude-code").join("cli.js");
+        assert_eq!(npm_shim_script(NPM_SHIM, dir), Some(cli.clone()));
+        let old = "@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n) ELSE (\r\n  node  \"%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n)";
+        assert_eq!(npm_shim_script(old, dir), Some(cli), "the older shim, with %~dp0");
+        assert_eq!(npm_shim_script("@echo off\r\n\"%~dp0\\claude.exe\" %*\r\n", dir), None, "not a node script");
+        assert_eq!(npm_shim_script("@echo off\r\nnode \"%~dp0\\cli.js\"\r\n", dir), None, "passes no arguments on");
+    }
+
+    #[test]
+    fn a_claude_cmd_shim_starts_node_with_its_script_and_anything_else_starts_as_it_is() {
+        let dir = fixtures::temp_dir("npm-shim");
+        let shim = dir.join("claude.cmd");
+        std::fs::write(&shim, NPM_SHIM).unwrap();
+        let node = |_: &Path| Some(PathBuf::from("node.exe"));
+        assert_eq!(launcher(&shim, node), (shim.clone(), None), "its script isn't there, so the shim runs as it is");
+
+        let cli = dir.join("node_modules").join("@anthropic-ai").join("claude-code").join("cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "").unwrap();
+        assert_eq!(launcher(&shim, node), (PathBuf::from("node.exe"), Some(cli.clone())));
+        let upper = dir.join("CLAUDE.CMD");
+        std::fs::write(&upper, NPM_SHIM).unwrap();
+        assert_eq!(launcher(&upper, node), (PathBuf::from("node.exe"), Some(cli)), "Windows names are any case");
+        assert_eq!(launcher(&shim, |_: &Path| None), (shim.clone(), None), "no node found");
+
+        let exe = dir.join("claude");
+        std::fs::write(&exe, NPM_SHIM).unwrap();
+        assert_eq!(launcher(&exe, node), (exe.clone(), None), "only a .cmd is read as a shim");
+        let missing = dir.join("gone.cmd");
+        assert_eq!(launcher(&missing, node), (missing.clone(), None));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_model_list_is_each_model_once_by_its_exact_id() {
