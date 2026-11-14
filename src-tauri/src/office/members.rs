@@ -72,7 +72,7 @@ impl Office {
         let report = db.last_report(&e.id, now - chrono::Duration::days(REPORT_DAYS))?;
         let status = EmployeeStatus {
             number: db.latest_score(&e.id)?.map(|s| number(&s)),
-            last_report: report.and_then(|r| Some(Dated { text: headline(r.summary.as_deref()?)?, at: r.ended_at.unwrap_or(r.created_at) })),
+            last_report: report.and_then(|r| Some(Dated { text: headline(r.answer.as_deref().or(r.summary.as_deref())?)?, at: r.ended_at.unwrap_or(r.created_at) })),
             next: slots.into_iter().chain(check).min_by_key(|d| d.at),
         };
         Ok(EmployeeView {
@@ -622,6 +622,10 @@ mod tests {
         let hour = schedules::next_slot(&schedule("s1", "Inbox sweep", "0 * * * *", false), &BusinessHours::default(), t, &Local).unwrap();
         assert_eq!(v.status.number.as_deref(), Some("Signups 42 (+3)"));
         assert_eq!(v.status.last_report, Some(Dated { text: "Paused both campaigns.".into(), at: t - chrono::Duration::hours(1) }));
+        report.answer = Some("Refunds take **7 days**.\n\nI've written that into my refunds skill.".into());
+        db.save_run(&report).unwrap();
+        let answered = Office::presence(&db, &ada, t, false).unwrap().status.last_report.map(|d| d.text);
+        assert_eq!(answered.as_deref(), Some("Refunds take 7 days."), "its answer, not the note about its skill");
         assert_eq!((v.next_fire, v.status.next), (Some(hour), Some(Dated { text: "Inbox sweep".into(), at: hour })), "the next whole hour");
 
         let due = t - chrono::Duration::hours(1);

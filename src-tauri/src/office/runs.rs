@@ -574,10 +574,13 @@ impl Office {
             if let Some(o) = &e.outcome {
                 run.turns = Some(o.turns);
                 run.summary = Some(o.text.clone()).filter(|t| !t.trim().is_empty());
+                // Kept only beside a result: a run that ended with no words of its own has nothing to answer with.
+                run.answer = e.answer.clone().filter(|a| run.summary.as_deref().is_some_and(|s| s.trim() != a.trim()));
             }
             run.denials = e.blocks.clone();
             if !e.notes.is_empty() {
                 let notes = e.notes.join("\n");
+                run.answer = run.answer.take().map(|a| format!("{a}\n\n{notes}"));
                 run.summary = Some(match run.summary.take() {
                     Some(s) => format!("{s}\n\n{notes}"),
                     None => notes,
@@ -1037,6 +1040,14 @@ impl Office {
                 log!("run {}: could not record the skills it used: {e}", run.id);
             }
         }
+        // A reply that ends by keeping a skill it changed up to date: its result is the note about the skill.
+        let changed: HashSet<String> = own_changes(&changes).map(|c| c.skill).collect();
+        let answer = if changed.is_empty() {
+            None
+        } else {
+            let text = transcript_text.get_or_insert_with(|| attempt_text(&transcript_path, attempt_start));
+            answer_before_skill_edits(&claude::replay(text, &snap.employee_dir), &changed)
+        };
         let _ = fs::remove_file(&before_path);
         for c in own_changes(&changes) {
             let ev = RunEvent::SkillChanged { skill: c.skill, file: c.file, change: c.change };
@@ -1056,7 +1067,7 @@ impl Office {
         let denied = outcome.as_ref().map(|o| o.denials.clone()).unwrap_or_default();
         let (blocks, mut notes) = signals.sort_denials(denied, |d| covered(&snap.employee, &rules, d), !run.kind.is_conversation());
         notes.extend(omega_notes);
-        Ok(Ended { outcome, exit, stderr, changes, limited, blocks, notes, context, claude_version, cost })
+        Ok(Ended { outcome, answer, exit, stderr, changes, limited, blocks, notes, context, claude_version, cost })
     }
 
     /// The session's running cost total before this attempt, as Claude Code last reported it: in an earlier attempt
@@ -1185,6 +1196,36 @@ pub(super) fn own_changes(changes: &[Seen]) -> impl Iterator<Item = SkillChange>
     changes.iter().filter(|c| c.own).map(|c| c.change.change.clone())
 }
 
+/// What the run answered, when its reply ends by keeping a skill it changed up to date: Claude Code's result is
+/// only the last words, which then say what it wrote into the skill ("I've written the $50 rule into my refunds
+/// skill"), not the answer. So it is every word after the last of its work, as the conversation shows the answer:
+/// reading or writing a changed skill's own files is no work. `None` when no skill call follows those words, as
+/// the result is then the answer. Read from the last stretch, after the last message you sent in while it worked.
+fn answer_before_skill_edits(events: &[RunEvent], skills: &HashSet<String>) -> Option<String> {
+    let skill_call = |tool: &str, brief: &str| {
+        matches!(tool, "Read" | "Write" | "Edit" | "MultiEdit") && skills.iter().any(|k| brief.contains(&format!("skills/{k}/")))
+    };
+    let failed: HashSet<&str> = events.iter().filter_map(|e| match e {
+        RunEvent::ToolResult { id, ok: false, .. } => Some(id.as_str()),
+        _ => None,
+    }).collect();
+    let start = events.iter().rposition(|e| matches!(e, RunEvent::User { .. } | RunEvent::Heard { .. })).map_or(0, |i| i + 1);
+    let stretch = &events[start..];
+    let is_work = |e: &RunEvent| match e {
+        RunEvent::ToolCall { id, tool, brief } => !(skill_call(tool, brief) && !failed.contains(id.as_str())),
+        RunEvent::Delegated { .. } | RunEvent::Asked { .. } | RunEvent::Requested { .. } | RunEvent::ProposedHire { .. } | RunEvent::Visual { .. } => true,
+        _ => false,
+    };
+    let tail = &stretch[stretch.iter().rposition(is_work).map_or(0, |i| i + 1)..];
+    let first_text = tail.iter().position(|e| matches!(e, RunEvent::Text { text } if !text.trim().is_empty()))?;
+    let edits_after = tail[first_text..].iter().any(|e| matches!(e, RunEvent::ToolCall { .. }));
+    let texts: Vec<&str> = tail.iter().filter_map(|e| match e {
+        RunEvent::Text { text } if !text.trim().is_empty() => Some(text.trim()),
+        _ => None,
+    }).collect();
+    edits_after.then(|| texts.join("\n\n"))
+}
+
 /// Records the skill changes a run saw since `since`, when it started. One already recorded since then is the same
 /// edit seen by another run, so it is never recorded twice: a run whose own calls wrote it only takes the credit.
 /// Any other is recorded once, as the run's when it is its own, else with no run. Call inside a transaction.
@@ -1204,6 +1245,8 @@ pub(super) fn record_changes(db: &Store, employee_id: &str, run_id: &str, since:
 struct Ended {
     /// Every result segment of the run, merged.
     outcome: Option<Outcome>,
+    /// What it answered, when its reply ends by keeping a skill up to date (`answer_before_skill_edits`).
+    answer: Option<String>,
     exit: Option<i32>,
     stderr: String,
     /// The skill changes it saw, its own and others'.
@@ -1303,6 +1346,7 @@ fn reset_for_requeue(run: &mut Run, changes: &[SkillChange], limit: Limit) {
     run.ended_at = None;
     run.error = None;
     run.summary = None;
+    run.answer = None;
     run.turns = None;
     run.duration_ms = None;
     run.denials.clear();
@@ -1582,7 +1626,7 @@ mod tests {
     }
 
     fn ended(o: Option<Outcome>, stderr: &str) -> Result<Ended> {
-        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
+        Ok(Ended { outcome: o, answer: None, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
     }
 
     /// A temp store in its own folder.
@@ -2255,6 +2299,65 @@ mod tests {
         assert_eq!(error_class(&failed("Claude Code exited without a result (exit code Some(1))."), None), "no result");
         assert_eq!(error_class(&Run { state: RunState::Lost, ..failed("Omega Star stopped while this run was in progress.") }, None), "lost when Omega Star stopped");
         assert_eq!(error_class(&failed("Something broke."), None), "error");
+    }
+
+    fn said(text: &str) -> RunEvent {
+        RunEvent::Text { text: text.into() }
+    }
+    fn call(id: &str, tool: &str, brief: &str) -> RunEvent {
+        RunEvent::ToolCall { id: id.into(), tool: tool.into(), brief: brief.into() }
+    }
+    fn result(id: &str, ok: bool) -> RunEvent {
+        RunEvent::ToolResult { id: id.into(), ok, brief: String::new() }
+    }
+    fn refunds() -> HashSet<String> {
+        HashSet::from(["refunds".to_string()])
+    }
+
+    #[test]
+    fn a_reply_that_ends_by_refining_its_skill_keeps_its_answer() {
+        let events = [
+            said("Checking the studio first."),
+            call("1", "Bash", "curl studios"), result("1", true),
+            said("Published. **The reply:** we refund within 7 days."),
+            call("2", "Read", "skills/refunds/SKILL.md"), result("2", true),
+            call("3", "Edit", "skills/refunds/SKILL.md"), result("3", true),
+            said("I've written the $50 rule into my refunds skill."),
+        ];
+        assert_eq!(
+            answer_before_skill_edits(&events, &refunds()).as_deref(),
+            Some("Published. **The reply:** we refund within 7 days.\n\nI've written the $50 rule into my refunds skill."),
+        );
+    }
+
+    #[test]
+    fn a_reply_with_no_skill_edit_after_its_answer_has_no_separate_answer() {
+        let plain = [said("Looking."), call("1", "Bash", "ls"), result("1", true), said("All done.")];
+        assert_eq!(answer_before_skill_edits(&plain, &refunds()), None, "its result is the answer");
+        let edited_first = [call("1", "Edit", "skills/refunds/SKILL.md"), result("1", true), said("Refunds now take 7 days.")];
+        assert_eq!(answer_before_skill_edits(&edited_first, &refunds()), None, "the skill edit came before any words");
+    }
+
+    #[test]
+    fn writing_a_skill_it_did_not_change_or_a_failed_skill_edit_is_still_work() {
+        let other = [said("The answer."), call("1", "Edit", "skills/pricing/SKILL.md"), result("1", true), said("Noted it.")];
+        assert_eq!(answer_before_skill_edits(&other, &refunds()), None);
+        let failed = [said("The answer."), call("1", "Edit", "skills/refunds/SKILL.md"), result("1", false), said("That edit failed.")];
+        assert_eq!(answer_before_skill_edits(&failed, &refunds()), None);
+    }
+
+    #[test]
+    fn only_the_stretch_after_your_last_message_is_the_answer() {
+        let events = [
+            said("First answer."),
+            call("1", "Edit", "skills/refunds/SKILL.md"), result("1", true),
+            RunEvent::User { text: "And Melbourne?".into(), id: Some("m1".into()) },
+            RunEvent::Heard { id: "m1".into() },
+            said("Melbourne too."),
+            call("2", "Edit", "skills/refunds/SKILL.md"), result("2", true),
+            said("Added Melbourne to the skill."),
+        ];
+        assert_eq!(answer_before_skill_edits(&events, &refunds()).as_deref(), Some("Melbourne too.\n\nAdded Melbourne to the skill."));
     }
 
     #[test]

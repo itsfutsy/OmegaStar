@@ -10,7 +10,7 @@ import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openChat } from "../lib/router";
 import { toolName } from "../lib/rules";
 import { toast } from "../lib/toasts";
-import { activityAt, archivable, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
+import { activityAt, archivable, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, reportOf, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
 import { kindNames } from "../lib/workTitle";
 import { BlockedCard } from "../components/BlockedCard";
 import { Icon, type IconName } from "../components/Icon";
@@ -74,7 +74,7 @@ function topic(t: Thread, employees: EmployeeView[], people: PersonView[]): stri
 }
 
 /** The first line of what a run said, or why it said nothing. */
-const firstLine = (r: Run): string => lines(r.summary)[0] ?? (didNotFinish(r) ? r.error ?? "Didn't finish" : "No report");
+const firstLine = (r: Run): string => lines(reportOf(r))[0] ?? (didNotFinish(r) ? r.error ?? "Didn't finish" : "No report");
 
 /** A list of first names, as "Ada, Bo and Cy". */
 function names(ids: string[], employees: EmployeeView[]): string {
@@ -197,7 +197,7 @@ export function rowView(row: Row, { employees, people }: RowContext): RowView {
     const { thread: t, employee: e } = row.item;
     const team = isTeamWeek(t);
     const run = latestFinished(t);
-    const text = team ? names(rowThreads(t).map((x) => x.root.employeeId), employees) : run.cards[0] && !lines(run.summary).length ? run.cards[0].message : firstLine(run);
+    const text = team ? names(rowThreads(t).map((x) => x.root.employeeId), employees) : run.cards[0] && !lines(reportOf(run)).length ? run.cards[0].message : firstLine(run);
     return {
       title: text, meta: team ? `Your team's week · ${rowThreads(t).length} reviews` : `${firstName(e.name)} · ${topic(t, employees, people)}`,
       avatar: <Avatar name={e.name} hue={e.hue} image={e.image} size={28} />, word: didNotFinish(run) ? "Failed" : null,
@@ -428,7 +428,7 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
       foot = archive(true);
       break;
   }
-  const report = d.type === "answered" || failures || (d.type === "flag" && tidyAsks(root)) ? null : d.run.summary;
+  const report = d.type === "answered" || failures || (d.type === "flag" && tidyAsks(root)) ? null : reportOf(d.run);
   return (
     <>
       {failures
@@ -674,7 +674,7 @@ function ParkedBody({ run, ctx, slot }: { run: Run; ctx: DetailContext; slot: HT
           ? <CardView card={one.card} runId={run.id} index={one.index} e={e} working={working} onAnswer={(reply) => answer(one.index, reply)} actionsSlot={slot} />
           : <CardList runId={run.id} cards={cards} e={e} working={working} onAnswer={answer} />}
       </div>
-      <Report who={who} text={run.summary} />
+      <Report who={who} text={reportOf(run)} />
     </>
   );
 }

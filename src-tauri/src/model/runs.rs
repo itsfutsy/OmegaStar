@@ -267,6 +267,10 @@ pub struct Run {
     pub turns: Option<u32>,
     pub duration_ms: Option<u64>,
     pub summary: Option<String>,
+    /// What it answered, when that is not its last words: a reply that ends by keeping a skill up to date has
+    /// Claude Code's result say what it wrote into the skill. Previews show it before `summary`.
+    #[serde(default)]
+    pub answer: Option<String>,
     pub error: Option<String>,
     #[serde(default)]
     pub denials: Vec<Denial>,
@@ -383,6 +387,7 @@ impl Run {
             turns: None,
             duration_ms: None,
             summary: None,
+            answer: None,
             error: None,
             denials: vec![],
             skill_changes: vec![],

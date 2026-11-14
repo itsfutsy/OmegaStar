@@ -3,7 +3,7 @@ import type { EmployeeView, PersonView, Thread } from "../../api/types";
 import { dateLong, firstName, relTime, runKindLabel, whenInline } from "../../lib/format";
 import { openRun } from "../../lib/router";
 import { toolName } from "../../lib/rules";
-import { blocked, didNotFinish, isChoreRow, isLive, isStreak, isTeamWeek, openCards, rowThreads } from "../../lib/threads";
+import { blocked, didNotFinish, isChoreRow, isLive, isStreak, isTeamWeek, openCards, reportOf, rowThreads } from "../../lib/threads";
 import { kindNames } from "../../lib/workTitle";
 import { RunCards } from "./CardView";
 import { Icon } from "../Icon";
@@ -87,7 +87,7 @@ function HistoryRow({ x, lead, employees, people }: { x: Thread; lead: boolean; 
   const failed = didNotFinish(r);
   const text = r.needsYou[0]
     ?? (blocked(r) ? `Blocked on ${toolName(r.denials[0].tool)}` : null)
-    ?? lines(r.summary)[0]
+    ?? lines(reportOf(r))[0]
     ?? (isLive(r) ? "Working" : failed ? r.error ?? "This run didn't finish" : "No report");
   return (
     <div className={`hist-row ${lead ? "hist-row-lead" : ""}`}>

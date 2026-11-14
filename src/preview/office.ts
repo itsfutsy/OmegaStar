@@ -441,14 +441,22 @@ export function fullOffice(): World {
     "Can you rewrite the refund policy on the help centre? It's long and reads like a contract.", { end: onDay(-1, 15, 12), mins: 7, title: "Refund policy wording",
     summary: "Here's a shorter version. Two paragraphs instead of seven, and it says what happens before the fine print:\n\n> If a class is cancelled, you get your credit back straight away. For anything else, reply to your booking email within 14 days and we'll sort it out.\n\nIt's live as a draft on the help centre. Want me to publish it?" }));
   w.events[refundRoot.id] = [init(9), ...tool("f1", "Read", "help-centre/policies/refunds.md", "71 lines"), ...tool("f2", "Write", "help-centre/drafts/refunds.md", "Saved"), said(refundRoot.summary ?? ""), done(refundRoot)];
+  // Ends as a turn often does: the answer, then the employee refines its skill and closes with a line about that.
+  const refundClose = "I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:";
+  const refundAnswer = "Published. **The reply:** the new policy is live on the help centre, and refunds under $50 now go straight through without waiting on you.";
   add(mk("refund-2", "mae", { type: "reply", toRunId: "refund-1", label: "Refund policy wording", task: true, card: false },
     "Publish it. And you can approve refunds under $50 yourself from now on.", { end: ago(40), mins: 3,
-    summary: "Published. I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:",
+    summary: refundClose, answer: `${refundAnswer}\n\n${refundClose}`,
     skillChanges: [{ skill: "refunds", file: "SKILL.md", change: "modified" }],
     cards: [card("Add this to the company page so everyone follows it?", { type: "choices", choices: ["Add it", "Keep it to support"], recommended: 0 }, {
       key: "ask:refund-rule", proposal: { type: "companyLine", section: "How things work here", line: "- Refunds under $50 are approved without asking. Anything bigger goes to Maren." },
     })],
-  }), [init(9), ...tool("f3", "Bash", "help-centre publish drafts/refunds.md", "Published"), ...tool("f4", "Edit", "skills/refunds/SKILL.md", "1 rule added"), { type: "skillChanged", skill: "refunds", file: "SKILL.md", change: "modified" }, said("Published. I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:")]);
+  }), [
+    init(9), ...tool("f3", "Bash", "help-centre publish drafts/refunds.md", "Published"),
+    said(refundAnswer),
+    ...tool("f4", "Read", "skills/refunds/SKILL.md", "38 lines"), ...tool("f5", "Edit", "skills/refunds/SKILL.md", "1 rule added"),
+    { type: "skillChanged", skill: "refunds", file: "SKILL.md", change: "modified" }, said(refundClose),
+  ]);
   const welcome = add(mk("welcome-1", "mae", { type: "task", label: "Welcome email for new studios", from: null, context: "" },
     "Write a welcome email for studios that just signed up. Short, and it should get them to add their first class.", { end: onDay(-2, 11, 5), mins: 5, title: "Welcome email for new studios",
     summary: "Done. Three short paragraphs and one button, **Add your first class**. It's in the onboarding sequence from today.", archivedAt: onDay(-2, 11, 30) }));

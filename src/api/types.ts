@@ -215,6 +215,7 @@ export type Run = {
   createdAt: string; startedAt: string | null; endedAt: string | null;
   turns: number | null; durationMs: number | null;
   summary: string | null; error: string | null; denials: Denial[];
+  answer?: string | null;      // what it answered, when its last words (summary) were a note about a skill it kept up to date
   skillChanges: SkillChange[];
   needsYou: string[];          // every card's question, and what Omega Star flagged
   cards: Card[];               // what the run asked you, each with your answer

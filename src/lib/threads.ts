@@ -7,6 +7,10 @@ import type { Card, Run, Thread } from "../api/types";
 export const isLive = (r: Run): boolean => r.state === "running" || r.state === "queued";
 export const didNotFinish = (r: Run): boolean => r.state === "failed" || r.state === "lost" || r.state === "cancelled";
 
+/** What a run reported, as previews show it: its answer, when its last words were only a note about a skill it kept
+ *  up to date, else its summary. */
+export const reportOf = (r: Run): string | null => r.answer ?? r.summary;
+
 /** When a thread last moved: its newest reply (sent or finished), else the report itself. */
 export function activityAt(t: Thread): string {
   let at = t.root.endedAt ?? t.root.createdAt;

@@ -4,6 +4,7 @@ import { duration, elapsedMs, firstName, heldLabel, runStateLabel, runStateTone,
 import { useNow, useUsage } from "../lib/hooks";
 import { rollAnimations } from "../lib/motion";
 import { openRun } from "../lib/router";
+import { reportOf } from "../lib/threads";
 import { kindNames, workLabel } from "../lib/workTitle";
 import { Icon, type IconName } from "./Icon";
 import { Avatar, StatePill } from "./ui";
@@ -42,8 +43,9 @@ const firstLine = (text: string) => text.replace(/[*_`#>|]/g, "").split("\n").ma
 /** A row's second line: what came of the run, else what went wrong, else what it was asked (less the line its title
  *  already shows). */
 function detailOf(run: Run, label: string): string {
-  if (run.summary) {
-    const line = firstLine(run.summary);
+  const report = reportOf(run);
+  if (report) {
+    const line = firstLine(report);
     if (line) return line;
   }
   if ((run.state === "failed" || run.state === "lost") && run.error) return firstLine(run.error);
