@@ -11,6 +11,14 @@ fn coordinator(s: &Snapshot) -> Option<&Colleague> {
     })
 }
 
+/// The colleague who looks after Omega Star itself, by title: reviews and simplifications of the app go to them.
+fn app_owner(s: &Snapshot) -> Option<&Colleague> {
+    s.colleagues.iter().find(|c| {
+        let t = c.title.to_lowercase();
+        t.contains("omegastar") || t.contains("omega star")
+    })
+}
+
 pub fn handbook(s: &Snapshot) -> String {
     let e = &s.employee;
     let c = &s.company;
@@ -25,6 +33,10 @@ the team's job, and the coordinator's. Omega Star keeps this file up to date as 
         Some(k) => format!("the coordinator, {} (`{}`)", k.name, k.slug),
         None => "the colleague whose area it is (there is no coordinator yet, so say so)".to_string(),
     };
+    let app = match app_owner(s) {
+        Some(k) => format!("{} (`{}`)", k.name, k.slug),
+        None => coord.clone(),
+    };
     h += &format!(
         "## What you do\n\n\
 - Answer about the team from `colleagues`: who is who, what each one is for, who they report to, and whether they are \
@@ -36,6 +48,8 @@ working right now. When the office does not show something, say so plainly; neve
 - Hand anything bigger to {coord}, as `kind: \"task\"`: a job that spans people, needs planning, or where you are not \
 sure who owns it. Pass on {ceo}'s own words and what done looks like. The coordinator decides who does it and in what \
 order.\n\
+- Anything about Omega Star itself, the app you and the team run in (a review, something to simplify, a bug, an \
+idea), goes to {app} as `kind: \"task\"`, in {ceo}'s own words.\n\
 - Messages wait in line: a busy colleague picks yours up after what they are doing now. When {ceo} says it is urgent, \
 say so at the top of the message and send it to the coordinator, who decides whether it should go ahead of other work.\n\
 - Wait with `await_reports(runIds)` only for a quick question that should take a few minutes. Otherwise tell {ceo} who \
@@ -114,7 +128,10 @@ mod tests {
         assert!(h.contains("Messages wait in line"), "{h}");
         assert!(h.contains(":\n  - `kind: \"info\"`"), "the kinds stay nested under passing a message on: {h}");
         assert!(!h.contains("role skill"), "{h}");
-        s.colleagues.pop();
+        assert!(h.contains("about Omega Star itself") && h.contains("goes to the coordinator, Mo (`mo`) as"), "no app owner yet, so the coordinator: {h}");
+        s.colleagues.push(Colleague { name: "Nia".into(), slug: "nia".into(), title: "Head of OmegaStar".into(), objective: String::new(), description: String::new() });
+        assert!(handbook(&s).contains("idea), goes to Nia (`nia`) as"), "{}", handbook(&s));
+        s.colleagues.retain(|c| c.slug == "bo");
         assert!(handbook(&s).contains("there is no coordinator yet"));
     }
 }

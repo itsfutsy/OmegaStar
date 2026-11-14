@@ -59,6 +59,9 @@ pub struct AppSettings {
     pub transcript_days: Option<u32>,
     /// Absent from settings saved before notifications could be batched.
     pub notifications: NotificationSettings,
+    /// Shows the front desk, a chat that answers about the team and passes your messages on, at the top of the
+    /// sidebar. Off unless you turn it on.
+    pub front_desk: bool,
 }
 
 impl Default for AppSettings {
@@ -73,6 +76,7 @@ impl Default for AppSettings {
             proxy: ProxySettings::default(),
             transcript_days: None,
             notifications: NotificationSettings::default(),
+            front_desk: false,
         }
     }
 }

@@ -92,7 +92,8 @@ impl Office {
 
     pub fn org(&self) -> Result<OrgSnapshot> {
         let db = self.db();
-        let paused = db.settings()?.map(|s| s.paused).unwrap_or(false);
+        let settings = db.settings()?.unwrap_or_default();
+        let (paused, front_desk) = (settings.paused, settings.front_desk);
         let company = db.company()?.unwrap_or_else(Company::unset);
         let now = now();
         let employees = db.employees()?.iter().map(|e| Self::presence(&db, e, now, paused)).collect::<Result<_>>()?;
@@ -103,7 +104,7 @@ impl Office {
             .map(|p| PersonView { open_requests: open.iter().filter(|r| r.person_id == p.id).count() as u32, person: p })
             .collect();
         let desk = db.desk()?.map(|e| Self::presence(&db, &e, now, paused)).transpose()?;
-        Ok(OrgSnapshot { company, employees, people, desk })
+        Ok(OrgSnapshot { company, employees, people, desk, front_desk })
     }
 
     pub fn hire(&self, mut draft: EmployeeDraft, imports: Vec<String>) -> Result<Employee> {
@@ -145,6 +146,9 @@ impl Office {
     pub fn front_desk(&self) -> Result<EmployeeView> {
         let e = {
             let db = self.db();
+            if !db.settings()?.is_some_and(|s| s.front_desk) {
+                return Err(AppError::invalid("The front desk is off. Turn it on in Settings first."));
+            }
             match db.desk()? {
                 Some(e) => e,
                 None => {

@@ -116,6 +116,9 @@ impl Office {
         }
         self.db().set_settings(&s)?;
         self.sink().settings_changed(&s);
+        if s.front_desk != prev.front_desk {
+            self.sink().org_changed();
+        }
         if s.backup != old {
             self.sink().backup_updated(&self.backup_status()?);
         }

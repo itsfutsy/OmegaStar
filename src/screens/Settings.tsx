@@ -105,6 +105,9 @@ export function SettingsScreen() {
                   onChange={(v) => change("Runs at the same time", (x) => ({ ...x, maxConcurrentRuns: v }))}
                 />
               </Row>
+              <Row title="Front desk" desc="A chat at the top of the sidebar. Ask who's doing what, or say what you need, and it passes it to the right person. It does no work itself.">
+                <Switch checked={s.frontDesk} onChange={(v) => change("Front desk", (x) => ({ ...x, frontDesk: v }))} label="Show the front desk" />
+              </Row>
             </Group>
 
             <NotificationsGroup n={n} change={change} />

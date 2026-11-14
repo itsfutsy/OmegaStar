@@ -107,6 +107,7 @@ const SETTINGS: AppSettings = {
   proxy: { url: "", apiKey: "", managementKey: "" },
   transcriptDays: 90,
   notifications: { mode: "batched", quiet: { startMinute: 22 * 60, endMinute: 7 * 60 } },
+  frontDesk: false,
 };
 
 const CATALOG: SkillInfo[] = [
@@ -744,6 +745,7 @@ export function deskEmployee(): Employee {
 export function frontDeskOffice(): World {
   const w = fullOffice();
   w.desk = deskEmployee();
+  w.settings.frontDesk = true;
   const r = mk("desk-1", "desk", { type: "task", label: "Price IDs and the launch email", from: null, context: "" },
     "Ask Otto if the new price IDs are ready, and get the Friday launch email planned.", { end: ago(2), mins: 1, title: "Price IDs and the launch email" });
   r.summary = "Both passed on.\n\n- **Otto** has your question about the price IDs. Otto is busy with the deploy check, so it waits in line, and the answer comes back here.\n- **Juniper** has the launch email. It needs a few people, so Juniper will plan who does what.";

@@ -113,7 +113,7 @@ export type HireProposal = {
 };
 
 /** `desk`: the front desk once you have opened it, else null. */
-export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[]; desk: EmployeeView | null };
+export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[]; desk: EmployeeView | null; frontDesk: boolean };
 
 export type SkillSource = "user" | "synced" | "plugin";
 export type SkillInfo = {
@@ -334,6 +334,7 @@ export type AppSettings = {
   maxConcurrentRuns: number; claudePath: string | null; dataDir: string; paused: boolean; backup: BackupSettings; watch: WatchSettings; proxy: ProxySettings;
   transcriptDays: number | null;   // days a finished run's transcript is kept; null: forever
   notifications: NotificationSettings;
+  frontDesk: boolean;          // the front desk shows at the top of the sidebar; off by default
 };
 
 /** all: each as it comes. batched: an employee's decisions in the 90 seconds after their first show as one. off: none. */

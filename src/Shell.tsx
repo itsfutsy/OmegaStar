@@ -170,10 +170,12 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
             <span className="kbd side-kbd">{MOD} K</span>
           </button>
           <nav ref={navRef} className="side-nav scroll-fade">
-            <button className={`side-item ${deskOpen ? "side-item-on" : ""}`} onClick={() => void openDesk()} aria-current={deskOpen ? "page" : undefined} data-tip={collapsed ? "Front desk" : undefined}>
-              <Icon name="chat" size={16} />
-              <span className="side-text">Front desk</span>
-            </button>
+            {snap?.frontDesk ? (
+              <button className={`side-item ${deskOpen ? "side-item-on" : ""}`} onClick={() => void openDesk()} aria-current={deskOpen ? "page" : undefined} data-tip={collapsed ? "Front desk" : undefined}>
+                <Icon name="chat" size={16} />
+                <span className="side-text">Front desk</span>
+              </button>
+            ) : null}
             <NavItem href="#/inbox" icon="inbox" label="Needs you" active={route.page === "inbox"} badge={inboxCount || null} collapsed={collapsed} />
             <NavItem href="#/org" icon="org" label="Org chart" active={route.page === "org"} collapsed={collapsed} />
             <NavItem href="#/analytics" icon="chart" label="Analytics" active={route.page === "analytics"} collapsed={collapsed} />

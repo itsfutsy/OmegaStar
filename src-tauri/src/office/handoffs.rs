@@ -752,6 +752,10 @@ mod tests {
         let mo = Employee { title: "Coordinator".into(), ..employee(&o.db, "Mo", None) };
         o.db.save_employee(&mo).unwrap();
         let office = held_office(&o).await;
+        assert!(office.front_desk().is_err(), "the front desk is off until you turn it on");
+        assert!(!office.org().unwrap().front_desk);
+        office.save_settings(AppSettings { front_desk: true, ..office.settings().unwrap() }).unwrap();
+        assert!(office.org().unwrap().front_desk);
         let desk = office.front_desk().unwrap();
         assert!(desk.employee.desk && desk.employee.name == "OmegaStar" && !desk.employee.auto_tidy && !desk.employee.browser);
         assert_eq!(office.front_desk().unwrap().employee.id, desk.employee.id, "opening it again finds the same desk");

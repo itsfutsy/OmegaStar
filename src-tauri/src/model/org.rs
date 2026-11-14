@@ -459,6 +459,8 @@ pub struct OrgSnapshot {
     pub people: Vec<PersonView>,
     /// The front desk, once you have opened it.
     pub desk: Option<EmployeeView>,
+    /// Whether the front desk is turned on in Settings.
+    pub front_desk: bool,
 }
 
 #[cfg(test)]

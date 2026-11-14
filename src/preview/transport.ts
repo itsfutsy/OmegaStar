@@ -167,7 +167,7 @@ export function previewTransport(): Transport {
     return {
       company: w.company, employees: w.employees.map(view),
       people: w.people.map((p) => ({ ...p, openRequests: w.requests.filter((r) => r.personId === p.id && r.state === "open").length })),
-      desk: w.desk ? view(w.desk) : null,
+      desk: w.desk ? view(w.desk) : null, frontDesk: w.settings.frontDesk,
     };
   }
 
@@ -417,6 +417,7 @@ export function previewTransport(): Transport {
     skill_sources: () => ({ skillsDir: `${HOME}/.claude/skills`, found: w.catalog.length, unreadable: 0, error: null }),
     hire: ({ draft }) => hire(draft),
     front_desk: () => {
+      if (!w.settings.frontDesk) throw new Error("The front desk is off. Turn it on in Settings first.");
       if (!w.desk) { w.desk = deskEmployee(); changed(); }
       return view(w.desk);
     },
