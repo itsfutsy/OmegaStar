@@ -66,6 +66,12 @@ pub async fn skill_sources(office: O<'_>) -> Result<SkillSources> {
     Ok(office.skill_sources())
 }
 
+/// The front desk, set up the first time you open it.
+#[tauri::command]
+pub async fn front_desk(office: O<'_>) -> Result<EmployeeView> {
+    office.front_desk()
+}
+
 #[tauri::command]
 pub async fn hire(office: O<'_>, draft: EmployeeDraft, imports: Vec<String>) -> Result<Employee> {
     office.hire(draft, imports)

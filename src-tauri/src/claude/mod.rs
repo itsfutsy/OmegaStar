@@ -3,6 +3,7 @@
 //! in `handbook`, framing in `frame`, the opening note in `note`, the per-run settings in
 //! `settings`, stream-json parsing in `stream`, and the reply judge in `judge`.
 
+mod desk;
 #[cfg(test)]
 mod fixtures;
 mod frame;
@@ -385,6 +386,11 @@ pub fn prepare(s: &Snapshot, run: &Run) -> Invocation {
     if e.browser {
         args.push("--chrome".into());
     }
+    // The front desk reads the office and passes messages on through the `omega` tools; it gets none of Claude
+    // Code's own (no files, no shell, no web), so it cannot do the work itself.
+    if e.desk {
+        args.extend(["--tools".into(), String::new()]);
+    }
     args.extend(["--disallowedTools".into(), SESSION_ONLY_TOOLS.join(",")]);
     args.extend(model_args(&run.kind, e));
     for w in e.workspaces.iter().filter(|w| !w.trim().is_empty()) {
@@ -588,6 +594,21 @@ mod tests {
         assert_eq!(model_args(&scheduled(Some("haiku"), Some(Effort::Low)), &e), ["--model", "haiku", "--effort", "low"]);
         assert_eq!(model_args(&scheduled(None, None), &e), ["--model", "opus", "--effort", "high"]);
         assert_eq!(model_args(&RunKind::Reply { to_run_id: "r1".into(), label: "Inbox watch".into(), task: false, card: false }, &e), ["--model", "opus", "--effort", "high"]);
+    }
+
+    #[test]
+    fn the_front_desk_gets_no_claude_code_tools_and_its_own_frame() {
+        let mut s = snapshot(Some(now_opening(None)), false);
+        let run = Run::new("e1", RunKind::Task { label: "Ask Bo".into(), from: None, context: String::new() }, "Ask Bo about the shelf.".into(), chrono::Utc::now());
+        let tools_off = |inv: &Invocation| inv.args.windows(2).any(|w| w[0] == "--tools" && w[1].is_empty());
+        assert!(!tools_off(&prepare(&s, &run)), "an employee keeps Claude Code's tools");
+        s.employee.desk = true;
+        let inv = prepare(&s, &run);
+        assert!(tools_off(&inv), "{:?}", inv.args);
+        let prompt = file(&inv, "system-prompt.md");
+        assert!(prompt.contains("the front desk at") && prompt.contains("at the front desk"), "{prompt}");
+        assert!(!prompt.contains("role skill"), "{prompt}");
+        assert!(file(&inv, "CLAUDE.md").contains("## What you never do"));
     }
 
     fn file<'a>(inv: &'a Invocation, name: &str) -> &'a str {

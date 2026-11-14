@@ -8,6 +8,7 @@ import { AddPersonSheet } from "./components/AddPersonSheet";
 import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
 import { Avatar, Roll } from "./components/ui";
+import { call } from "./api/client";
 import { conversationFor, usePruneMarks, useStatuses } from "./components/conversation/useStatuses";
 import { decisions } from "./lib/decisions";
 import { capitalize, firstName, initials, MOD } from "./lib/format";
@@ -128,6 +129,14 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
   const open = route.page === "chat" ? route.employeeId : null;
   const employees = snap?.employees ?? [];
   const people = snap?.people ?? [];
+  // The front desk: Omega Star itself, to ask about the team or pass a message on without finding the right agent
+  // first. Set up the first time you open it.
+  const desk = snap?.desk ?? null;
+  const deskOpen = desk !== null && open === desk.id;
+  const openDesk = async () => {
+    const d = desk ?? await call("front_desk");
+    openChat(d.id, conversationFor(d, items));
+  };
   const team = employees.map((e) => {
     const what = e.live.map((r) => workLabel(r, employees, people));
     const on = (state: string) => what.filter((_, i) => e.live[i].state === state).join(", ");
@@ -161,6 +170,10 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
             <span className="kbd side-kbd">{MOD} K</span>
           </button>
           <nav ref={navRef} className="side-nav scroll-fade">
+            <button className={`side-item ${deskOpen ? "side-item-on" : ""}`} onClick={() => void openDesk()} aria-current={deskOpen ? "page" : undefined} data-tip={collapsed ? "Front desk" : undefined}>
+              <Icon name="chat" size={16} />
+              <span className="side-text">Front desk</span>
+            </button>
             <NavItem href="#/inbox" icon="inbox" label="Needs you" active={route.page === "inbox"} badge={inboxCount || null} collapsed={collapsed} />
             <NavItem href="#/org" icon="org" label="Org chart" active={route.page === "org"} collapsed={collapsed} />
             <NavItem href="#/analytics" icon="chart" label="Analytics" active={route.page === "analytics"} collapsed={collapsed} />

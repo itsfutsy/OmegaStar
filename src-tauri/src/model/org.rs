@@ -135,6 +135,10 @@ pub struct Employee {
     /// its own, so an older build reading this employee never shares a session with another.
     pub chat_session: String,
     pub hired_at: Ts,
+    /// The front desk: Omega Star's own agent you chat to about the team, which passes messages on and does no work
+    /// itself. It is not on the org chart, and colleagues never see it (`Store::employees` leaves it out).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desk: bool,
 }
 
 /// Largest display image, as its data URL. The app makes them a few dozen KB at most.
@@ -188,6 +192,7 @@ impl EmployeeDraft {
             image: self.image,
             chat_session,
             hired_at,
+            desk: false,
         }
     }
 }
@@ -452,6 +457,8 @@ pub struct OrgSnapshot {
     pub company: Company,
     pub employees: Vec<EmployeeView>,
     pub people: Vec<PersonView>,
+    /// The front desk, once you have opened it.
+    pub desk: Option<EmployeeView>,
 }
 
 #[cfg(test)]

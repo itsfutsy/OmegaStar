@@ -16,6 +16,12 @@ const SUGGESTIONS = [
   "When you're unsure, ask me before acting.",
   "Here's how I like reports written: status line first, then evidence.",
 ];
+/** The front desk's: about the team, and messages to pass on. */
+const DESK_SUGGESTIONS = [
+  "Who's working on what right now?",
+  "Pass a message on: ",
+  "Get this planned and done: ",
+];
 
 /** The draft key of an employee's new-conversation composer, so a message can wait in it, such as a hire's first lesson. */
 export const newConversationDraft = (employeeId: string): string => `new-conversation:${employeeId}`;
@@ -35,6 +41,8 @@ function Now({ e }: { e: EmployeeView }) {
 export function NewConversation({ e }: { e: EmployeeView }) {
   const surface = useRef<ChatSurfaceHandle>(null);
   const name = firstName(e.name);
+  const desk = e.desk === true;
+  const suggestions = desk ? DESK_SUGGESTIONS : SUGGESTIONS;
   const start = async (text: string, attachments: NewAttachment[]) => {
     const run = await call("start_task", { employeeId: e.id, text, attachments });
     openChat(e.id, threadFocus(run.id), true);
@@ -42,7 +50,7 @@ export function NewConversation({ e }: { e: EmployeeView }) {
   return (
     <ChatSurface
       ref={surface} e={e} draftKey={newConversationDraft(e.id)} scrollKey="" pin={false}
-      placeholder={`Message ${name}. Teach them something, or ask.`} onSend={start}
+      placeholder={desk ? "Ask about the team, or pass a message on." : `Message ${name}. Teach them something, or ask.`} onSend={start}
     >
       <div className="chat-inner">
         <div className="chat-start">
@@ -50,16 +58,18 @@ export function NewConversation({ e }: { e: EmployeeView }) {
             <Avatar name={e.name} hue={e.hue} image={e.image} size={48} />
             <div>
               <div className="chat-start-name">{e.name}</div>
-              <div className="chat-start-role">{e.title} · <Now e={e} /></div>
+              <div className="chat-start-role">{e.title}{desk ? null : <> · <Now e={e} /></>}</div>
             </div>
           </div>
           <p className="chat-start-note">
-            Each conversation runs alongside {name}'s other work, and what you explain goes into {name}'s skills, so it holds for every run after.
+            {desk
+              ? "Ask who's doing what, or say what you need. A quick message goes straight to the right person. Anything bigger goes to the coordinator. Answers come back here."
+              : `Each conversation runs alongside ${name}'s other work, and what you explain goes into ${name}'s skills, so it holds for every run after.`}
           </p>
           <div>
             <div className="chat-start-sec">Start with</div>
             <div className="chat-suggest">
-              {SUGGESTIONS.map((s) => (
+              {suggestions.map((s) => (
                 <button key={s} className="chat-suggestion" onClick={() => surface.current?.prefill(s)}>
                   <Icon name="chat" size={14} /><span className="grow">{s}</span><Icon name="arrowRight" size={13} />
                 </button>

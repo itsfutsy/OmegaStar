@@ -413,9 +413,13 @@ impl Office {
             })
             .collect();
         let counterpart = match &run.kind {
-            RunKind::Asked { asked_by: id, .. } | RunKind::Answered { from: id, .. } => {
-                employees.iter().find(|x| &x.id == id).map(|x| (x.name.clone(), x.title.clone()))
-            }
+            // The front desk is not among `employees`, but it asks colleagues too.
+            RunKind::Asked { asked_by: id, .. } | RunKind::Answered { from: id, .. } => employees
+                .iter()
+                .find(|x| &x.id == id)
+                .cloned()
+                .or_else(|| db.employee(id).ok().flatten())
+                .map(|x| (x.name.clone(), x.title.clone())),
             _ => None,
         };
         let person_name = |id: &str| people.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_else(|| "a former member".into());

@@ -342,6 +342,7 @@ pub fn run() {
             commands::skill_catalog,
             commands::skill_sources,
             commands::hire,
+            commands::front_desk,
             commands::update_employee,
             commands::let_go,
             commands::schedules,

@@ -27,7 +27,7 @@ export function ConversationScreen({ route }: { route: Extract<Route, { page: "c
       </div>
     );
   }
-  const e = snap.employees.find((x) => x.id === route.employeeId);
+  const e = snap.employees.find((x) => x.id === route.employeeId) ?? (snap.desk?.id === route.employeeId ? snap.desk : undefined);
   if (!e) {
     return (
       <div className="convo empty">

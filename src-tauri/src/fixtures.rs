@@ -38,6 +38,7 @@ pub fn employee() -> Employee {
         image: None,
         chat_session: "chat-ada".into(),
         hired_at: chrono::Utc::now(),
+        desk: false,
     }
 }
 

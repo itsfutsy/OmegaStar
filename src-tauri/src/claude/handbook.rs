@@ -4,6 +4,9 @@
 use super::*;
 
 pub fn handbook(s: &Snapshot) -> String {
+    if s.employee.desk {
+        return super::desk::handbook(s);
+    }
     let e = &s.employee;
     let c = &s.company;
     let ceo = &c.ceo_name;

@@ -5,7 +5,19 @@ use super::*;
 impl Store {
     // ---- employees ----
 
+    /// Everyone on the team, oldest hire first. The front desk is not on the team, so it is left out: see `desk`.
     pub fn employees(&self) -> Result<Vec<Employee>> {
+        let mut v = self.everyone()?;
+        v.retain(|e| !e.desk);
+        Ok(v)
+    }
+
+    /// The front desk, once it has been set up.
+    pub fn desk(&self) -> Result<Option<Employee>> {
+        Ok(self.everyone()?.into_iter().find(|e| e.desk))
+    }
+
+    fn everyone(&self) -> Result<Vec<Employee>> {
         let mut st = self.conn.prepare("SELECT data FROM employees WHERE departed_at IS NULL")?;
         let mut v: Vec<Employee> = readable("employees", st.query_map([], |r| from_row(r, 0))?)?;
         v.sort_by_key(|e| e.hired_at);

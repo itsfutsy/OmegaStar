@@ -746,6 +746,29 @@ mod tests {
     use crate::fixtures::{open_office, saved_run, task};
     use crate::office::fixtures::{employee, held_office, office, saved, standup, Office0};
 
+    #[tokio::test]
+    async fn the_front_desk_is_set_up_once_stays_off_the_team_and_passes_messages_on() {
+        let o = office();
+        let mo = Employee { title: "Coordinator".into(), ..employee(&o.db, "Mo", None) };
+        o.db.save_employee(&mo).unwrap();
+        let office = held_office(&o).await;
+        let desk = office.front_desk().unwrap();
+        assert!(desk.employee.desk && desk.employee.name == "OmegaStar" && !desk.employee.auto_tidy && !desk.employee.browser);
+        assert_eq!(office.front_desk().unwrap().employee.id, desk.employee.id, "opening it again finds the same desk");
+        let org = office.org().unwrap();
+        assert_eq!(org.employees.iter().map(|e| e.employee.name.as_str()).collect::<Vec<_>>(), ["Mo"]);
+        assert_eq!(org.desk.map(|d| d.employee.id), Some(desk.employee.id.clone()));
+        assert!(o.db.schedules(&desk.employee.id).unwrap().is_empty(), "no weekly review for the desk");
+        assert!(office.colleagues(&mo).unwrap()["colleagues"].as_array().unwrap().is_empty(), "colleagues never see the desk");
+        assert!(office.update_employee(desk.employee.clone()).is_err());
+
+        let talk = saved_run(&o.db, &desk.employee, task("Plan the launch"), "Get the launch planned.", RunState::Running, 0, None);
+        office.ask_colleague(&talk.id, &desk.employee, "Mo", "Pat asks: plan the launch.", "task").unwrap();
+        let handed = o.db.active_runs_of(&mo.id).unwrap();
+        assert!(matches!(&handed[..], [r] if matches!(&r.kind, RunKind::Asked { asked_by, task: true, .. } if *asked_by == desk.employee.id)), "{handed:?}");
+        assert!(office.ask_colleague(&talk.id, &mo, "OmegaStar", "Anything?", "question").is_err(), "nobody can hand the desk work");
+    }
+
     fn delegated(parent: &Run) -> RunKind {
         RunKind::Delegated { parent_run_id: parent.id.clone() }
     }

@@ -40,7 +40,11 @@ async fn respond(office: &Office, token: &str, msg: Value) -> Option<Value> {
             "instructions": "Omega Star office tools: your recurring schedules, putting decisions to the person you work for, showing them a page in your message, moving and retiring your skills, your team (delegate, await reports), proposing hires, and the people you can ask for help. Omega Star runs your schedules even when no Claude session is open, and watches your requests to people for replies.",
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/list" => {
+            let desk = office.caller(token).is_some_and(|(_, e)| e.desk);
+            let all = tools();
+            Ok(json!({ "tools": if desk { desk_tools(all) } else { all } }))
+        }
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -61,6 +65,9 @@ async fn respond(office: &Office, token: &str, msg: Value) -> Option<Value> {
 async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<Value, AppError> {
     let (run_id, me) = office.caller(token).ok_or_else(|| AppError::invalid("this run has ended; its office tools are closed"))?;
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    if me.desk && !DESK_TOOLS.contains(&name) {
+        return Err(AppError::invalid(format!("The front desk passes messages on and does no work itself, so it has no '{name}' tool.")));
+    }
     match name {
         "team" => office.team(&me),
         "delegate" => office.delegate(&run_id, &me, s("to"), s("task")),
@@ -105,6 +112,15 @@ async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<
         "name_thread" => office.name_thread_tool(&run_id, s("title")),
         _ => Err(AppError::invalid(format!("unknown tool '{name}'"))),
     }
+}
+
+/// All the front desk may do: see who is who and how busy, pass a message or a job on, wait for a quick answer,
+/// and name the conversation.
+const DESK_TOOLS: [&str; 4] = ["colleagues", "ask_colleague", "await_reports", "name_thread"];
+
+fn desk_tools(all: Value) -> Value {
+    let keep = |t: &&Value| t.get("name").and_then(|n| n.as_str()).is_some_and(|n| DESK_TOOLS.contains(&n));
+    Value::Array(all.as_array().map(|a| a.iter().filter(keep).cloned().collect()).unwrap_or_default())
 }
 
 fn tools() -> Value {
@@ -389,6 +405,13 @@ fn tools() -> Value {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn the_front_desk_sees_only_its_four_tools() {
+        let names: BTreeSet<String> =
+            desk_tools(tools()).as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        assert_eq!(names, DESK_TOOLS.iter().map(|n| n.to_string()).collect());
+    }
 
     /// Every string in `v`: the tools' names, descriptions and choices.
     fn strings(v: &Value, out: &mut Vec<String>) {

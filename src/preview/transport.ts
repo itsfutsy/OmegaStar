@@ -15,8 +15,8 @@ import { setTheme } from "../lib/theme";
 import { activityAt, archiveAt, isLive, isOpen, startedByYou } from "../lib/threads";
 import { toast } from "../lib/toasts";
 import {
-  ahead, cannedAnswer, CRAFT, emptyCompanyPage, emptyOffice, firstRunOffice, fullOffice, HOME, inboxMoreOffice, init, iso, largeOffice, liveMoreOffice, mk, NOW,
-  onDay, own, quietOffice, review, tool, type World,
+  ahead, cannedAnswer, CRAFT, deskEmployee, emptyCompanyPage, emptyOffice, firstRunOffice, fullOffice, HOME, inboxMoreOffice, init, iso, largeOffice, liveMoreOffice, mk, NOW,
+  frontDeskOffice, onDay, own, quietOffice, review, tool, type World,
 } from "./office";
 import { imageUrl, installTauriShim } from "./pages";
 
@@ -25,7 +25,7 @@ const STATES = [
   "full", "empty", "first-run", "first-run-no-claude", "first-run-signed-out", "loading", "loading-boot", "error", "error-boot",
   "update-failed", "usage-limit", "api-key",
   "first-run-recheck", "first-run-opening", "first-run-error", "slow-saves", "failed-saves", "quiet", "large-org", "inbox-more",
-  "live-more", "thread-error", "live-arrives", "live-ends",
+  "live-more", "thread-error", "live-arrives", "live-ends", "front-desk",
 ] as const;
 type State = (typeof STATES)[number];
 
@@ -57,6 +57,7 @@ function worldFor(state: State): World {
     case "large-org": return largeOffice();
     case "inbox-more": return inboxMoreOffice();
     case "live-more": return liveMoreOffice();
+    case "front-desk": return frontDeskOffice();
     default: {
       const w = fullOffice();
       if (state === "usage-limit") {
@@ -166,6 +167,7 @@ export function previewTransport(): Transport {
     return {
       company: w.company, employees: w.employees.map(view),
       people: w.people.map((p) => ({ ...p, openRequests: w.requests.filter((r) => r.personId === p.id && r.state === "open").length })),
+      desk: w.desk ? view(w.desk) : null,
     };
   }
 
@@ -414,6 +416,10 @@ export function previewTransport(): Transport {
     skill_catalog: () => w.catalog,
     skill_sources: () => ({ skillsDir: `${HOME}/.claude/skills`, found: w.catalog.length, unreadable: 0, error: null }),
     hire: ({ draft }) => hire(draft),
+    front_desk: () => {
+      if (!w.desk) { w.desk = deskEmployee(); changed(); }
+      return view(w.desk);
+    },
     update_employee: ({ employee }) => {
       w.employees = w.employees.map((e) => (e.id === employee.id ? employee : e));
       changed();

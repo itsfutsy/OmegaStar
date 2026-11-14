@@ -23,8 +23,9 @@ export type Employee = {
   image?: string | null;                    // display image as a data: URL, shown in place of their initials
   chatSession: string;                      // the session of the one long chat older builds kept; nothing reads it
   hiredAt: string;
+  desk?: boolean;                           // the front desk: Omega Star's own agent you chat to; off the org chart
 };
-export type EmployeeDraft = Omit<Employee, "id" | "slug" | "chatSession" | "hiredAt">;
+export type EmployeeDraft = Omit<Employee, "id" | "slug" | "chatSession" | "hiredAt" | "desk">;
 
 export type Presence = "idle" | "working" | "queued" | "attention";
 export type EmployeeView = Employee & {
@@ -111,7 +112,8 @@ export type HireProposal = {
   createdAt: string; resolvedAt: string | null;
 };
 
-export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[] };
+/** `desk`: the front desk once you have opened it, else null. */
+export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[]; desk: EmployeeView | null };
 
 export type SkillSource = "user" | "synced" | "plugin";
 export type SkillInfo = {
@@ -387,6 +389,7 @@ export type Commands = {
   skill_catalog: { args: Record<string, never>; ret: SkillInfo[] };
   skill_sources: { args: Record<string, never>; ret: SkillSources };
   hire: { args: { draft: EmployeeDraft; imports: string[] }; ret: Employee };
+  front_desk: { args: Record<string, never>; ret: EmployeeView };
   update_employee: { args: { employee: Employee }; ret: Employee };
   let_go: { args: { employeeId: string }; ret: null };
   schedules: { args: { employeeId: string }; ret: Schedule[] };

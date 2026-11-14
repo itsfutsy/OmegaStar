@@ -65,6 +65,7 @@ Your skills are files under `{dir}`. The Skill tool reports them under `.claude{
         dir = dir.display(),
         sep = std::path::MAIN_SEPARATOR,
     );
+    let who = if e.desk { super::desk::who(s) } else { who };
     if s.resume || frame_in_note(s, run) {
         return format!("{who}\n");
     }
@@ -81,6 +82,9 @@ fn frame_in_note(s: &Snapshot, run: &Run) -> bool {
 /// What this run is and how to do it, by its kind: in the system prompt, or at the top of the first message
 /// when `frame_in_note`.
 fn frame(s: &Snapshot, run: &Run) -> String {
+    if s.employee.desk {
+        return super::desk::frame(s, run);
+    }
     let ceo = &s.company.ceo_name;
     let autonomous = format!(
         "Nobody is watching: work autonomously, do not ask questions you could answer yourself, and finish with a report as \

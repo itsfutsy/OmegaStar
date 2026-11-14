@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The front desk's name: it is the office you are talking to.
+pub const DESK_NAME: &str = "OmegaStar";
+
 impl Office {
     /// Applies `change` to the whole org in memory and validates the result, writing nothing.
     fn plan_org<T>(db: &Store, change: impl FnOnce(&mut Org) -> Result<T>) -> Result<(Org, Org, T)> {
@@ -99,7 +102,8 @@ impl Office {
             .into_iter()
             .map(|p| PersonView { open_requests: open.iter().filter(|r| r.person_id == p.id).count() as u32, person: p })
             .collect();
-        Ok(OrgSnapshot { company, employees, people })
+        let desk = db.desk()?.map(|e| Self::presence(&db, &e, now, paused)).transpose()?;
+        Ok(OrgSnapshot { company, employees, people, desk })
     }
 
     pub fn hire(&self, mut draft: EmployeeDraft, imports: Vec<String>) -> Result<Employee> {
@@ -135,12 +139,59 @@ impl Office {
         Ok(e)
     }
 
+    /// The front desk, set up the first time you open it: Omega Star's own agent you chat to about the team. It
+    /// answers from what the office shows, passes quick messages on and hands bigger jobs to the coordinator, but
+    /// does no work itself. It is off the org chart, has no schedules or skills, and never tidies.
+    pub fn front_desk(&self) -> Result<EmployeeView> {
+        let e = {
+            let db = self.db();
+            match db.desk()? {
+                Some(e) => e,
+                None => {
+                    let mut taken: HashSet<String> = db.slugs()?.into_iter().collect();
+                    taken.extend(self.skill_catalog().iter().map(|s| s.name.clone()));
+                    let draft = EmployeeDraft {
+                        name: DESK_NAME.into(),
+                        title: "Front desk".into(),
+                        description: "Answers questions about the team and passes your messages on. Does no work itself.".into(),
+                        objective: String::new(),
+                        manager_id: None,
+                        skills: SkillGrant::default(),
+                        clearance: Clearance::Supervised,
+                        allow_rules: vec![],
+                        model: None,
+                        // A front desk answers quickly: it reads and passes on, it does not think hard.
+                        effort: Some(Effort::Low),
+                        browser: false,
+                        auto_tidy: false,
+                        workspaces: vec![],
+                        hue: 250,
+                        image: None,
+                    };
+                    let slug = own_skills::slugify(DESK_NAME, &taken);
+                    let mut e = draft.into_employee(uuid::Uuid::new_v4().to_string(), slug, uuid::Uuid::new_v4().to_string(), now());
+                    e.desk = true;
+                    fs::create_dir_all(self.employee_dir(&e.id).join("workspace"))?;
+                    db.save_employee(&e)?;
+                    e
+                }
+            }
+        };
+        self.sink().org_changed();
+        let db = self.db();
+        let paused = db.settings()?.map(|s| s.paused).unwrap_or(false);
+        Self::presence(&db, &e, now(), paused)
+    }
+
     pub fn update_employee(&self, employee: Employee) -> Result<Employee> {
         let draft = employee.draft();
         draft.validate()?;
         let e = {
             let db = self.db();
             let old = db.employee(&employee.id)?.ok_or_else(|| AppError::not_found("employee not found"))?;
+            if old.desk {
+                return Err(AppError::invalid("the front desk is set up by Omega Star and has no profile to edit"));
+            }
             let e = draft.into_employee(old.id, old.slug, old.chat_session, old.hired_at);
             Self::edit_org(&db, |org| {
                 org.employees.retain(|x| x.id != e.id);

@@ -82,6 +82,8 @@ export type World = {
   usage: UsageLimits;
   backup: BackupStatus;
   update: string | null;
+  /** The front desk, once opened. */
+  desk?: Employee | null;
 };
 
 export const HOME = "/Users/maren";
@@ -727,6 +729,33 @@ export function quietOffice(): World {
     }
     r.denials = [];
   }
+  return w;
+}
+
+/** The front desk as Omega Star sets it up: off the chart, no skills, quick. Mirrors Rust `Office::front_desk`. */
+export function deskEmployee(): Employee {
+  return employee("desk", "OmegaStar", "Front desk", {
+    description: "Answers questions about the team and passes your messages on. Does no work itself.",
+    skills: { builtins: false, keys: [] }, effort: "low", autoTidy: false, hue: 250, hiredAt: ago(30), desk: true,
+  });
+}
+
+/** The busy office with the front desk open, and one conversation at it: a question and a job, passed on. */
+export function frontDeskOffice(): World {
+  const w = fullOffice();
+  w.desk = deskEmployee();
+  const r = mk("desk-1", "desk", { type: "task", label: "Price IDs and the launch email", from: null, context: "" },
+    "Ask Otto if the new price IDs are ready, and get the Friday launch email planned.", { end: ago(2), mins: 1, title: "Price IDs and the launch email" });
+  r.summary = "Both passed on.\n\n- **Otto** has your question about the price IDs. Otto is busy with the deploy check, so it waits in line, and the answer comes back here.\n- **Juniper** has the launch email. It needs a few people, so Juniper will plan who does what.";
+  w.runs.unshift(r);
+  w.events[r.id] = [
+    init(0),
+    ...tool("d1", "mcp__omega__colleagues", "who is free", "6 colleagues"),
+    ...tool("d2", "mcp__omega__ask_colleague", "Otto: are the new price IDs ready?", "Asked Otto"),
+    ...tool("d3", "mcp__omega__ask_colleague", "Juniper: plan the Friday launch email", "Handed to Juniper"),
+    said(r.summary), done(r),
+  ];
+  w.open.unshift(r.id);
   return w;
 }
 

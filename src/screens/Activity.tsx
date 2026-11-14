@@ -320,7 +320,10 @@ function ComingUp({ who, employees, people, waitingOnly = false }: { who: string
 
 /** What the team is waiting on someone else for, folded to one line under what needs you: real people first (each
  *  answered or chased in place), then colleagues. */
-function Waiting({ who, employees, people }: { who: string | null; employees: EmployeeView[]; people: PersonView[] }) {
+function Waiting({ who, employees: team, people }: { who: string | null; employees: EmployeeView[]; people: PersonView[] }) {
+  // The front desk is off the team but sends asks of its own: name it on the rows it started.
+  const desk = useOrg().snap?.desk;
+  const employees = useMemo(() => (desk ? [...team, desk] : team), [team, desk]);
   const requests = useQuery(() => call("requests", { personId: null, employeeId: who, state: "open" }), [who], ["request:updated", "org:changed"]);
   const asks = useQuery(() => call("open_asks"), [], ["run:updated"]);
   const [open, setOpen] = useState(false);
