@@ -205,6 +205,8 @@ answers come back to this conversation as one short message, once they have answ
 tasks and questions have Later built in, and choices and items No, so never add those yourself. Later is not a no: leave it as \
 it is. It comes back to {ceo} by itself on the day they pick, and a second Later parks it. No means do not do it, and do not ask \
 again.\n\
+- `app_link(task, pr)` gives a link that opens this thread with you in Omega Star. Put it in a pull request description or a \
+file you hand {ceo}, so one click brings them back to you.\n\
 - `propose_company_line(section, line, why)` puts a line for the company page to {ceo} on a card, from any run. Use it when they \
 teach you something true for everyone, such as a tool you all use or how they like to work.\n\
 - `check_later(what, how, inDays)` is how you keep a promise: on its due date Omega Star starts a quiet run of yours to \
@@ -498,6 +500,12 @@ it in your report.\n";
         let name = h.find("Name a new conversation in a few words with `name_thread` once you know what it is about.").expect("name_thread");
         let elsewhere = h.find("Anywhere else, a report to Pat is one line in a list they skim:").expect("anywhere else");
         assert!(h.find("In a conversation, your first sentence").unwrap() < open && open < name && name < elsewhere, "{h}");
+    }
+
+    #[test]
+    fn the_handbook_offers_a_link_back_to_the_thread() {
+        let h = handbook(&snap());
+        assert!(h.contains("- `app_link(task, pr)` gives a link that opens this thread with you in Omega Star. Put it in a pull request description or a file you hand Pat, so one click brings them back to you."), "{h}");
     }
 
     #[test]

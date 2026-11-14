@@ -9,6 +9,7 @@ import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
 import { Avatar, Roll } from "./components/ui";
 import { conversationFor, usePruneMarks, useStatuses } from "./components/conversation/useStatuses";
+import { useAppLinks } from "./lib/appLinks";
 import { decisions } from "./lib/decisions";
 import { capitalize, firstName, initials, MOD } from "./lib/format";
 import { openChat, openYou, useRoute } from "./lib/router";
@@ -69,6 +70,7 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
   const { rail: collapsed, toggle: toggleCollapsed } = useRail();
   const { items } = useStatuses();
   usePruneMarks();
+  useAppLinks();
   // The palette fades where it is when it closes; each opening starts it afresh.
   const paletteShown = usePresence(palette, PALETTE_LEAVE_MS);
   const sideRef = useScrollFade<HTMLElement>();

@@ -106,6 +106,7 @@ export function previewTransport(): Transport {
   const w = worldFor(state);
 
   installTauriShim();
+  let pendingLink = params.get("link");
   const theme = params.get("theme");
   if (theme === "light" || theme === "dark" || theme === "system") setTheme(theme, false);
   // The sidebar at every size: collapsed is the rail everywhere, expanded the full sidebar everywhere (src/lib/sidebar.ts).
@@ -519,6 +520,20 @@ export function previewTransport(): Transport {
       return { threads, inbox: w.inbox.filter((id) => threads.some((t) => t.root.id === id)) };
     },
     thread: ({ runId }) => threadOf(rootOf(need(runId)), false),
+    // `?link=omegastar://chat?...` stands in for a link opened outside the app: read once, routed as links.rs does.
+    take_app_link: () => {
+      const raw = pendingLink;
+      pendingLink = null;
+      if (!raw) return null;
+      const q = new URL(raw.replace(/^[a-z-]+:\/\/chat\/?/i, "https://link/")).searchParams;
+      const named = w.employees.find((e) => e.id === q.get("employee")) ?? w.employees.find((e) => e.slug === q.get("slug")?.toLowerCase());
+      const found = [q.get("thread"), q.get("run")].map((id) => (id ? byId(id) : undefined)).find(Boolean);
+      if (found && (!named || named.id === found.employeeId)) return { type: "thread" as const, employeeId: found.employeeId, rootId: rootOf(found) };
+      if (!named) throw { code: "invalid", message: "That link is for someone who doesn't work here." };
+      const [task, where] = [q.get("task"), q.get("pr") ?? q.get("repo")];
+      const draft = task && where ? `About ${task} (${where})` : task ? `About ${task}` : where ? `About ${where}` : null;
+      return { type: "newConversation" as const, employeeId: named.id, draft };
+    },
     set_archived: ({ runId, archived }) => {
       const root = rootOf(need(runId));
       const ids = [root, ...(w.related[root] ?? [])];

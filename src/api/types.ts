@@ -416,6 +416,8 @@ export type Commands = {
   conversations: { args: Record<string, never>; ret: Conversations };
   /** The thread any of its runs belongs to. */
   thread: { args: { runId: string }; ret: Thread };
+  /** Where the last `omegastar://` link opens, once; null when no link is waiting. */
+  take_app_link: { args: Record<string, never>; ret: LinkTarget | null };
   /** Archives a thread (any run in it) with the rest of its row, leaving what still needs you, or moves it back.
    *  Returns the ids of the runs it moved. */
   set_archived: { args: { runId: string; archived: boolean }; ret: string[] };
@@ -488,6 +490,11 @@ export type Commands = {
 export type CommandName = keyof Commands;
 
 /** Every event: its payload. */
+/** Where an `omegastar://` link opens: a thread that is still there, or a new conversation with an optional first line. */
+export type LinkTarget =
+  | { type: "thread"; employeeId: string; rootId: string }
+  | { type: "newConversation"; employeeId: string; draft: string | null };
+
 export type Events = {
   "org:changed": null;
   "run:updated": Run;
@@ -496,5 +503,7 @@ export type Events = {
   "proposal:updated": HireProposal;
   "usage:updated": UsageLimits;
   "backup:updated": BackupStatus;
+  /** An `omegastar://` link was opened: read it with `take_app_link`. */
+  "link:opened": null;
 };
 export type EventName = keyof Events;

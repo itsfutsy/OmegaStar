@@ -7,6 +7,7 @@ mod error;
 #[cfg(test)]
 mod fixtures;
 mod health;
+mod links;
 mod log;
 mod mcp;
 mod model;
@@ -34,6 +35,7 @@ use std::time::Instant;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent, Wry};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -134,6 +136,14 @@ fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.set_focus();
     }
+}
+
+/// An `omegastar://` link of this build was opened: keep it for the window, tell the window, and bring it forward.
+fn link_opened(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
+    let Some(raw) = links::ours(urls, model::BuildChannel::current()) else { return };
+    app.state::<links::PendingLink>().put(raw);
+    let _ = app.emit("link:opened", ());
+    show_main(app);
 }
 
 fn build_tray(app: &tauri::App, office: Office, sink: &TauriSink) -> tauri::Result<()> {
@@ -265,7 +275,13 @@ pub fn run() {
             if !args.iter().any(|a| a == "--background") {
                 show_main(app);
             }
+            // On Windows and Linux a link opened while running arrives here, as an argument of the second copy.
+            link_opened(app, args);
         }))
+        // Only listens for links. It registers no scheme while running: the release's comes from tauri.conf.json
+        // when the app is bundled, a test build's from scripts/dogfood-build.sh, and a developer build has none.
+        .plugin(tauri_plugin_deep_link::init())
+        .manage(links::PendingLink::default())
         .plugin(autostart())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -321,6 +337,12 @@ pub fn run() {
             }
             build_tray(app, office.clone(), &sink)?;
             app.manage(office);
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| link_opened(&handle, event.urls().iter().map(|u| u.to_string())));
+            // A link that started the app.
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                link_opened(app.handle(), urls.iter().map(|u| u.to_string()));
+            }
             if !background {
                 show_main(app.handle());
             }
@@ -363,6 +385,7 @@ pub fn run() {
             commands::archived,
             commands::conversations,
             commands::thread,
+            commands::take_app_link,
             commands::set_archived,
             commands::unarchive_runs,
             commands::retry_run,

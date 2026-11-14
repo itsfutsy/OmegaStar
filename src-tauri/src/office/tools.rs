@@ -733,6 +733,19 @@ you as a new run. Never create the hire any other way."
         Ok(json!({ "named": title }))
     }
 
+    /// A link that opens this thread with the caller in Omega Star, for a pull request, a card or a report: "Chat with
+    /// Ada about this". It carries their id and slug, the thread, and what it is about, so a new conversation can
+    /// start from it if the thread is gone.
+    pub fn app_link_tool(&self, caller_run: &str, caller: &Employee, args: &Value) -> Result<Value> {
+        let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty());
+        if s("pr").is_some_and(|p| !p.starts_with("https://")) {
+            return Err(AppError::invalid("pr must be an https:// link to the pull request."));
+        }
+        let root = Self::thread_in(&self.db(), caller_run).ok().map(|t| t.root.id);
+        let link = crate::links::build(self.0.build.channel, caller, root.as_deref(), s("task"), s("pr"));
+        Ok(json!({ "link": link, "markdown": format!("[Chat with {} about this]({link})", caller.name) }))
+    }
+
     /// Opens a file, a folder or a page on your screen for the caller (`open_target` says what they may open), and
     /// says whether it worked. Only in a conversation you are in (`ceo_present`): from a run nobody watches,
     /// a tab or a window would appear out of nowhere.
@@ -1077,6 +1090,25 @@ mod tests {
         office.name_thread_tool(&report.id, "Weekly numbers").unwrap();
         assert_eq!(saved(&o.db, &report.id).title.as_deref(), Some("Weekly numbers"));
         assert_eq!(lock(&office.0.active)[&report.id].title.as_deref(), Some("Weekly numbers"));
+        drop(office);
+    }
+
+    #[tokio::test]
+    async fn app_link_points_back_to_the_callers_thread() {
+        let o = office();
+        let ada = employee(&o.db, "Ada", None);
+        let first = saved_run(&o.db, &ada, task("Fix the login"), "Fix the login", RunState::Succeeded, 30, None);
+        let reply = Run::new(&ada.id, RunKind::Reply { to_run_id: first.id.clone(), label: "Fix the login".into(), task: true, card: false }, "Open a PR".into(), now());
+        assert!(o.db.insert_run(&reply, &first.id).unwrap());
+        let office = held_office(&o).await;
+
+        let made = office.app_link_tool(&reply.id, &ada, &json!({ "task": "the login fix", "pr": "https://github.com/o/r/pull/3" })).unwrap();
+        let link = crate::links::parse(made["link"].as_str().unwrap(), office.0.build.channel).unwrap();
+        assert_eq!((link.employee.as_deref(), link.thread.as_deref(), link.pr.as_deref()), (Some(ada.id.as_str()), Some(first.id.as_str()), Some("https://github.com/o/r/pull/3")));
+        assert!(made["markdown"].as_str().unwrap().starts_with("[Chat with Ada about this]("));
+        let target = office.link_target(&link).unwrap();
+        assert_eq!(target, crate::links::LinkTarget::Thread { employee_id: ada.id.clone(), root_id: first.id.clone() });
+        assert_eq!(office.app_link_tool(&reply.id, &ada, &json!({ "pr": "github.com/o/r/pull/3" })).unwrap_err().message, "pr must be an https:// link to the pull request.");
         drop(office);
     }
 

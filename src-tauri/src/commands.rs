@@ -1,6 +1,8 @@
 //! One-line Tauri adapters over the Office. Argument names are the contract's (camelCase in JS).
 
 use crate::backup;
+use crate::links;
+use crate::log::log;
 use crate::model::*;
 use crate::office::{self, Office};
 use crate::update;
@@ -247,6 +249,17 @@ pub async fn conversations(office: O<'_>) -> Result<Conversations> {
 #[tauri::command]
 pub async fn thread(office: O<'_>, run_id: String) -> Result<Thread> {
     office.thread(&run_id)
+}
+
+/// The conversation the last `omegastar://` link opens, once; `None` when no link is waiting.
+#[tauri::command]
+pub async fn take_app_link(office: O<'_>, pending: State<'_, links::PendingLink>) -> Result<Option<links::LinkTarget>> {
+    let Some(raw) = pending.take() else { return Ok(None) };
+    let link = links::parse(&raw, BuildChannel::current()).map_err(|why| {
+        log!("ignored a link: {why}");
+        AppError::invalid("That link couldn't be opened in this copy of Omega Star.")
+    })?;
+    office.link_target(&link).map(Some)
 }
 
 #[tauri::command]

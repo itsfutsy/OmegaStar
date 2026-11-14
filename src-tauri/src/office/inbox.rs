@@ -153,6 +153,13 @@ impl Office {
         Self::thread_in(&self.db(), run_id)
     }
 
+    /// Where an `omegastar://` link opens: the thread it names when that is still there, or a new conversation.
+    pub fn link_target(&self, link: &crate::links::AppLink) -> Result<crate::links::LinkTarget> {
+        let db = self.db();
+        let employees = db.employees()?;
+        crate::links::route(link, &employees, |id| Self::thread_in(&db, id).ok().map(|t| (t.root.id, t.root.employee_id))).map_err(AppError::invalid)
+    }
+
     /// A reply that lands on an archived thread brings it back to the Inbox only when it needs you:
     /// "Send & done" meant you did not want the answer back, unless the answer raises something.
     pub(super) fn surface_thread(&self, reply: &Run) -> Result<()> {
@@ -803,6 +810,25 @@ mod tests {
         r.needs_you = vec!["Boost the post?".into()];
         r.cards = vec![Card::new("Boost the post?", None, Some("ask:boost".into()), CardAsk::Choices { choices: vec!["Not now".into(), "Go".into()], recommended: 0 })];
         r
+    }
+
+    #[test]
+    fn a_link_to_a_reply_opens_the_thread_it_is_in() {
+        let dir = temp_dir("link");
+        let db = Store::open(&dir.join("office.db")).unwrap();
+        let e = employee_named("Hugo");
+        db.save_employee(&e).unwrap();
+        let report = carded(&e);
+        assert!(db.insert_run(&report, &report.id).unwrap());
+        let mut reply = carded(&e);
+        reply.kind = RunKind::Reply { to_run_id: report.id.clone(), label: "Manual run".into(), task: false, card: false };
+        assert!(db.insert_run(&reply, &report.id).unwrap());
+        let employees = db.employees().unwrap();
+        let thread_of = |id: &str| Office::thread_in(&db, id).ok().map(|t| (t.root.id, t.root.employee_id));
+        let link = crate::links::AppLink { slug: Some("hugo".into()), run: Some(reply.id.clone()), ..Default::default() };
+        assert_eq!(crate::links::route(&link, &employees, thread_of).unwrap(), crate::links::LinkTarget::Thread { employee_id: e.id.clone(), root_id: report.id.clone() });
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

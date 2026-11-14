@@ -103,6 +103,7 @@ async fn call(office: &Office, token: &str, name: &str, args: &Value) -> Result<
         "show" => office.show_tool(&run_id, args),
         "open" => office.open_tool(&run_id, &me, s("target")),
         "name_thread" => office.name_thread_tool(&run_id, s("title")),
+        "app_link" => office.app_link_tool(&run_id, &me, args),
         _ => Err(AppError::invalid(format!("unknown tool '{name}'"))),
     }
 }
@@ -205,6 +206,14 @@ fn tools() -> Value {
             "inputSchema": obj(json!({
                 "title": { "type": "string", "description": "At most 60 characters, e.g. 'Spring sale emails'." }
             }), &["title"]),
+        },
+        {
+            "name": "app_link",
+            "description": "A link that opens this thread with you in Omega Star, on the computer of the person you work for: put it where they will read about your work outside the app (a pull request description, a file on a card), so one click brings them back to you. Returns `link` and `markdown` (\"[Chat with <you> about this](link)\"). If the thread is gone by then, it opens a new conversation with you, with 'About <task> (<pr>)' written for them to send. It only opens a conversation: it never sends or approves anything. GitHub may not make it clickable, so write it as text too.",
+            "inputSchema": obj(json!({
+                "task": { "type": "string", "description": "What the work is, in a few words, e.g. 'the login fix'. At most 200 characters." },
+                "pr": { "type": "string", "description": "The https:// link to the pull request, if there is one." }
+            }), &[]),
         },
         {
             "name": "close_ask",
