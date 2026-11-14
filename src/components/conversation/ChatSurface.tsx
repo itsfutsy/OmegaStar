@@ -6,6 +6,7 @@ import { toast } from "../../lib/toasts";
 import type { LiveRun } from "../../lib/runs";
 import { useComposerAsks } from "../../lib/composer";
 import { getDraft, setDraft } from "../../lib/drafts";
+import { SENT_GRACE_MS, stillOnItsWay, timesShown, type Outgoing } from "../../lib/outbox";
 import { ms, reducedMotion } from "../../lib/motion";
 import { Icon } from "../Icon";
 import { ConfirmButton, ErrorNote } from "../ui";
@@ -13,10 +14,16 @@ import type { AimTarget } from "./CardView";
 import "./Chat.css";
 
 const MAX_FILES = 10;
+const NONE: string[] = [];
 const MAX_FILE_MB = 20;
 
 type Pending = { id: number; file: File; preview: string | null };
 let pendingN = 0;
+let outgoingN = 0;
+/** Where a message on its way goes, and its files as you picked them, kept for Retry and Edit. */
+type Route = { to: (text: string, attachments: NewAttachment[]) => Promise<void>; files: File[] };
+
+const isImage = (name: string) => /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(name);
 
 function toAttachment(file: File): Promise<NewAttachment> {
   return new Promise((resolve, reject) => {
@@ -61,11 +68,22 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
   onAim?: (key: string | null) => void;
   /** Open at the end of the conversation and keep to it (a thread); off for a page read from the top (a new one). */
   pin?: boolean;
+  /** Your messages as the conversation shows them (`yourMessages`), so a message on its way gives way to the real one. */
+  mine?: string[];
   children: ReactNode;
-}>(function ChatSurface({ e, live, placeholder, cardNote, draftKey, scrollKey, onSend, onSendDone, onStop, autoFocus = true, onAim, pin = true, children }, ref) {
+}>(function ChatSurface({ e, live, placeholder, cardNote, draftKey, scrollKey, onSend, onSendDone, onStop, autoFocus = true, onAim, pin = true, mine = NONE, children }, ref) {
   const [text, setText] = useState(() => getDraft(draftKey));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // What you sent that the conversation does not show yet: on its way, or kept with Retry when it did not go.
+  const [outbox, setOutbox] = useState<Outgoing[]>([]);
+  const routes = useRef(new Map<number, Route>());
+  const mineRef = useRef(mine);
+  mineRef.current = mine;
+  const textRef = useRef(text);
+  textRef.current = text;
+  // Set by Send: the next scroll goes to your message however far it is, easing rather than jumping.
+  const ownSend = useRef(false);
   const [files, setFiles] = useState<Pending[]>([]);
   const [dragging, setDragging] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
@@ -156,16 +174,29 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     input.current?.focus();
   };
 
+  // The field fits its words. Sized before the pinning below measures, so a field that shrinks as Send clears it is
+  // already its new height when the talk scrolls to your message.
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${Math.min(200, Math.max(44, el.scrollHeight))}px`;
+  }, [text]);
+
   // Keep pinned to the bottom while content streams, unless the reader scrolled up. A new line eases into view rather
   // than jumping the thread; opening a conversation, or a big change, is simply there.
   const settled = useRef(false);
   const easing = useRef<{ frame: number; from: number; at: number } | null>(null);
+  // Your own message always eases into view, however far: one scroll, after the field has cleared and the message is in.
   useLayoutEffect(() => {
     const el = scroller.current;
+    const own = ownSend.current;
+    ownSend.current = false;
+    if (el && own && !pin) { el.scrollTo({ top: el.scrollHeight, behavior: reducedMotion() ? "auto" : "smooth" }); return; }
     if (!el || !stick.current || !pin) return;
     const delta = el.scrollHeight - el.clientHeight - el.scrollTop;
     if (delta <= 0) { settled.current = true; return; }
-    if (!settled.current || delta >= 160 || reducedMotion()) {
+    if (!settled.current || (delta >= 160 && !own) || reducedMotion()) {
       el.scrollTop = el.scrollHeight;
       if (!settled.current) landWhole();
       settled.current = true;
@@ -185,7 +216,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
       else { easing.current = null; landWhole(); }
     };
     easing.current = { frame: requestAnimationFrame(step), from, at };
-  }, [scrollKey, landWhole, pin]);
+  }, [scrollKey, outbox.length, landWhole, pin]);
   useEffect(() => () => { if (easing.current) cancelAnimationFrame(easing.current.frame); }, []);
   // What loads after the conversation opens (a draft, pictures, a page's height) keeps the end in view, so the last
   // question never opens cut off under the composer.
@@ -201,18 +232,9 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
     return () => ro.disconnect();
   }, [landWhole]);
 
-  useLayoutEffect(() => {
-    const el = input.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(200, Math.max(44, el.scrollHeight))}px`;
-  }, [text]);
-
-  const wasSending = useRef(false);
   useEffect(() => {
-    if (!sending && (autoFocus || wasSending.current)) input.current?.focus({ preventScroll: true });
-    wasSending.current = sending;
-  }, [sending, autoFocus]);
+    if (autoFocus) input.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
 
   const send = async (to = onSend) => {
     const body = text.trim();
@@ -238,22 +260,60 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
       return;
     }
     if ((!body && !files.length) || sending) return;
-    setSending(true);
+    // Your message shows at once, on its way, and the field clears in the same step; the conversation's own copy
+    // replaces it when the call returns. Cleared in the store too: sending may move you to another conversation.
+    const route: Route = { to, files: files.map((f) => f.file) };
+    const o: Outgoing = { id: ++outgoingN, text: body, files: route.files.map((f) => f.name), attachments: null, state: "sending", error: null, seen: timesShown(mineRef.current, body) };
+    routes.current.set(o.id, route);
     setSendError(null);
     stick.current = true;
+    ownSend.current = true;
+    setDraft(draftKey, "");
+    setText("");
+    clearFiles();
+    setOutbox((cur) => [...cur, o]);
+    await deliver(o, route);
+  };
+
+  /** Sends a message on its way. Sent, it waits for the conversation to show it (or SENT_GRACE_MS); failed, it stays
+   *  with the reason and Retry, and its words are kept as the draft when the field is empty, so leaving loses nothing. */
+  const deliver = async (o: Outgoing, route: Route) => {
+    const mark = (patch: Partial<Outgoing>) => setOutbox((cur) => cur.map((x) => (x.id === o.id ? { ...x, ...patch } : x)));
+    setSending(true);
+    let attachments = o.attachments;
     try {
-      const attachments = await Promise.all(files.map((f) => toAttachment(f.file)));
-      await to(body, attachments);
-      // Cleared in the store too: sending may have moved you to another conversation already.
-      setDraft(draftKey, "");
-      setText("");
-      clearFiles();
+      attachments ??= await Promise.all(route.files.map(toAttachment));
+      await route.to(o.text, attachments);
+      mark({ attachments, state: "sent" });
+      if (!textRef.current.trim() && getDraft(draftKey) === o.text) setDraft(draftKey, "");
+      window.setTimeout(() => {
+        setOutbox((cur) => cur.filter((x) => x.id !== o.id || x.state !== "sent"));
+        routes.current.delete(o.id);
+      }, SENT_GRACE_MS);
     } catch (err) {
-      setSendError(errorMessage(err));
+      mark({ attachments, state: "failed", error: errorMessage(err) });
+      if (!textRef.current.trim()) setDraft(draftKey, o.text);
     } finally {
       setSending(false);
     }
   };
+  const retry = (o: Outgoing) => {
+    const route = routes.current.get(o.id);
+    if (!route || sending) return;
+    const again: Outgoing = { ...o, state: "sending", error: null, seen: timesShown(mineRef.current, o.text) };
+    setOutbox((cur) => cur.map((x) => (x.id === o.id ? again : x)));
+    stick.current = true;
+    void deliver(again, route);
+  };
+  /** Takes a failed message back into the field (and its files), to change before sending again. */
+  const edit = (o: Outgoing) => {
+    const route = routes.current.get(o.id);
+    setOutbox((cur) => cur.filter((x) => x.id !== o.id));
+    routes.current.delete(o.id);
+    if (!textRef.current.trim()) prefill(o.text);
+    if (route?.files.length) addFiles(route.files);
+  };
+  const onItsWay = outbox.filter((o) => stillOnItsWay(o, mine));
 
   return (
     <div className="chat">
@@ -281,6 +341,29 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
         }}>
         <div className="chat-scroll-inner">
           {children}
+          {onItsWay.length ? (
+            <div className="chat-inner chat-outbox">
+              {onItsWay.map((o) => (
+                <div key={o.id} className={`msg-wait ${o.state === "failed" ? "msg-out-failed" : ""}`}>
+                  {o.files.length ? (
+                    <div className="msg-files">
+                      {o.files.map((n, i) => <span key={i} className="attach attach-sent"><Icon name={isImage(n) ? "image" : "file"} size={13} /><span className="attach-name">{n}</span></span>)}
+                    </div>
+                  ) : null}
+                  {o.text ? <div className="msg-me">{o.text}</div> : null}
+                  {o.state === "failed" ? (
+                    <div className="msg-out-error" role="alert">
+                      <span className="msg-wait-note"><Icon name="alert" size={13} /> Didn't send{o.error ? `: ${o.error}` : "."}</span>
+                      <span className="msg-out-actions">
+                        <button className="btn btn-ghost btn-sm" onClick={() => edit(o)}>Edit</button>
+                        <button className="btn btn-sm" disabled={sending} onClick={() => retry(o)}><Icon name="refresh" size={13} /> Retry</button>
+                      </span>
+                    </div>
+                  ) : <span className="msg-wait-note">Sending…</span>}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div ref={spacer} className="chat-land" aria-hidden />
         </div>
       </div>
@@ -298,7 +381,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
             <button type="button" className="btn btn-ghost btn-icon btn-sm" aria-label="Back to the conversation" data-tip="Back to the conversation (Esc)" onClick={() => setAim(null)}><Icon name="close" size={14} /></button>
           </div>
         ) : null}
-        <div className={`composer ${sending ? "composer-busy" : ""}`}>
+        <div className="composer">
           {files.length ? (
             <div className="composer-files">
               {files.map((f) => (
@@ -313,7 +396,7 @@ export const ChatSurface = forwardRef<ChatSurfaceHandle, {
           ) : null}
           <div className="composer-row">
             <textarea
-              ref={input} className="composer-input" value={text} disabled={sending} rows={1}
+              ref={input} className="composer-input" value={text} rows={1}
               placeholder={aim ? `Your answer for ${aim.name}` : !live ? placeholder : steerable ? `Message ${name}. They'll see it as they work.` : `Message ${name}. It goes to them as their next turn.`}
               onChange={(ev) => setText(ev.target.value)}
               onPaste={(ev) => {

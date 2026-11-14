@@ -3,6 +3,7 @@ import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, NewAttachment, Run, Thread } from "../../api/types";
 import { capitalize, firstName, relTime } from "../../lib/format";
 import { dropConversation, refreshConversations, useOrg, type Conversation } from "../../lib/hooks";
+import { leadTurn, yourMessages } from "../../lib/outbox";
 import { snoozePresets } from "../../lib/status";
 import { toast } from "../../lib/toasts";
 import { didNotFinish, flags, isLive, isOpen, isStreak, startedByYou } from "../../lib/threads";
@@ -101,9 +102,9 @@ export function ThreadView({ e, rootId, thread, row, onSendDone, autoFocus = tru
   const showReport = !task && start < 0;
   const earlier = shown.length - visible.length + (task || showReport ? 0 : 1);
   // The latest exchange leads: turns before it step back, unless a card in them still waits on you. Your latest message
-  // is the one solid block.
-  const lastTurn = visible.length - 1;
-  const quiet = (run: Run, i: number) => i < lastTurn && !waiting(run);
+  // is the one solid block. A turn you just started leads only once it begins answering, so sending restyles nothing.
+  const lead = leadTurn(visible);
+  const quiet = (run: Run, i: number) => i < lead && !waiting(run);
   const hasMine = (t: (typeof visible)[number]) => (!!t.run.prompt && t.run.kind.type !== "answered" && !t.run.check) || t.events.some((ev) => ev.type === "user");
   // ...unless a card after it waits on you: then what needs you leads, and your message is the quiet step too.
   const mineAt = visible.map(hasMine).lastIndexOf(true);
@@ -118,6 +119,7 @@ export function ThreadView({ e, rootId, thread, row, onSendDone, autoFocus = tru
       <ChatSurface
         ref={surface} e={e} live={live} draftKey={`thread:${rootId}`} scrollKey={liveKey} onAim={setAimed}
         placeholder={placeholder} cardNote={carded ? "This won't answer the card above." : null} onSend={send} onSendDone={carded ? undefined : onSendDone ?? undefined} onStop={stop} autoFocus={autoFocus}
+        mine={yourMessages(turns)}
       >
         <div className="chat-inner">
           {row && row.related.length ? <RowHistory t={row} employees={snap?.employees ?? []} people={snap?.people ?? []} retry={streak && retry && tail.id === root.id ? <RetryButton run={root} name={name} /> : null}

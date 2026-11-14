@@ -25,7 +25,7 @@ const STATES = [
   "full", "empty", "first-run", "first-run-no-claude", "first-run-signed-out", "loading", "loading-boot", "error", "error-boot",
   "update-failed", "usage-limit", "api-key",
   "first-run-recheck", "first-run-opening", "first-run-error", "slow-saves", "failed-saves", "quiet", "large-org", "inbox-more",
-  "live-more", "thread-error", "live-arrives", "live-ends",
+  "live-more", "thread-error", "live-arrives", "live-ends", "slow-sends", "failed-sends",
 ] as const;
 type State = (typeof STATES)[number];
 
@@ -40,6 +40,9 @@ const SAVE_ERROR = { code: "io", message: "Couldn't save: the office folder is r
 const THREAD_ERROR = { code: "io", message: "Couldn't load this conversation: its transcript file is locked by another program." };
 /** What Settings saves through; the slow-saves and failed-saves states slow or fail exactly these. */
 const SAVES: CommandName[] = ["save_settings", "set_background", "backup_now"];
+const SEND_ERROR = { code: "io", message: "Omega Star couldn't reach the office. Check it's open and try again." };
+/** What a conversation's composer sends through; the slow-sends and failed-sends states slow or fail exactly these. */
+const SENDS: CommandName[] = ["reply_to_run", "start_task"];
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const notFound = (message: string) => ({ code: "notFound", message });
 const never = <T>() => new Promise<T>(() => {});
@@ -733,6 +736,8 @@ export function previewTransport(): Transport {
     install_update: () => (state === "update-failed" ? Promise.reject(UPDATE_ERROR) : never<null>()),
   };
 
+  // failed-sends fails only the first send, so Retry goes through.
+  let sendFailed = false;
   return {
     async invoke(name, args) {
       if (state === "loading-boot" || (state === "loading" && name !== "setup_status")) return never();
@@ -741,6 +746,8 @@ export function previewTransport(): Transport {
       if (state === "thread-error" && name === "thread") throw THREAD_ERROR;
       if (state === "slow-saves" && SAVES.includes(name)) await wait(1500);
       if (state === "failed-saves" && SAVES.includes(name)) { await wait(600); throw SAVE_ERROR; }
+      if (state === "slow-sends" && SENDS.includes(name)) await wait(2500);
+      if (state === "failed-sends" && SENDS.includes(name) && !sendFailed) { sendFailed = true; await wait(800); throw SEND_ERROR; }
       await wait(0);
       const run = h[name] as (a: typeof args) => Commands[typeof name]["ret"] | Promise<Commands[typeof name]["ret"]>;
       return structuredClone(await run(args));

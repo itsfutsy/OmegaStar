@@ -36,6 +36,12 @@
 .msg-wait { align-self: flex-end; max-width: 78%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .msg-wait .msg-me { max-width: 100%; box-shadow: inset 0 0 0 1px var(--line-strong); background: transparent; color: var(--ink-2); }
 .msg-wait-note { font-size: var(--t-sm); color: var(--muted); }
+/* Yours on its way, before the conversation shows it (ChatSurface's outbox): the same quiet step, straight after the
+   talk, at the talk's measure. One that did not go says why, with Edit and Retry. */
+.chat-outbox { padding-top: 2px; }
+.msg-out-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+.msg-out-error .msg-wait-note { display: inline-flex; align-items: center; gap: 5px; color: var(--err-text); }
+.msg-out-actions { display: inline-flex; gap: 6px; }
 .msg-emp { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .who-line { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 13px; color: var(--muted); }
 .who-line b { font-size: 13.5px; font-weight: 700; color: var(--ink); }
@@ -120,7 +126,6 @@
 .composer-stack { border-radius: var(--r-card); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); transition: box-shadow var(--d-ui) var(--ease); }
 .composer-stack:focus-within { box-shadow: inset 0 0 0 1px var(--muted); }
 .composer-stack > .composer, .composer-stack > .composer:focus-within { box-shadow: none; background: transparent; }
-.composer-stack > .composer-busy { background: var(--raised); }
 .composer-aim { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .composer-aim > svg { flex: none; color: var(--muted); }
 .composer-aim-what { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -48,6 +48,8 @@ http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&toasts
 | `first-run-error` | Onboarding; Open your office fails, and so does the start-at-login switch |
 | `slow-saves` | `full`; every Settings save (`save_settings`, `set_background`, `backup_now`) answers after 1.5 seconds |
 | `failed-saves` | `full`; those saves fail: "Couldn't save: the office folder is read-only." |
+| `slow-sends` | `full`; every message you send from a conversation (`reply_to_run`, `start_task`) answers after 2.5 seconds, so it shows on its way |
+| `failed-sends` | `full`; the first message you send fails ("Omega Star couldn't reach the office…") and stays with Retry; the next goes through |
 | `quiet` | `full` with everything finished: nobody working, waiting or failing |
 | `large-org` | `full` plus 14 employees and 2 people (25 members): `wren` (Data Analyst) was hired today and has no runs; Kofi has two open requests |
 | `inbox-more` | `full` plus Inbox cases: three runs failing on one error (`smoke-1`, `links-1`, `widget-1`), Theo's two cards about the launch (`launch-1`, `launch-2`), Mae's question asked by Ines with other choices (`annual-1`), a three-line title (`dns-1`), a blocked MCP tool (`issues-1`) |
