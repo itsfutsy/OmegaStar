@@ -689,6 +689,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_backup_restores_to_an_office_that_opens() {
+        let (dir, backups, restored) = (temp_dir("restore-from"), temp_dir("restore-zips"), temp_dir("restore-to"));
+        let office = open_office(&dir).await;
+        let ada = crate::fixtures::employee_named("Ada");
+        office.db().save_employee(&ada).unwrap();
+        let run = Run::new(&ada.id, RunKind::Manual, "Do the books.".into(), Utc::now());
+        office.db().insert_run(&run, &run.id).unwrap();
+        let skill = dir.join("employees").join(&ada.id).join("skills/ada-books/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        fs::write(&skill, "# Books\n").unwrap();
+        let backup = BackupSettings { dir: backups.to_string_lossy().into_owned(), ..BackupSettings::default() };
+        office.save_settings(AppSettings { backup, ..office.settings().unwrap() }).unwrap();
+        let zip = PathBuf::from(office.backup_now().await.unwrap().last_file.unwrap());
+        drop(office);
+
+        // Restored as the Restoring steps say: the zip's contents in place of the office folder's.
+        zip::ZipArchive::new(fs::File::open(&zip).unwrap()).unwrap().extract(&restored).unwrap();
+        let again = open_office(&restored).await;
+        let names: Vec<String> = again.db().employees().unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["Ada"]);
+        assert_eq!(again.db().run(&run.id).unwrap().unwrap().run.prompt, "Do the books.");
+        let skill = restored.join("employees").join(&ada.id).join("skills/ada-books/SKILL.md");
+        assert_eq!(fs::read_to_string(skill).unwrap(), "# Books\n");
+        assert!(restored.join("backup.json").is_file());
+        drop(again);
+        for d in [dir, backups, restored] {
+            let _ = fs::remove_dir_all(d);
+        }
+    }
+
+    #[tokio::test]
     async fn the_sweep_deletes_old_transcripts_and_keeps_their_rows() {
         let dir = temp_dir("sweep");
         let office = open_office(&dir).await;
