@@ -4,7 +4,7 @@ import type { AppSettings, BackupFrequency, BackupSettings, BackupStatus } from 
 import { useQuery } from "../../lib/hooks";
 import { plural, relTime, whenInline, whenShort } from "../../lib/format";
 import { Icon } from "../../components/Icon";
-import { Row, States, Stepper, Swap, sentence, useRowSave, type Change, type Saves } from "./rows";
+import { Row, States, Swap, sentence, useRowSave, type Change, type Saves } from "./rows";
 import { Group } from "./frame";
 
 const FREQUENCIES: { value: BackupFrequency; label: string }[] = [
@@ -121,12 +121,7 @@ export function BackupsGroup({ s, change, saves, onOpenData }: { s: AppSettings;
         <button className="btn" onClick={() => void choose()}>Choose…</button>
         <button className="btn" onClick={() => void open()}><Icon name="folder" size={13} /> Open</button>
       </Row>
-      <Row title="Backups to keep" desc={<>Older backups in the folder are deleted automatically.{b.keep === 1 && b.frequency !== "off" ? <span className="set-note set-warn">One copy is a single restore point: a mistake you notice after the next backup can't be undone. Keep at least 3.</span> : null}</>}>
-        <Stepper
-          label="Backups to keep" value={b.keep} min={1} max={100} less="Fewer backups to keep" more="More backups to keep"
-          onChange={(v) => setBackup("Backups to keep", { keep: v })}
-        />
-      </Row>
+      <Row title="Backups kept" mark={false} desc="One for each hour of the last day, each day of the last two weeks and each week of the last two months. Older ones in the backup folder are deleted by themselves." />
       <Row title="Last backup" desc={<Swap on={lastKey}>{st ? <LastBackup st={st} frequency={b.frequency} hideFailure={lastFailed} /> : status.error ? <span className="set-err">{sentence(status.error)}</span> : "Checking…"}</Swap>}>
         <button className="btn" onClick={() => void backUpNow()} disabled={running}>
           <States at={running ? 1 : 0} labels={[<><Icon name="archive" size={13} />Back up now</>, "Backing up…"]} />

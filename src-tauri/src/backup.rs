@@ -1,5 +1,5 @@
 //! Office backups: one zip of the office folder per backup, with a consistent database snapshot in
-//! place of the live `office.db`, pruned to the newest few. Bulk (large files, dependencies and app
+//! place of the live `office.db`, thinned out over time (`TIERS`). Bulk (large files, dependencies and app
 //! builds) is left out. File work only; the Office decides when.
 
 use crate::model::*;
@@ -9,6 +9,7 @@ use crate::store::{BACKUP_STATUS, DB_FILE};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, Timelike};
 use rusqlite::{Connection, OpenFlags};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{BufWriter, ErrorKind, Read, Write};
@@ -40,14 +41,48 @@ impl From<zip::result::ZipError> for AppError {
     }
 }
 
+/// The hour, day or week a backup falls in, as text that is equal for every backup in it.
+type Period = fn(NaiveDateTime) -> String;
+
+/// What backups keep, newest first: one for each of the last 24 hours, 14 days and 8 weeks that have a backup
+/// (the newest in each). A backup can count for more than one. About 46 backups at most, reaching back two months.
+const TIERS: [(usize, Period); 3] = [
+    (24, |t| t.format("%Y%m%d%H").to_string()),
+    (14, |t| t.format("%Y%m%d").to_string()),
+    (8, |t| t.format("%G-W%V").to_string()),
+];
+
 pub fn file_name(at: DateTime<Local>) -> String {
     format!("{PREFIX}{}{EXT}", at.format(STAMP))
 }
 
 fn is_backup_name(name: &str) -> bool {
-    name.strip_prefix(PREFIX)
-        .and_then(|r| r.strip_suffix(EXT))
-        .is_some_and(|stamp| stamp.len() == 15 && NaiveDateTime::parse_from_str(stamp, STAMP).is_ok())
+    stamp_of(name).is_some()
+}
+
+/// When a backup was made, read from its name (this computer's local time), or `None` for any other file.
+fn stamp_of(name: &str) -> Option<NaiveDateTime> {
+    let stamp = name.strip_prefix(PREFIX)?.strip_suffix(EXT)?;
+    (stamp.len() == 15).then(|| NaiveDateTime::parse_from_str(stamp, STAMP).ok()).flatten()
+}
+
+/// The backups `TIERS` keeps out of `stamps`: the newest in each of the last few hours, days and weeks that have one.
+fn kept(stamps: &[NaiveDateTime]) -> HashSet<NaiveDateTime> {
+    let mut newest_first = stamps.to_vec();
+    newest_first.sort_by(|a, b| b.cmp(a));
+    let mut keep = HashSet::new();
+    for (count, period) in TIERS {
+        let mut seen = HashSet::new();
+        for t in &newest_first {
+            if seen.len() == count {
+                break;
+            }
+            if seen.insert(period(*t)) {
+                keep.insert(*t);
+            }
+        }
+    }
+    keep
 }
 
 /// When the next automatic backup is due: an interval after the last success or the last check that
@@ -324,17 +359,18 @@ pub fn write_archive(data_dir: &Path, db_snapshot: &Path, dest: &Path, mut manif
     Ok(s)
 }
 
-/// Deletes all but the newest `keep` backups in `dir`, and any half-written ones. Files that aren't
-/// Omega Star backups are never touched.
-pub fn prune(dir: &Path, keep: u32) -> Result<()> {
-    for path in prunable(dir, keep)? {
+/// Deletes the backups in `dir` that `TIERS` no longer keeps, and any half-written ones. Only files named like
+/// this app's backups are ever touched, and never the newest backup.
+pub fn prune(dir: &Path) -> Result<()> {
+    for path in prunable(dir, None)? {
         fs::remove_file(path)?;
     }
     Ok(())
 }
 
-/// What `prune` deletes: the backups older than the newest `keep`, and any half-written ones.
-fn prunable(dir: &Path, keep: u32) -> Result<Vec<PathBuf>> {
+/// What `prune` deletes, as if a backup made at `next` were already there when one is given (`make_room`
+/// makes room for it). The newest backup in `dir` always stays, whatever `next` is: that one may never be written.
+fn prunable(dir: &Path, next: Option<NaiveDateTime>) -> Result<Vec<PathBuf>> {
     let mut done = Vec::new();
     let mut partial = Vec::new();
     for e in fs::read_dir(dir)?.flatten() {
@@ -342,28 +378,30 @@ fn prunable(dir: &Path, keep: u32) -> Result<Vec<PathBuf>> {
             continue;
         }
         let name = e.file_name().to_string_lossy().into_owned();
-        if is_backup_name(&name) {
-            done.push(name);
+        if let Some(t) = stamp_of(&name) {
+            done.push((t, name));
         } else if name.strip_suffix(PARTIAL).is_some_and(is_backup_name) {
             partial.push(name);
         }
     }
-    done.sort(); // the stamp sorts by time
-    let excess = done.len().saturating_sub(keep.max(1) as usize);
-    Ok(done.into_iter().take(excess).chain(partial).map(|name| dir.join(name)).collect())
+    let newest = done.iter().map(|(t, _)| *t).max();
+    let stamps: Vec<_> = done.iter().map(|(t, _)| *t).chain(next).collect();
+    let keep = kept(&stamps);
+    done.sort();
+    let old = done.into_iter().filter(|(t, _)| !keep.contains(t) && Some(*t) != newest).map(|(_, name)| name);
+    Ok(old.chain(partial).map(|name| dir.join(name)).collect())
 }
 
-/// Makes room in `dir` for a backup: it wants twice the size of the last one free (`last_bytes`), or a
-/// gigabyte before the first. When `free` reports less, the oldest backups go first, down to one fewer
-/// than `keep` (never the last one, see `prune`), but only when that frees enough on this disk (`on_disk`, the
-/// space each takes here): a backup a cloud service keeps only online frees nothing, so it is never deleted for
-/// nothing. When there is still not enough, no backup is written. A volume whose free space can't be read is let
-/// through.
-pub fn make_room(dir: &Path, keep: u32, last_bytes: Option<u64>, free: impl Fn(&Path) -> Option<u64>, on_disk: impl Fn(&Path) -> u64) -> Result<()> {
+/// Makes room in `dir` for a backup made at `next`: it wants twice the size of the last one free (`last_bytes`), or a
+/// gigabyte before the first. When `free` reports less, the backups `TIERS` would drop once the new one is there go
+/// now (never the newest, see `prunable`), but only when that frees enough on this disk (`on_disk`, the space each
+/// takes here): a backup a cloud service keeps only online frees nothing, so it is never deleted for nothing. When
+/// there is still not enough, no backup is written. A volume whose free space can't be read is let through.
+pub fn make_room(dir: &Path, next: NaiveDateTime, last_bytes: Option<u64>, free: impl Fn(&Path) -> Option<u64>, on_disk: impl Fn(&Path) -> u64) -> Result<()> {
     let need = last_bytes.map_or(GB, |b| b.saturating_mul(2));
     let short = || free(dir).is_some_and(|f| f < need);
     if short() {
-        let doomed = prunable(dir, keep.saturating_sub(1))?;
+        let doomed = prunable(dir, Some(next))?;
         let freed: u64 = doomed.iter().map(|p| on_disk(p)).sum();
         if free(dir).is_some_and(|f| f.saturating_add(freed) >= need) {
             for path in &doomed {
@@ -483,45 +521,134 @@ mod tests {
         let _ = fs::remove_dir_all(&out);
     }
 
+    fn at(stamp: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(stamp, STAMP).unwrap()
+    }
+
+    fn named(t: NaiveDateTime) -> String {
+        format!("{PREFIX}{}{EXT}", t.format(STAMP))
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
     #[test]
-    fn a_short_disk_drops_the_oldest_backups_before_giving_up() {
+    fn hourly_backups_thin_out_to_24_hours_14_days_and_8_weeks() {
+        // A backup at five past every hour for a hundred days, up to Sunday 15 March 2026, 11:05 pm.
+        let last = at("20260315-230500");
+        let all: Vec<_> = (0..100 * 24).map(|h| last - Duration::hours(h)).collect();
+        let keep = kept(&all);
+        assert!(keep.contains(&last), "the newest");
+        assert!((0..24).all(|h| keep.contains(&(last - Duration::hours(h)))), "each of the last 24 hours");
+        assert!((0..14).all(|d| keep.contains(&(last - Duration::days(d)))), "the last of each of the last 14 days");
+        assert!((0..8).all(|w| keep.contains(&(last - Duration::weeks(w)))), "the last of each of the last 8 weeks (they end on a Sunday)");
+        // The last hour of today counts for all three tiers and the last of a Sunday for two, so 24 + 13 + 6.
+        assert_eq!(keep.len(), 43);
+        assert_eq!(keep.iter().min(), Some(&(last - Duration::weeks(7))), "nothing older than the eighth week back");
+    }
+
+    #[test]
+    fn a_gap_of_days_keeps_older_backups_instead_of_counting_empty_hours() {
+        // Off for a month: the last 24 hours that have a backup reach back past the gap.
+        let before = at("20260201-090000");
+        let after = at("20260301-090000");
+        let all = [before - Duration::hours(1), before, after];
+        assert_eq!(kept(&all).len(), 3);
+    }
+
+    #[test]
+    fn prune_keeps_what_the_tiers_keep_and_drops_the_rest() {
+        let dir = temp_office("tiers");
+        let last = at("20260315-235500");
+        // Every ten minutes for two days, from five past midnight on the 14th: only the newest of each hour or day stays.
+        for m in 0..2 * 24 * 6 {
+            put(&dir.join(named(last - Duration::minutes(10 * m))), "zip");
+        }
+        put(&dir.join(format!("{}{PARTIAL}", named(last + Duration::hours(1)))), "half");
+        prune(&dir).unwrap();
+        let left = names_in(&dir);
+        assert_eq!(left.len(), 25, "24 hours, and the end of the day before: {left:?}");
+        assert!(left.contains(&named(last)));
+        assert!(left.contains(&named(last - Duration::days(1))), "the last of yesterday");
+        assert!(!left.iter().any(|n| n.ends_with(PARTIAL)), "the half-written one goes");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_only_ever_touches_this_apps_backups() {
+        let dir = temp_office("not-mine");
+        let mine = [named(at("20260101-090000")), named(at("20260101-091000"))];
+        let others = [
+            "OmegaStar-dev-backup-20260101-080000.zip".to_string(),
+            "OmegaStar-backup-20260101-0800.zip".into(),
+            "OmegaStar-backup-latest.zip".into(),
+            "Other-backup-20260101-080000.zip".into(),
+            "OmegaStar-backup-20260101-080000.zip.bak".into(),
+            "notes.txt".into(),
+        ];
+        for name in mine.iter().chain(&others) {
+            put(&dir.join(name), "x");
+        }
+        fs::create_dir_all(dir.join(named(at("20251201-090000")))).unwrap();
+        prune(&dir).unwrap();
+        make_room(&dir, at("20260101-092000"), Some(GB), |_| Some(0), |_| GB).unwrap_err();
+        let left = names_in(&dir);
+        for name in &others {
+            assert!(left.contains(name), "{name} is not ours, so it stays: {left:?}");
+        }
+        assert!(left.contains(&named(at("20251201-090000"))), "a folder named like a backup stays");
+        assert!(!left.contains(&mine[0]), "the older backup in the same hour goes");
+        assert!(left.contains(&mine[1]), "the newest stays, even when a backup due in the same hour would replace it");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_short_disk_drops_what_the_next_backup_would_replace_before_giving_up() {
         let dir = temp_office("room");
-        let backups = ["OmegaStar-backup-20260101-090000.zip", "OmegaStar-backup-20260102-090000.zip", "OmegaStar-backup-20260103-090000.zip"];
-        for name in backups {
+        // Already thinned out: the 24 hours of 3 January, and 9 am on the two days before.
+        let day = at("20260103-000000");
+        let mut backups: Vec<String> = (0..24).map(|h| named(day + Duration::hours(h))).collect();
+        backups.extend([named(at("20260101-090000")), named(at("20260102-090000"))]);
+        for name in &backups {
             put(&dir.join(name), "zip");
         }
-        put(&dir.join(format!("OmegaStar-backup-20260104-090000.zip{PARTIAL}")), "half");
+        let half = format!("{}{PARTIAL}", named(at("20260103-235000")));
+        put(&dir.join(&half), "half");
         put(&dir.join("notes.txt"), "not a backup");
-        let left = || {
-            let mut v: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-            v.sort();
-            v
-        };
-        // A 6 GB disk where each file in the folder takes a gigabyte.
-        let free = |d: &Path| Some((6 - fs::read_dir(d).unwrap().count() as u64) * GB);
+        prune(&dir).unwrap();
+        put(&dir.join(&half), "half");
+        assert_eq!(names_in(&dir).len(), 28, "the tiers keep all 26");
+        // A 30 GB disk where each file in the folder takes a gigabyte, so 2 GB are free.
+        let free = |d: &Path| Some((30 - fs::read_dir(d).unwrap().count() as u64) * GB);
         let local = |_: &Path| GB;
+        let next = at("20260104-000000");
 
-        make_room(&dir, 3, Some(GB / 4), free, local).unwrap();
-        assert_eq!(left().len(), 5, "1 GB free is twice the last backup and more");
-        make_room(&dir, 3, None, |_| None, local).unwrap();
-        assert_eq!(left().len(), 5, "free space that can't be read lets the backup go ahead");
+        make_room(&dir, next, Some(GB / 2), free, local).unwrap();
+        assert_eq!(names_in(&dir).len(), 28, "2 GB free is twice the last backup");
+        make_room(&dir, next, Some(10 * GB), |_| None, local).unwrap();
+        assert_eq!(names_in(&dir).len(), 28, "free space that can't be read lets the backup go ahead");
 
         // Kept only online, the backups take no space here, so deleting them would make no room.
-        let err = make_room(&dir, 3, Some(GB), free, |_| 0).unwrap_err();
-        assert_eq!(err.message, "Not enough free disk space for a backup: it needs about 2.0 GB.");
-        assert_eq!(left().len(), 5, "nothing is deleted for nothing");
+        let err = make_room(&dir, next, Some(2 * GB), free, |_| 0).unwrap_err();
+        assert_eq!(err.message, "Not enough free disk space for a backup: it needs about 4.0 GB.");
+        assert_eq!(names_in(&dir).len(), 28, "nothing is deleted for nothing");
 
-        make_room(&dir, 3, Some(GB), free, local).unwrap();
-        assert_eq!(left(), vec![backups[1], backups[2], "notes.txt"], "the oldest backup and the half-written one made room");
+        let err = make_room(&dir, next, Some(3 * GB), free, local).unwrap_err();
+        assert_eq!(err.message, "Not enough free disk space for a backup: it needs about 6.0 GB.");
+        assert_eq!(names_in(&dir).len(), 28, "what would go still isn't enough, so nothing goes");
 
-        let err = make_room(&dir, 2, Some(5 * GB / 2), free, local).unwrap_err();
-        assert_eq!(err.message, "Not enough free disk space for a backup: it needs about 5.0 GB.");
-        assert_eq!(left(), vec![backups[1], backups[2], "notes.txt"], "down to one fewer than keep would still be short, so nothing goes");
-        make_room(&dir, 2, Some(2 * GB), free, local).unwrap();
-        assert_eq!(left(), vec![backups[2], "notes.txt"], "down to one fewer than keep");
-        let err = make_room(&dir, 1, None, |_| Some(GB / 2), local).unwrap_err();
+        make_room(&dir, next, Some(2 * GB), free, local).unwrap();
+        let left = names_in(&dir);
+        assert_eq!(left.len(), 26, "{left:?}");
+        assert!(!left.contains(&named(day)), "midnight on the 3rd, which the next backup pushes out of the last 24 hours");
+        assert!(!left.contains(&half), "and the half-written one");
+
+        let err = make_room(&dir, at("20260103-233000"), None, |_| Some(GB / 2), local).unwrap_err();
         assert_eq!(err.message, "Not enough free disk space for a backup: it needs about 1.0 GB.");
-        assert_eq!(left(), vec![backups[2], "notes.txt"], "the last backup always stays");
+        assert!(names_in(&dir).contains(&named(at("20260103-230000"))), "the newest backup always stays");
 
         let _ = fs::remove_dir_all(&dir);
     }

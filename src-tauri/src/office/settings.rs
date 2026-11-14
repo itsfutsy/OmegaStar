@@ -89,7 +89,6 @@ impl Office {
         s.max_concurrent_runs = s.max_concurrent_runs.clamp(1, 16);
         s.claude_path = s.claude_path.filter(|p| !p.trim().is_empty());
         s.data_dir = self.0.data_dir.to_string_lossy().into_owned();
-        s.backup.keep = s.backup.keep.clamp(1, 100);
         s.backup.dir = s.backup.dir.trim().to_string();
         s.transcript_days = s.transcript_days.map(|d| d.max(1));
         s.watch.validate()?;
@@ -229,7 +228,7 @@ impl Office {
         let dir = backup::validate_dir(&settings.dir, self.data_dir())?;
         fs::create_dir_all(&dir).map_err(|e| AppError::invalid(format!("Could not create the backup folder {}: {e}", dir.display())))?;
         let last_bytes = self.db().backup_status()?.unwrap_or_default().last_bytes;
-        backup::make_room(&dir, settings.keep, last_bytes, free_bytes, backup::on_disk)?;
+        backup::make_room(&dir, at.with_timezone(&Local).naive_local(), last_bytes, free_bytes, backup::on_disk)?;
         let mut stamp = at.with_timezone(&Local);
         while dir.join(backup::file_name(stamp)).exists() {
             stamp += chrono::Duration::seconds(1);
@@ -257,7 +256,7 @@ impl Office {
             done.map(|sum| (sum, fingerprint))
         });
         let (sum, fingerprint) = task.await.map_err(|e| AppError::internal(format!("backup task: {e}")))??;
-        if let Err(e) = backup::prune(&dir, settings.keep) {
+        if let Err(e) = backup::prune(&dir) {
             log!("could not prune old backups: {e}");
         }
         Ok((file.to_string_lossy().into_owned(), sum, fingerprint))

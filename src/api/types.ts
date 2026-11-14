@@ -350,7 +350,7 @@ export type BusinessHours = { startMinute: number; endMinute: number; days: IsoW
 export type WatchSettings = { hours: BusinessHours; frequency: CheckFrequency; nudgeAfterDays: number; giveUpAfterDays: number };
 
 export type BackupFrequency = "off" | "hourly" | "daily" | "weekly";
-export type BackupSettings = { frequency: BackupFrequency; dir: string; keep: number };   // keep 1-100
+export type BackupSettings = { frequency: BackupFrequency; dir: string };
 export type BackupStatus = {
   running: boolean;
   lastAt: string | null;          // the last successful backup

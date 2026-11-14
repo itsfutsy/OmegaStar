@@ -242,14 +242,12 @@ pub struct BackupSettings {
     pub frequency: BackupFrequency,
     /// Where backup zips go. Never inside the office folder.
     pub dir: String,
-    /// How many backups to keep; older ones are deleted after each successful backup.
-    pub keep: u32,
 }
 
 impl Default for BackupSettings {
     fn default() -> Self {
         let dir = dirs::document_dir().or_else(dirs::home_dir).unwrap_or_default().join("Omega Star Backups");
-        BackupSettings { frequency: BackupFrequency::Off, dir: dir.to_string_lossy().into_owned(), keep: 7 }
+        BackupSettings { frequency: BackupFrequency::Off, dir: dir.to_string_lossy().into_owned() }
     }
 }
 
@@ -330,5 +328,12 @@ mod tests {
         let keyless = ProxySettings { api_key: String::new(), ..proxy };
         assert_eq!(keyless.env(), env(&[("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")]));
         assert!(ProxySettings::default().env().is_empty());
+    }
+
+    #[test]
+    fn backup_settings_saved_with_a_number_to_keep_still_read() {
+        let old: BackupSettings = serde_json::from_str(r#"{ "frequency": "hourly", "dir": "/backups", "keep": 5 }"#).unwrap();
+        assert_eq!(old.frequency, BackupFrequency::Hourly);
+        assert_eq!(old.dir, "/backups");
     }
 }

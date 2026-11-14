@@ -100,7 +100,7 @@ function setupStatus(company: Company | null, claude = true, signedIn = true): S
 
 const SETTINGS: AppSettings = {
   maxConcurrentRuns: 3, claudePath: null, dataDir: `${HOME}/Library/Application Support/OmegaStar`, paused: false,
-  backup: { frequency: "daily", dir: `${HOME}/Backups/Omega Star`, keep: 14 },
+  backup: { frequency: "daily", dir: `${HOME}/Backups/Omega Star` },
   watch: { hours: { startMinute: 9 * 60, endMinute: 17 * 60 + 30, days: [1, 2, 3, 4, 5] }, frequency: "normal", nudgeAfterDays: 2, giveUpAfterDays: 5 },
   proxy: { url: "", apiKey: "", managementKey: "" },
   transcriptDays: 90,
