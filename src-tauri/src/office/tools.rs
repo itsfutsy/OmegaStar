@@ -848,6 +848,8 @@ mod tests {
     use crate::fixtures::{open_office, saved_run, task};
     use crate::office::fixtures::{employee, held_office, office, saved, standup, Office0};
 
+    // Makes a symlink, which needs unix (Windows asks for extra rights).
+    #[cfg(unix)]
     #[test]
     fn a_card_shows_only_text_files_in_the_employees_folders() {
         let o = office();
@@ -878,6 +880,8 @@ mod tests {
         }
     }
 
+    // Makes a symlink, which needs unix (Windows asks for extra rights).
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_card_shows_its_file_as_it_is_now() {
         let o = office();
@@ -972,6 +976,8 @@ mod tests {
         drop(office);
     }
 
+    // Makes a symlink, which needs unix (Windows asks for extra rights).
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_card_carries_a_link_and_images_and_asks_for_what_it_is_about() {
         let o = office();
@@ -1080,9 +1086,11 @@ mod tests {
         drop(office);
     }
 
-    /// Records what it opens, and fails on anything ending in `.fail`.
+    /// Records what it opens, and fails on anything ending in `.fail`. Only the unix-only test below uses it.
+    #[cfg(unix)]
     #[derive(Default)]
     struct Screen(Mutex<Vec<String>>);
+    #[cfg(unix)]
     impl EventSink for Screen {
         fn org_changed(&self) {}
         fn run_updated(&self, _run: &Run) {}
@@ -1097,6 +1105,8 @@ mod tests {
         }
     }
 
+    // Makes a symlink, which needs unix (Windows asks for extra rights).
+    #[cfg(unix)]
     #[tokio::test]
     async fn open_shows_only_what_is_in_the_office_or_a_workspace() {
         let o = office();
