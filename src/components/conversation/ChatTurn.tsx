@@ -5,7 +5,7 @@ import { firstName, heldLabel, threadTitle, timeOrDay, dateLong } from "../../li
 import { useNow, useOrg, useProposals, useQuery, useUsage } from "../../lib/hooks";
 import { toast } from "../../lib/toasts";
 import type { LiveRun } from "../../lib/runs";
-import { navigate, openRun } from "../../lib/router";
+import { navigate, openMember, openRun } from "../../lib/router";
 import { didNotFinish, isLive } from "../../lib/threads";
 import { kindNames } from "../../lib/workTitle";
 import { Icon } from "../Icon";
@@ -19,7 +19,8 @@ import "./Chat.css";
 
 const isImage = (name: string) => /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(name);
 
-/** Who a reply is from and when it finished, or "up next". While it runs, its work line says so, not this. */
+/** Who a reply is from and when it finished, or "up next". While it runs, its work line says so, not this. Their face and
+ *  name are a button to their profile, the same page the header's More menu opens. */
 export function WhoLine({ e, run, label, last = true }: { e: EmployeeView; run: Run; label?: string; last?: boolean }) {
   const at = run.endedAt;
   const meta = label ? <span className="who-meta">{label}</span>
@@ -28,8 +29,10 @@ export function WhoLine({ e, run, label, last = true }: { e: EmployeeView; run: 
     : at ? <span className="who-meta num" title={dateLong(at)}>{timeOrDay(at)}</span> : null;
   return (
     <div className="who-line">
-      <Avatar name={e.name} hue={e.hue} image={e.image} size={22} />
-      <b>{firstName(e.name)}</b>
+      <button className="who-open" onClick={() => openMember(e.id, "profile")} aria-label={`Open ${firstName(e.name)}'s profile`}>
+        <Avatar name={e.name} hue={e.hue} image={e.image} size={22} />
+        <b>{firstName(e.name)}</b>
+      </button>
       {meta}
     </div>
   );

@@ -17,3 +17,8 @@ export function applyChrome() {
 
 /** Props for the strip the window is dragged by: the traffic lights' band. Empty where there is no overlay. */
 export const dragRegion = macChrome ? { "data-tauri-drag-region": "" } : {};
+
+/** Props for a page's header band, so the window drags by the top of every page as it does on a Mac title bar, and a
+ *  double-click there zooms it. "deep": the band's text and gaps drag too, while its buttons, links and fields keep
+ *  their own clicks (Tauri's drag script skips them). Empty where there is no overlay. */
+export const headDragRegion = macChrome ? { "data-tauri-drag-region": "deep" } : {};

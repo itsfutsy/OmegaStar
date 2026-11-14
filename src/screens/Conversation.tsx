@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { call } from "../api/client";
 import type { EmployeeView, NewAttachment } from "../api/types";
+import { headDragRegion } from "../lib/chrome";
 import { firstName, typing } from "../lib/format";
 import { refreshOrg, useOrg, useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
@@ -22,7 +23,7 @@ export function ConversationScreen({ route }: { route: Extract<Route, { page: "c
       <div className="convo"><div className="thread-error"><ErrorNote title="Couldn't open this conversation" text={error} onRetry={refreshOrg} /></div></div>
     ) : (
       <div className="convo" aria-busy="true">
-        <header className="convo-head"><Skeleton h={24} w={320} r={4} /></header>
+        <header className="convo-head" {...headDragRegion}><Skeleton h={24} w={320} r={4} /></header>
         <ThreadSkeleton />
       </div>
     );
@@ -88,7 +89,7 @@ function ThreadConversation({ e, rootId }: { e: EmployeeView; rootId: string }) 
 function ConversationFrame({ title, picker, state, menu, children }: { title: string; picker: ReactNode; state?: ReactNode; menu: ReactNode; children: ReactNode }) {
   return (
     <div className="convo" aria-label={title}>
-      <header className="convo-head">
+      <header className="convo-head" {...headDragRegion}>
         {picker}
         {state}
         <span className="grow" />
@@ -109,5 +110,5 @@ export function RunRedirect({ runId }: { runId: string }) {
     );
     return () => { live = false; };
   }, [runId]);
-  return <div className="convo" aria-busy="true"><header className="convo-head"><Skeleton h={24} w={320} r={4} /></header><ThreadSkeleton /></div>;
+  return <div className="convo" aria-busy="true"><header className="convo-head" {...headDragRegion}><Skeleton h={24} w={320} r={4} /></header><ThreadSkeleton /></div>;
 }

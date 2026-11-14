@@ -7,11 +7,13 @@ import "@fontsource/jetbrains-mono/500.css";
 import "./design/tokens.css";
 import "./design/base.css";
 import { applyChrome } from "./lib/chrome";
+import { applySideWidth } from "./lib/sidebar";
 import { applyTheme } from "./lib/theme";
 import App from "./App";
 
 applyTheme();
 applyChrome();
+applySideWidth();
 
 // A file dropped anywhere but the chat must not navigate the window to it.
 for (const type of ["dragover", "drop"] as const) {

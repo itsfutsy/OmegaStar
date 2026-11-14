@@ -13,7 +13,7 @@ the page loads.
 ## The URL
 
 ```
-http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&toasts=1][&chrome=mac]#<route>
+http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&sidewidth=<px>][&toasts=1][&chrome=mac]#<route>
 ```
 
 `?preview=parts` is not an office: it is every shared part on one page, from the real components (`Parts.tsx`; add
@@ -25,6 +25,7 @@ http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&toasts
 | `theme` | `light`, `dark`, `system` (saved, like the app's own setting) | unchanged |
 | `sidebar` | `collapsed` (the rail at every size), `expanded` (the full sidebar at every size); saved | the app's rule: the rail below 1180 px |
 | `toasts` | `1`: three toasts show once the office loads (the two that report something done leave after 4 seconds; the failure stays until dismissed) | off |
+| `sidewidth` | the full sidebar's width in px, as if you dragged its edge there (clamped to 180–360); saved | 216, or what you last dragged |
 | `chrome` | `mac`: the macOS overlay title bar's room at the top of the sidebar (no traffic lights are drawn) | the browser's |
 
 ### States

@@ -8,7 +8,7 @@ import type {
 } from "../api/types";
 import { describeCron } from "../lib/cron";
 import { setMark } from "../lib/marks";
-import { COLLAPSE_KEY, NARROW_EXPANDED_KEY } from "../lib/sidebar";
+import { COLLAPSE_KEY, NARROW_EXPANDED_KEY, saveSideWidth } from "../lib/sidebar";
 import { storageSet } from "../lib/storage";
 import { dayKey } from "../lib/teamStats";
 import { setTheme } from "../lib/theme";
@@ -114,6 +114,9 @@ export function previewTransport(): Transport {
     storageSet(COLLAPSE_KEY, sidebar === "collapsed" ? "1" : "0");
     storageSet(NARROW_EXPANDED_KEY, sidebar === "collapsed" ? "0" : "1");
   }
+  // The full sidebar's width in px, as if you had dragged its edge there (clamped and saved like a drag).
+  const sideWidth = params.get("sidewidth");
+  if (sideWidth) saveSideWidth(Number(sideWidth));
   // What counts as new is the last day, so the same threads are unread on every load.
   storageSet("omega.shelvesSince", iso(NOW - DAY));
   if (w.runs.some((r) => r.id === "board-1")) setMark("board-1", { snoozedUntil: onDay(1, 9) });

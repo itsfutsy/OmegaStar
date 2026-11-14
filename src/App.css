@@ -30,6 +30,12 @@
 /* ------------------------------------------------ shell: the ultramarine sidebar beside one flush canvas */
 .shell { position: relative; height: 100%; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); background: var(--canvas); transition: grid-template-columns var(--d-panel) var(--ease); }
 .shell-collapsed { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+/* The full sidebar's right edge, which resizes it (Shell.tsx SideResize): a 6px grip astride the edge that shows a thin
+   line on hover, focus and while dragging. While dragging, the grid follows the pointer and nothing selects. */
+.side-resize { position: absolute; top: var(--chrome-top); bottom: 0; left: calc(var(--side-w) - 3px); z-index: 6; width: 6px; cursor: col-resize; touch-action: none; outline: none; }
+.side-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background var(--d-ui) var(--ease); }
+.side-resize:hover::after, .side-resize:focus-visible::after, .shell-resizing .side-resize::after { background: var(--faint); }
+.shell-resizing { transition: none; cursor: col-resize; user-select: none; }
 
 .side {
   display: flex; flex-direction: column; min-height: 0; padding: calc(12px + var(--chrome-top)) 10px 10px; gap: 0; overflow: hidden auto;

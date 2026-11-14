@@ -18,7 +18,7 @@ import { dragRegion, macChrome } from "./lib/chrome";
 import { usePresence } from "./lib/motion";
 import { usePending } from "./lib/pending";
 import { useScrollFade } from "./lib/scrollFade";
-import { useRail } from "./lib/sidebar";
+import { saveSideWidth, savedSideWidth, showSideWidth, SIDE_W_DEFAULT, SIDE_W_MAX, SIDE_W_MIN, useRail } from "./lib/sidebar";
 import { workLabel } from "./lib/workTitle";
 import { OrgScreen } from "./screens/Org";
 import { ConversationScreen, RunRedirect } from "./screens/Conversation";
@@ -65,6 +65,8 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
   // The button that opened the last sheet: kept past the close, which is when focus goes back to it.
   const [sheetFrom, setSheetFrom] = useState<HTMLElement | null>(null);
   const [palette, setPalette] = useState(false);
+  // While you drag the sidebar's edge, the grid follows the pointer instead of easing after it.
+  const [resizing, setResizing] = useState(false);
   // Below 1180 px the sidebar is the rail unless you expanded it there; above, your saved choice (src/lib/sidebar.ts).
   const { rail: collapsed, toggle: toggleCollapsed } = useRail();
   const { items } = useStatuses();
@@ -146,7 +148,7 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
   });
   return (
     <ShellCtx.Provider value={api}>
-      <div className={`shell ${collapsed ? "shell-collapsed" : ""}`}>
+      <div className={`shell ${collapsed ? "shell-collapsed" : ""} ${resizing ? "shell-resizing" : ""}`}>
         {macChrome ? <div className="side-chrome" {...dragRegion} /> : null}
         <aside ref={sideRef} className={`side scroll-fade ${arrive ? "side-arriving" : ""} ${tight ? "side-tight" : ""}`} aria-label="Sidebar">
           <div className="side-top">
@@ -192,6 +194,7 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
             ) : null}
           </div>
         </aside>
+        {collapsed ? null : <SideResize onResizing={setResizing} />}
         <main className={`content ${arriving ? "enter-rise" : ""}`}>
           <div className="page">{page}</div>
         </main>
@@ -207,6 +210,55 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
       <AddPersonSheet key={`person-${sheetKey}`} open={sheet?.kind === "person"} onClose={closeSheet} />
       {paletteShown ? <CommandPalette key={paletteOpens.n} leaving={!palette} onClose={() => setPalette(false)} api={api} /> : null}
     </ShellCtx.Provider>
+  );
+}
+
+/** How far one arrow key press moves the sidebar's edge, and with Shift held. */
+const RESIZE_STEP = 8;
+const RESIZE_STEP_BIG = 32;
+
+/** The full sidebar's right edge: drag it to widen or narrow the sidebar, double-click it for the default width again,
+ *  or focus it and use the arrow keys. The width is saved when you let go (src/lib/sidebar.ts). */
+function SideResize({ onResizing }: { onResizing: (on: boolean) => void }) {
+  const [width, setWidth] = useState(savedSideWidth);
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    // Where on the edge you grabbed it, so the edge stays under the pointer rather than snapping to it.
+    const grab = e.clientX - width;
+    let now = width;
+    onResizing(true);
+    // The window hears the drag, so it keeps going when the pointer runs ahead of the edge.
+    const move = (ev: PointerEvent) => { now = showSideWidth(ev.clientX - grab); setWidth(now); };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      saveSideWidth(now);
+      onResizing(false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+  const set = (px: number) => { saveSideWidth(px); setWidth(savedSideWidth()); };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.shiftKey ? RESIZE_STEP_BIG : RESIZE_STEP;
+    if (e.key === "ArrowLeft") set(width - step);
+    else if (e.key === "ArrowRight") set(width + step);
+    else if (e.key === "Home") set(SIDE_W_MIN);
+    else if (e.key === "End") set(SIDE_W_MAX);
+    else if (e.key === "Enter") set(SIDE_W_DEFAULT);
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <div
+      className="side-resize" role="separator" aria-orientation="vertical" aria-label="Sidebar width"
+      aria-valuenow={width} aria-valuemin={SIDE_W_MIN} aria-valuemax={SIDE_W_MAX} tabIndex={0}
+      title="Drag to resize. Double-click to reset."
+      onPointerDown={onPointerDown} onDoubleClick={() => set(SIDE_W_DEFAULT)} onKeyDown={onKeyDown}
+    />
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView } from "../../api/types";
+import { headDragRegion } from "../../lib/chrome";
 import { elapsedMs, firstName, relTime } from "../../lib/format";
 import { useNow, useOrg } from "../../lib/hooks";
 import { employeeState, numberParts, type MemberState } from "../../lib/memberState";
@@ -62,7 +63,7 @@ export function PageHead({ av, name, role, actions, onClose }: {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [name]);
   return (
-    <header className="mpage-head">
+    <header className="mpage-head" {...headDragRegion}>
       {av}
       <div className="mpage-id">
         <h2 className="mpage-name" ref={heading} tabIndex={-1}>{name}</h2>

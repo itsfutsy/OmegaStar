@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { call, errorMessage } from "../api/client";
 import type { Card, CardReply, HireProposal, Run, Thread } from "../api/types";
 import { answerCard, answering, undoAnswer, undoLatest, UNDO_MS } from "../lib/cardAnswers";
+import { headDragRegion } from "../lib/chrome";
 import { decisions, inboxLists, type Decision } from "../lib/decisions";
 import { dayHeading, firstName, typing, whenInline } from "../lib/format";
 import { refreshConversations, useOrg, useProposals, useQuery, useSkillScan } from "../lib/hooks";
@@ -516,7 +517,7 @@ export function InboxScreen() {
     }
     return (
       <div className="ibx-one">
-        <header className="ilist-head ibx-one-head">
+        <header className="ilist-head ibx-one-head" {...headDragRegion}>
           <TitleMenu title={viewTitle} count={emptied ? inboxCount : loadError ? null : 0} items={viewItems} />
         </header>
         {emptied ? <Chips counts={counts} total={inboxCount} active={activeFilter} onPick={setFilter} loading={false} /> : null}
@@ -528,7 +529,7 @@ export function InboxScreen() {
   return (
     <div className="ibx">
       <section className="ilist" aria-label={viewTitle}>
-        <header className="ilist-head">
+        <header className="ilist-head" {...headDragRegion}>
           <TitleMenu title={viewTitle} count={viewRows ? viewCount : null} items={viewItems} />
         </header>
         {view === "inbox" ? (

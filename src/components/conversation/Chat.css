@@ -39,7 +39,11 @@
 .msg-emp { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .who-line { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 13px; color: var(--muted); }
 .who-line b { font-size: 13.5px; font-weight: 700; color: var(--ink); }
-.who-line > .av { flex: none; }
+.who-line .av { flex: none; transition: box-shadow var(--d-ui) var(--ease); }
+/* The face and name open the profile: a ring on the face and the name's underline say so on hover. */
+.who-open { display: inline-flex; align-items: center; gap: 9px; min-width: 0; margin: -2px -4px; padding: 2px 4px; border-radius: var(--r-input); color: inherit; }
+.who-open:hover .av { box-shadow: 0 0 0 2px var(--canvas), 0 0 0 3.5px var(--faint); }
+.who-open:hover b { text-decoration: underline; text-underline-offset: 2px; }
 .who-meta { white-space: nowrap; }
 .msg-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* Conversation prose at reading size. Cards and files keep their own. */

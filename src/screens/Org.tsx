@@ -10,6 +10,7 @@ import { YouPanel } from "../components/panel/YouPanel";
 import { TEMPLATES } from "../components/HireSheet";
 import { Icon } from "../components/Icon";
 import { ErrorNote, Skeleton } from "../components/ui";
+import { headDragRegion } from "../lib/chrome";
 import { YOU_ID, type OrgView } from "../lib/org";
 import { refreshOrg, useOrg } from "../lib/hooks";
 import { navigate, openMember, type PanelTab, type Route } from "../lib/router";
@@ -204,7 +205,7 @@ function MemberPage({ m, tab, focus, short, onClose }: { m: Member; tab: PanelTa
 /** The chart's head. Folded beside a person's page it is a sidebar heading, one step down, so the person leads. */
 function OrgHead({ tool, ruled = false, folded = false }: { tool: React.ReactNode; ruled?: boolean; folded?: boolean }) {
   return (
-    <header className={`pagehead org-head ${ruled ? "org-head-ruled" : ""} ${folded ? "org-head-folded" : ""}`}>
+    <header className={`pagehead org-head ${ruled ? "org-head-ruled" : ""} ${folded ? "org-head-folded" : ""}`} {...headDragRegion}>
       <h1 className="pagehead-title" data-pair="title">Org chart</h1>
       {tool}
     </header>

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Presence } from "../api/types";
+import { headDragRegion } from "../lib/chrome";
 import { initials } from "../lib/format";
 import { ms, rollAnimations } from "../lib/motion";
 import { useScrollFade } from "../lib/scrollFade";
@@ -387,7 +388,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className }: {
 /** A page's one header row: its title, and the actions that belong to this page only. */
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <header className="pagehead">
+    <header className="pagehead" {...headDragRegion}>
       <h1 className="pagehead-title">{title}</h1>
       {children ? <div className="pagehead-actions">{children}</div> : null}
     </header>
