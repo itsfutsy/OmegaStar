@@ -5,6 +5,7 @@ import { rollAnimations } from "../../lib/motion";
 import type { LiveRun } from "../../lib/runs";
 import { openMember, openRun } from "../../lib/router";
 import { Icon } from "../Icon";
+import { Markdown } from "../Markdown";
 import { StepMark } from "../Transcript";
 import { Avatar, Roll } from "../ui";
 import { SponsorWords, usePauseLine } from "./Sponsor";
@@ -112,7 +113,7 @@ function StepRow({ row, e }: { row: WorkRow; e: EmployeeView }) {
       ) : <div className="wl-row">{body}</div>}
       {row.detail ? (
         <div className="collapse" data-open={open}>
-          <div><p className="wl-detail">{row.detail}</p></div>
+          <div>{row.key.startsWith("n:") ? <Markdown text={row.detail} className="wl-detail wl-note" /> : <p className="wl-detail">{row.detail}</p>}</div>
         </div>
       ) : null}
     </div>

@@ -148,7 +148,8 @@ export function threadTitle(root: Run, names: { manager?: string; person?: strin
   return root.kind.type === "chat" ? taskLabel(root.prompt, root.attachments) : runKindLabel(root.kind, names);
 }
 
-const TASK_LABEL_CHARS = 48;
+// Long enough for a whole sentence: the screens cut a name to fit, with the rest in a tooltip.
+const TASK_LABEL_CHARS = 120;
 const OPENERS = ["also", "and", "hey", "ok", "please", "can you", "could you", "would you", "i need you to"];
 const LABEL_ENDS = /[?.!,:;]+$/;
 

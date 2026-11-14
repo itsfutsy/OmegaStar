@@ -21,9 +21,19 @@ export type WorkRow = {
 /** One stretch of a reply: what you said to start it (after the first), its items, and how the talk reads them. */
 export type Part = { said: string | null; items: TranscriptItem[]; opener: TextItem | null; notes: TextItem[]; answer: TextItem[] };
 
+/** A call into the folder of a skill this run changed (reading it, writing it), which its skill change already says
+ *  ("Refined ada"). */
+const skillCall = (t: ToolItem, skills: Set<string>) => /^(Read|Write|Edit|MultiEdit)$/.test(t.tool) && [...skills].some((k) => t.brief.includes(`skills/${k}/`));
+/** A write into a skill's own folder, which its skill change already says ("Wrote a skill price-changes"). */
+const skillWrite = (t: ToolItem, skills: Set<string>) => t.tool !== "Read" && skillCall(t, skills);
+const skillsOf = (items: TranscriptItem[]) => new Set(items.flatMap((it) => (it.kind === "skill" ? [it.skill] : [])));
+
 // Not a skill change: Omega Star records those after the run ends, so one would always fall after the answer and fold it
-// into the work line. Its row still shows (rowsOf).
-const isWork = (it: TranscriptItem) => it.kind === "tools" || it.kind === "delegated" || it.kind === "requested" || it.kind === "proposed" || it.kind === "visual";
+// into the work line. Its row still shows (rowsOf). Nor steps that only kept a changed skill up to date, or that are said
+// by what came of them: a reply that ends by refining its skill keeps its answer, rather than reading it as a note.
+const isWork = (it: TranscriptItem, skills: Set<string>) =>
+  it.kind === "tools" ? !it.tools.every((t) => (saidElsewhere(t.tool) || skillCall(t, skills)) && t.result?.ok !== false)
+  : it.kind === "delegated" || it.kind === "requested" || it.kind === "proposed" || it.kind === "visual";
 
 /** A reply split where a message you sent while it worked landed (one still waiting to go in splits nothing). In each part the talk keeps the first words (when they
  *  came before any work) and the answer (the words after the last of it); the notes between are rows of its work. */
@@ -33,9 +43,10 @@ export function partsOf(events: TranscriptItem[]): Part[] {
     if (it.kind === "user") { if (!it.waiting) raw.push({ said: it.text, items: [] }); }
     else raw[raw.length - 1].items.push(it);
   }
+  const skills = skillsOf(events);
   return raw.map(({ said, items }) => {
     const texts = items.filter((it): it is TextItem => it.kind === "text");
-    const work = items.flatMap((it, i) => (isWork(it) ? [i] : []));
+    const work = items.flatMap((it, i) => (isWork(it, skills) ? [i] : []));
     if (!work.length) return { said, items, opener: null, notes: [], answer: texts };
     const first = items[0];
     const opener = first?.kind === "text" && work[0] > 0 ? first : null;
@@ -76,10 +87,6 @@ const childState = (c?: Run): StepState => (!c ? null : c.state === "queued" ? "
 const taskState = (t: TaskView, runActive: boolean): StepState => (t.state === "running" ? (runActive ? "pending" : "stopped") : t.state === "done" ? "ok" : t.state === "failed" ? "err" : "stopped");
 const toolState = (t: ToolItem, running: boolean): StepState => (t.result === null ? (running ? "pending" : "stopped") : t.result.ok ? "ok" : "err");
 const agentTask = (turn: LiveRun, t: ToolItem) => turn.tasks.find((k) => k.toolUseId === t.id);
-
-/** A write into a skill's own folder, which its skill change already says ("Wrote a skill price-changes"). */
-const skillWrite = (t: ToolItem, skills: Set<string>) => /^(Write|Edit|MultiEdit)$/.test(t.tool) && [...skills].some((k) => t.brief.includes(`skills/${k}/`));
-const skillsOf = (items: TranscriptItem[]) => new Set(items.flatMap((it) => (it.kind === "skill" ? [it.skill] : [])));
 
 /** The rows of one stretch of a turn's reply (`part`, or the whole reply), oldest first: its steps, the notes between
  *  them, the colleagues it asked, what it showed and the skills it wrote. Work still going is a row too, marked as

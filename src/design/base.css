@@ -186,7 +186,7 @@ input, textarea { caret-color: var(--live); }
 .md { font-size: var(--t-base); line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
-.md p, .md ul, .md ol, .md table, .md blockquote, .md pre { margin: 0 0 10px; }
+.md p, .md ul, .md ol, .md .md-table, .md blockquote, .md pre { margin: 0 0 10px; }
 .md h1, .md h2, .md h3, .md h4 { margin: 18px 0 8px; font-weight: 700; letter-spacing: -0.012em; line-height: 1.3; }
 .md h1 { font-size: 18px; } .md h2 { font-size: var(--t-md); } .md h3, .md h4 { font-size: 13.5px; }
 .md ul, .md ol { padding-left: 20px; }
@@ -198,9 +198,17 @@ input, textarea { caret-color: var(--live); }
 .md pre { background: var(--sunken); border-radius: var(--r-card); padding: 10px 12px; overflow-x: auto; }
 .md pre code { background: none; padding: 0; font-size: var(--t-sm); }
 .md blockquote { border-left: 1px solid var(--ink); padding: 2px 0 2px 14px; color: var(--ink-2); }
-.md table { border-collapse: collapse; width: 100%; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
-.md th, .md td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.md th { font-weight: 600; color: var(--muted); }
+/* A table keeps its columns: it is as wide as its words need, scrolls sideways in its strip (Markdown's scrollTables)
+   when wider than the reply, and a cell only breaks between words, never through one. A column the writer aligned
+   (a number column, say) keeps that alignment. */
+.md .md-table { max-width: 100%; overflow-x: auto; }
+.md table { border-collapse: collapse; margin: 0; font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.md th, .md td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; min-width: 6ch; overflow-wrap: normal; word-break: normal; }
+.md th:not([align]), .md td:not([align]) { text-align: left; }
+.md :is(th, td).md-short { white-space: nowrap; }
+.md th { font-weight: 600; color: var(--muted); background: var(--sunken); }
+.md th:first-child { border-top-left-radius: 3px; }
+.md th:last-child { border-top-right-radius: 3px; }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 /* A quoted draft that opens with its subject (Markdown's letters()): a ruled sheet, the subject its own line. Wherever
    an employee's words show (a conversation, a run, the Inbox). */

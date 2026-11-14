@@ -16,8 +16,9 @@ use crate::claude::clip;
 use crate::model::*;
 use std::collections::{HashMap, HashSet};
 
-/// A task's name, cut from your first message.
-const TASK_LABEL_CHARS: usize = 48;
+/// A task's name, cut from your first message. Long enough for a whole sentence: the screens cut a name to fit, with
+/// the rest in a tooltip.
+const TASK_LABEL_CHARS: usize = 120;
 
 /// Later turns grouped under their root's id, oldest first.
 pub fn group(replies: Vec<Run>) -> HashMap<String, Vec<Run>> {
@@ -664,5 +665,21 @@ mod tests {
         assert_eq!(ids[0], vec![a.id.as_str()], "the conversation stays out of the row, so marking the ask done leaves it alone");
         assert_eq!(ids[1].len(), 2, "an ask from your reply to a report still joins the report's row");
         assert!(ids[1].contains(&report.id.as_str()) && ids[1].contains(&b.id.as_str()));
+    }
+
+    #[test]
+    fn a_task_keeps_its_whole_first_sentence_as_its_name() {
+        let sentence = "Can you check whether the Eastlake booking reminders went out on Saturday morning for every member";
+        assert_eq!(task_label(sentence, &[]), "Check whether the Eastlake booking reminders went out on Saturday morning for every member");
+        assert_eq!(task_label("hey, draft the Acme reply? Keep it short.", &[]), "Draft the Acme reply");
+    }
+
+    #[test]
+    fn a_very_long_task_name_is_cut_at_a_word() {
+        let long = "word ".repeat(60);
+        let label = task_label(&long, &[]);
+        assert!(label.ends_with('…'));
+        assert!(label.chars().count() <= TASK_LABEL_CHARS + 1);
+        assert!(label.trim_end_matches('…').ends_with(" word"), "it never ends mid-word: {label}");
     }
 }

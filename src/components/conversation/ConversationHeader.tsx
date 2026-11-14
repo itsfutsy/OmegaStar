@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, Run, Thread } from "../../api/types";
 import { askComposer } from "../../lib/composer";
@@ -12,7 +12,7 @@ import { doneHeld, isLive, rowThreads, threadFocus } from "../../lib/threads";
 import { kindNames } from "../../lib/workTitle";
 import { kindIcon } from "../RunRow";
 import { Icon, type IconName } from "../Icon";
-import { Popover } from "../ui";
+import { isCut, Popover, tipWhenCut } from "../ui";
 import { LaterPreset } from "./LaterMenu";
 import { newConversationDraft, TEACH_PREFIX } from "./NewConversation";
 import { markDone, reopen, WHERE_ARE_WE } from "./ThreadView";
@@ -97,11 +97,23 @@ export function ConversationPicker({ e, rootId, title }: { e: EmployeeView; root
     .map((i) => ({ focus: threadFocus(i.thread.root.id), title: i.title, icon: kindIcon(i.thread.root), status: i.status }));
   if (focus && !list.some((x) => x.focus === focus)) list.unshift({ focus, title, icon: "chat", status: null });
   const go = (f: string | null) => { setOpen(false); openChat(e.id, f); };
+  // A title too long for the header is cut with an ellipsis, so its whole text is the button's tooltip instead.
+  const words = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = words.current;
+    if (!el) return;
+    const check = () => setCut(isCut(el));
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [title]);
   return (
     <>
       <h1 className="convo-title">
-        <button ref={anchor} type="button" className="convo-pick" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} data-tip={`Conversations with ${firstName(e.name)}`}>
-          <span className="trunc">{title}</span>
+        <button ref={anchor} type="button" className="convo-pick" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} data-tip={cut ? undefined : `Conversations with ${firstName(e.name)}`}>
+          <span ref={words} className="trunc" title={cut ? title : undefined}>{title}</span>
           <Icon name="chevronDown" size={16} className="convo-pick-chev" />
         </button>
       </h1>
@@ -112,7 +124,7 @@ export function ConversationPicker({ e, rootId, title }: { e: EmployeeView; root
             return (
               <button key={x.focus} type="button" role="menuitemradio" aria-checked={x.focus === focus} className="menu-item" onClick={() => go(x.focus)}>
                 <Icon name={x.icon} size={14} />
-                <span className="grow trunc">{x.title}</span>
+                <span className="grow trunc" onPointerEnter={tipWhenCut}>{x.title}</span>
                 {word ? <span className={`convo-menu-state ${x.status!.state === "needsYou" ? "status-attn" : x.status!.state === "working" ? "status-live" : ""}`}>{word}</span> : null}
               </button>
             );

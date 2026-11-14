@@ -54,3 +54,5 @@ button.wl-row:hover { background: var(--sunken); }
 .wl-meta { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
 .wl-row > .tag { justify-self: end; }
 .wl-detail { margin: 0; padding: 0 6px 10px 32px; font-size: var(--t-sm); line-height: 1.55; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A note is the employee's own words, so its Markdown reads as it does in the answer, a size down. */
+.wl-detail.wl-note { white-space: normal; font-size: var(--t-sm); color: var(--ink-2); }

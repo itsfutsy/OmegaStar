@@ -17,7 +17,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { Markdown } from "../components/Markdown";
 import { ProposalActions, ProposalRecord, hireTitle } from "../components/ProposalCard";
 import { TidyProposal, tidyAsks } from "../components/TidyProposal";
-import { Avatar } from "../components/ui";
+import { Avatar, tipWhenCut } from "../components/ui";
 import { CardImages } from "../components/conversation/CardImages";
 import { CardLink, webUrl } from "../components/conversation/CardLink";
 import { CardFile, CardList, CardText, CardView } from "../components/conversation/CardView";
@@ -229,7 +229,7 @@ export function InboxRow({ id, view, selected, held, onSelect }: { id: string; v
       onClick={held ? undefined : onSelect}
     >
       {view.avatar}
-      <span className="item-title irow-t">{view.title}</span>
+      <span className="item-title irow-t" onPointerEnter={tipWhenCut}>{view.title}</span>
       <span className="irow-m">{view.meta}</span>
       <span className="irow-r">
         {held ? <span className="irow-cleared"><Icon name="check" size={12} /> Cleared</span> : (

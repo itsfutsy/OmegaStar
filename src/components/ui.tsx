@@ -13,6 +13,17 @@ import "./ui.css";
 /** A named avatar in its own colour. People are ringed, a proposed hire is dashed, you are the ink disc. An employee
  *  with a display image shows it in place of their initials. Presence is a still dot on the avatar (ringed in
  *  `--av-ring`, the surface it sits on): only where there is no room for a word. */
+/** Whether an element's text is cut off: by an ellipsis on its one line, or by a clamp of a few. */
+export const isCut = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+
+/** For `onPointerEnter`: the element's whole text as its tooltip, only while it is cut off, so a long title can still
+ *  be read in full. */
+export function tipWhenCut(e: React.PointerEvent<HTMLElement>) {
+  const el = e.currentTarget;
+  if (isCut(el)) el.title = el.textContent ?? "";
+  else el.removeAttribute("title");
+}
+
 export function Avatar({ name, hue, image, size = 36, presence, person = false, proposed = false, you = false, className }: {
   name: string; hue: number; image?: string | null; size?: number; presence?: Presence; person?: boolean; proposed?: boolean; you?: boolean; className?: string;
 }) {

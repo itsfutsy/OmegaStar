@@ -86,9 +86,25 @@ function renderMarkdown(src: string, breaks: boolean): string {
   galleries(doc);
   letters(doc);
   wholeIds(doc);
+  scrollTables(doc);
   const out = document.createElement("div");
   out.append(doc);
   return out.innerHTML;
+}
+
+/** A cell this short (a date, a state, a number) stays on one line. */
+const SHORT_CELL = 16;
+
+/** Each table sits in a strip of its own that scrolls sideways, so a wide one keeps its columns rather than squeezing
+ *  them to a letter a line, and its short cells keep to one line. */
+function scrollTables(root: DocumentFragment) {
+  for (const cell of root.querySelectorAll("th, td")) if ((cell.textContent ?? "").trim().length <= SHORT_CELL) cell.classList.add("md-short");
+  for (const table of root.querySelectorAll("table")) {
+    const strip = document.createElement("div");
+    strip.className = "md-table";
+    table.before(strip);
+    strip.append(table);
+  }
 }
 
 export const ID_PATTERN = /\b([A-Z][A-Z0-9]*-\d+)\b/;

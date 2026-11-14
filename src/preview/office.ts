@@ -320,11 +320,11 @@ export function fullOffice(): World {
     "",
     "**Who needs to hear**",
     "",
-    "| Who | What | When |",
-    "|---|---|---|",
-    "| Studio customers (212) | An email with the new price and the date | 30 Jan |",
-    "| Harriet | One line in the January board update | 24 Jan |",
-    "| Mae | Help-centre changes and a reply template | 27 Jan |",
+    "| Who | What | State | When | Studios |",
+    "|---|---|---|---|--:|",
+    "| Studio customers | An email with the new price, the date, and a plain line that annual plans keep the old price | Drafting | 30 Jan | 212 |",
+    "| Harriet | One line in the January board update | Ready | 24 Jan | |",
+    "| Mae | Help-centre changes and a reply template | To do | 27 Jan | 3 |",
     "",
     "**What changes in the app**",
     "",
@@ -386,7 +386,7 @@ export function fullOffice(): World {
   }), [init(8), ...tool("g1", "Bash", "pg_restore --list nightly.dump", "Restored to test-db"), ...tool("g2", "Bash", "psql -c 'select version()'", "PostgreSQL 14.13"), said(pgSummary)]);
   const slowAnswer = "It was the database, not the app. Tuesday 6 to 7 pm is the busiest hour of the week (studios open the next week's classes), and one query read every past booking.\n\n- Added an index on `bookings.starts_at`: that query went from 1.9 s to 40 ms\n- The booking page's median is back to 310 ms\n\nNothing for you to do. I've set a check to look again next Tuesday evening.";
   const slow = add(mk("slow-1", "otto", { type: "task", label: "Why was the site slow on Tuesday?", from: null, context: "" },
-    "The booking page felt slow on Tuesday evening. What happened?", { end: ago(118), mins: 9, title: "Slow booking page on Tuesday", summary: slowAnswer }));
+    "The booking page felt slow on Tuesday evening. What happened?", { end: ago(118), mins: 9, title: "Slow booking page on Tuesday evening, between six and seven, while studios opened next week's classes", summary: slowAnswer }));
   w.events[slow.id] = [init(8), said("Looking at Tuesday evening's traces."), ...tool("s1", "Bash", "kubectl logs deploy/web --since=48h | grep slow", "212 slow requests"), ...tool("s2", "Bash", "psql -f explain-bookings.sql", "Seq scan on bookings"), ...tool("s3", "Edit", "infra/migrations/0142_bookings_starts_at.sql", "Added"), said(slowAnswer), done(slow)];
   for (let d = 1; d <= 4; d++) {
     add(mk(`backups-${d}`, "otto", sched(S.backups, onDay(-d, 2, 30)), S.backups.instruction, { end: onDay(-d, 2, 39), mins: 9, summary: "Backups restored cleanly. Nothing to report." }));
@@ -441,14 +441,21 @@ export function fullOffice(): World {
     "Can you rewrite the refund policy on the help centre? It's long and reads like a contract.", { end: onDay(-1, 15, 12), mins: 7, title: "Refund policy wording",
     summary: "Here's a shorter version. Two paragraphs instead of seven, and it says what happens before the fine print:\n\n> If a class is cancelled, you get your credit back straight away. For anything else, reply to your booking email within 14 days and we'll sort it out.\n\nIt's live as a draft on the help centre. Want me to publish it?" }));
   w.events[refundRoot.id] = [init(9), ...tool("f1", "Read", "help-centre/policies/refunds.md", "71 lines"), ...tool("f2", "Write", "help-centre/drafts/refunds.md", "Saved"), said(refundRoot.summary ?? ""), done(refundRoot)];
+  // Ends as a turn often does: the answer, then the employee refines its skill and closes with a line about that.
+  const refundClose = "I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:";
   add(mk("refund-2", "mae", { type: "reply", toRunId: "refund-1", label: "Refund policy wording", task: true, card: false },
     "Publish it. And you can approve refunds under $50 yourself from now on.", { end: ago(40), mins: 3,
-    summary: "Published. I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:",
+    summary: refundClose,
     skillChanges: [{ skill: "refunds", file: "SKILL.md", change: "modified" }],
     cards: [card("Add this to the company page so everyone follows it?", { type: "choices", choices: ["Add it", "Keep it to support"], recommended: 0 }, {
       key: "ask:refund-rule", proposal: { type: "companyLine", section: "How things work here", line: "- Refunds under $50 are approved without asking. Anything bigger goes to Maren." },
     })],
-  }), [init(9), ...tool("f3", "Bash", "help-centre publish drafts/refunds.md", "Published"), ...tool("f4", "Edit", "skills/refunds/SKILL.md", "1 rule added"), { type: "skillChanged", skill: "refunds", file: "SKILL.md", change: "modified" }, said("Published. I've written the $50 rule into my refunds skill.\n\nOne question, since it affects everyone who talks to studios:")]);
+  }), [
+    init(9), ...tool("f3", "Bash", "help-centre publish drafts/refunds.md", "Published"),
+    said("Published. **The reply:** the new policy is live on the help centre, and refunds under $50 now go straight through without waiting on you."),
+    ...tool("f4", "Read", "skills/refunds/SKILL.md", "38 lines"), ...tool("f5", "Edit", "skills/refunds/SKILL.md", "1 rule added"),
+    { type: "skillChanged", skill: "refunds", file: "SKILL.md", change: "modified" }, said(refundClose),
+  ]);
   const welcome = add(mk("welcome-1", "mae", { type: "task", label: "Welcome email for new studios", from: null, context: "" },
     "Write a welcome email for studios that just signed up. Short, and it should get them to add their first class.", { end: onDay(-2, 11, 5), mins: 5, title: "Welcome email for new studios",
     summary: "Done. Three short paragraphs and one button, **Add your first class**. It's in the onboarding sequence from today.", archivedAt: onDay(-2, 11, 30) }));
