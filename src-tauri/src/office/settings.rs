@@ -5,6 +5,8 @@ use super::*;
 /// The first transcript sweep, a while after launch, and the time between sweeps.
 const SWEEP_FIRST: Duration = Duration::from_secs(300);
 const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+/// How long a backup may take before Omega Star gives up on it, so a folder the system holds up fails loudly.
+const BACKUP_LIMIT: Duration = Duration::from_secs(600);
 
 impl Office {
     pub async fn setup_status(&self, background: bool) -> Result<SetupStatus> {
@@ -157,10 +159,10 @@ impl Office {
         if self.0.sandbox {
             return Err(AppError::conflict("This office is a sandbox copy, so it never backs up."));
         }
-        let Ok(_backing_up) = self.0.backing_up.try_lock() else {
+        let Ok(backing_up) = self.0.backing_up.clone().try_lock_owned() else {
             return Err(AppError::conflict("A backup is already running."));
         };
-        self.run_backup(now()).await
+        self.run_backup(backing_up, now(), BACKUP_LIMIT).await
     }
 
     /// Backs up if an automatic backup is due at `at` and the last one is out of date or gone.
@@ -173,7 +175,7 @@ impl Office {
         if !backup::is_due(settings.frequency, &st, at) {
             return Ok(());
         }
-        let Ok(_backing_up) = self.0.backing_up.try_lock() else { return Ok(()) };
+        let Ok(backing_up) = self.0.backing_up.clone().try_lock_owned() else { return Ok(()) };
         let dir = self.data_dir().to_path_buf();
         let fingerprint = tokio::task::spawn_blocking(move || backup::fingerprint(&dir))
             .await
@@ -186,16 +188,28 @@ impl Office {
             self.sink().backup_updated(&self.status_of_backups(false)?);
             return Ok(());
         }
-        if let Err(e) = self.run_backup(at).await {
+        if let Err(e) = self.run_backup(backing_up, at, BACKUP_LIMIT).await {
             log!("backup failed: {e}");
         }
         Ok(())
     }
 
-    /// Callers hold `backing_up`. Records the outcome either way.
-    async fn run_backup(&self, at: Ts) -> Result<BackupStatus> {
+    /// Records the outcome either way, a write still going after `limit` as a failure. The write holds
+    /// `backing_up` until it ends, so a stuck one stops the next from starting on top of it.
+    async fn run_backup(&self, backing_up: tokio::sync::OwnedMutexGuard<()>, at: Ts, limit: Duration) -> Result<BackupStatus> {
         self.sink().backup_updated(&self.status_of_backups(true)?);
-        let result = self.write_backup(at).await;
+        let office = self.clone();
+        let write = tokio::task::spawn_blocking(move || {
+            let _backing_up = backing_up;
+            office.write_backup(at)
+        });
+        let result = match tokio::time::timeout(limit, write).await {
+            Ok(done) => done.unwrap_or_else(|e| Err(AppError::internal(format!("backup task: {e}")))),
+            Err(_) => Err(AppError::internal(format!(
+                "The backup took over {} minutes, so Omega Star stopped waiting. Check that the backup folder is reachable and Omega Star is allowed to use it.",
+                limit.as_secs() / 60
+            ))),
+        };
         let mut st = self.db().backup_status()?.unwrap_or_default();
         st.last_attempt_at = Some(at);
         match &result {
@@ -211,7 +225,7 @@ impl Office {
             Err(e) => st.last_error = Some(e.message.clone()),
         }
         self.db().set_backup_status(&st)?;
-        let st = self.status_of_backups(false)?;
+        let st = self.backup_status()?;
         self.sink().backup_updated(&st);
         match result {
             Ok(_) => Ok(st),
@@ -224,7 +238,7 @@ impl Office {
 
     /// Writes the zip beside older backups, then prunes. Returns the zip's path, and the office's
     /// fingerprint, taken before the snapshot so a change during the backup is caught next time.
-    async fn write_backup(&self, at: Ts) -> Result<(String, backup::Summary, String)> {
+    fn write_backup(&self, at: Ts) -> Result<(String, backup::Summary, String)> {
         let settings = self.settings()?.backup;
         let dir = backup::validate_dir(&settings.dir, self.data_dir())?;
         fs::create_dir_all(&dir).map_err(|e| AppError::invalid(format!("Could not create the backup folder {}: {e}", dir.display())))?;
@@ -242,21 +256,18 @@ impl Office {
             "officeFolder": self.data_dir(),
             "restore": backup::RESTORE_STEPS,
         });
-        let office = self.clone();
-        let target = file.clone();
-        let task = tokio::task::spawn_blocking(move || -> Result<(backup::Summary, String)> {
-            let fingerprint = backup::fingerprint(office.data_dir());
-            let snapshot = std::env::temp_dir().join(format!("omegastar-snapshot-{}.db", uuid::Uuid::new_v4()));
-            let partial = PathBuf::from(format!("{}{}", target.display(), backup::PARTIAL));
-            let written = office.db().snapshot_to(&snapshot).and_then(|_| backup::write_archive(office.data_dir(), &snapshot, &partial, manifest));
-            let _ = fs::remove_file(&snapshot);
-            let done = written.and_then(|sum| Ok(fs::rename(&partial, &target).map(|_| sum)?));
-            if done.is_err() {
-                let _ = fs::remove_file(&partial);
-            }
-            done.map(|sum| (sum, fingerprint))
-        });
-        let (sum, fingerprint) = task.await.map_err(|e| AppError::internal(format!("backup task: {e}")))??;
+        let fingerprint = backup::fingerprint(self.data_dir());
+        let snapshot = std::env::temp_dir().join(format!("omegastar-snapshot-{}.db", uuid::Uuid::new_v4()));
+        let partial = PathBuf::from(format!("{}{}", file.display(), backup::PARTIAL));
+        // Its own statement, so the store is free again before the zip goes to a folder that may hang.
+        let snapped = self.db().snapshot_to(&snapshot);
+        let written = snapped.and_then(|_| backup::write_archive(self.data_dir(), &snapshot, &partial, manifest));
+        let _ = fs::remove_file(&snapshot);
+        let done = written.and_then(|sum| Ok(fs::rename(&partial, &file).map(|_| sum)?));
+        if done.is_err() {
+            let _ = fs::remove_file(&partial);
+        }
+        let sum = done?;
         if let Err(e) = backup::prune(&dir, settings.keep) {
             log!("could not prune old backups: {e}");
         }
@@ -686,6 +697,25 @@ mod tests {
         ];
         let old: Vec<&str> = runs[..4].iter().map(|r| r.id.as_str()).collect();
         assert_eq!(expired(&runs, cutoff), old, "finished before the cutoff, and only those");
+    }
+
+    #[tokio::test]
+    async fn a_backup_past_its_limit_fails_and_says_why() {
+        let (dir, backups) = (temp_dir("stall-from"), temp_dir("stall-zips"));
+        let office = open_office(&dir).await;
+        let backup = BackupSettings { dir: backups.to_string_lossy().into_owned(), ..BackupSettings::default() };
+        office.save_settings(AppSettings { backup, ..office.settings().unwrap() }).unwrap();
+        let backing_up = office.0.backing_up.clone().try_lock_owned().unwrap();
+        // No backup ends in no time, so a zero limit stands in for a folder the system holds up.
+        let e = office.run_backup(backing_up, Utc::now(), Duration::ZERO).await.unwrap_err();
+        assert!(e.message.starts_with("The backup took over 0 minutes"), "{}", e.message);
+        assert_eq!(office.backup_status().unwrap().last_error, Some(e.message), "recorded as any failed backup is");
+        // The write still holds the backup lock, so no second backup starts until it ends.
+        drop(office.0.backing_up.lock().await);
+        drop(office);
+        for d in [dir, backups] {
+            let _ = fs::remove_dir_all(d);
+        }
     }
 
     #[tokio::test]
