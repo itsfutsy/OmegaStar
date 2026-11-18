@@ -483,8 +483,10 @@ It never starts in a sandbox office.
 **Commands.** `api.rs` calls the same `Office` methods as the adapters in
 [`commands.rs`](../src-tauri/src/commands.rs). Four reads are new and belong on the `Office`: `inbox`, `members`
 (the `team` command; `Office::team` already exists), `member_image` and `card_image`, plus `company_name` for the
-`pair` answer and `approve_proposal_as_proposed` for `approve_proposal`. `card_image` must take the path from the card itself, never from the phone, and
-reuse `image_data_url`.
+`pair` answer and `approve_proposal_as_proposed` for `approve_proposal`. `card_image` must take the path from the card
+itself, never from the phone. `card_image` and `card_file` read a regular file only, through the one handle they
+checked, opened without waiting so a pipe in its place is refused, and stop at their size limit. Reads run off the link's
+task, on a blocking thread, and are answered with an error after 10 seconds, so a slow disk never holds up the link.
 
 **The saved pairing** lives in `remote.json` in the office folder:
 

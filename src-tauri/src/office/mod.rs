@@ -19,6 +19,7 @@ mod tools;
 mod visuals;
 
 pub use visuals::{image_data_url, image_mime, PAGE_CSP};
+use visuals::read_file;
 
 use crate::backup;
 use crate::catalog;

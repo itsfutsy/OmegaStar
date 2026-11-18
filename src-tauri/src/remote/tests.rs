@@ -382,7 +382,7 @@ async fn a_phone_setting_that_cannot_be_saved_says_so_and_off_still_holds() {
 
     let target = actor.target().unwrap();
     let req = api::request(json!({ "t": "req", "id": 1, "cmd": "push_register", "args": { "platform": "ios", "token": "t2", "sandbox": true } }).to_string().as_bytes()).unwrap();
-    assert!(actor.answer(&target, &req).is_err(), "the phone hears its token was not kept");
+    assert!(actor.answer(&target, &req).await.is_err(), "the phone hears its token was not kept");
     assert_eq!(actor.pairing.as_ref().unwrap().push.as_ref().unwrap().token, "t1");
 }
 

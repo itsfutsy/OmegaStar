@@ -40,6 +40,8 @@ const PAIR_FOR: Duration = Duration::from_secs(5 * 60);
 const PING_EVERY: Duration = Duration::from_secs(30);
 const PONG_WITHIN: Duration = Duration::from_secs(10);
 const CONNECT_WITHIN: Duration = Duration::from_secs(20);
+/// How long a phone's read may take on the disk before it is answered with an error.
+const READ_WITHIN: Duration = Duration::from_secs(10);
 const BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// A connection that lasted this long starts the backoff over.
@@ -573,7 +575,7 @@ impl Actor {
                     self.start_session(target);
                 }
                 let Some(req) = api::request(&plain) else { return true };
-                let answer = self.answer(target, &req);
+                let answer = self.answer(target, &req).await;
                 let Some(keys) = self.keys.as_mut() else { return true };
                 let frame = keys.seal(&api::response(req.id, &answer));
                 send(tx, Message::Binary(frame.into())).await
@@ -604,7 +606,7 @@ impl Actor {
     }
 
     /// Answers a phone's request in `target`'s room.
-    fn answer(&mut self, target: &Target, req: &Request) -> api::Answer {
+    async fn answer(&mut self, target: &Target, req: &Request) -> api::Answer {
         let kind = api::check(target.kind, &req.cmd)?;
         match kind {
             Kind::Session(Session::Pair) => self.paired(target, api::args(req)?),
@@ -621,7 +623,8 @@ impl Actor {
                 self.forget()?;
                 Ok(Value::Null)
             }
-            Kind::Read | Kind::Write => api::run(&self.office, &mut self.ops, kind, req, Instant::now()),
+            Kind::Read => read(self.office.clone(), req.clone()).await,
+            Kind::Write => api::run(&self.office, &mut self.ops, kind, req, Instant::now()),
         }
     }
 
@@ -772,6 +775,16 @@ impl Actor {
             *s = now;
             changed
         });
+    }
+}
+
+/// Runs read `req` on a blocking thread, so a slow disk never holds up the link or the commands from Settings.
+async fn read(office: Office, req: Request) -> api::Answer {
+    let job = tokio::task::spawn_blocking(move || api::call(&office, &req));
+    match tokio::time::timeout(READ_WITHIN, job).await {
+        Ok(Ok(answer)) => answer,
+        Ok(Err(e)) => Err(AppError::internal(format!("The read failed: {e}")).into()),
+        Err(_) => Err(AppError::internal("That took too long to read on the computer.").into()),
     }
 }
 

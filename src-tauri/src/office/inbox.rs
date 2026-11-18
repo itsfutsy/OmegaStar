@@ -356,10 +356,9 @@ impl Office {
         if fs::canonicalize(&path).ok().as_deref() != Some(Path::new(&path)) {
             return Err(AppError::not_found(format!("Nothing is at {path} any more.")));
         }
-        if fs::metadata(&path)?.len() > cards::FILE_BYTES {
-            return Err(AppError::invalid(format!("It is now over {} KB, too long to show here. Open it instead.", cards::FILE_BYTES / 1024)));
-        }
-        fs::read_to_string(&path).map_err(|_| AppError::invalid("It is no longer plain text. Open it instead."))
+        let bytes = read_file(Path::new(&path), cards::FILE_BYTES)?
+            .ok_or_else(|| AppError::invalid(format!("It is now over {} KB, too long to show here. Open it instead.", cards::FILE_BYTES / 1024)))?;
+        String::from_utf8(bytes).map_err(|_| AppError::invalid("It is no longer plain text. Open it instead."))
     }
 
     /// Your answer on card `index` of a run. A run still asking something else holds it back; once its last card is

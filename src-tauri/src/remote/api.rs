@@ -266,7 +266,7 @@ fn ok<T: Serialize>(result: crate::error::Result<T>) -> Answer {
 }
 
 /// Runs a read or write on the Office, as the desktop's command of the same name does.
-fn call(office: &Office, req: &Request) -> Answer {
+pub fn call(office: &Office, req: &Request) -> Answer {
     match req.cmd.as_str() {
         "inbox" => ok(office.inbox()),
         "proposals" => ok(office.proposals().map(|ps| ps.into_iter().filter(|p| p.state == ProposalState::Open).collect::<Vec<_>>())),

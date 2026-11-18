@@ -2,6 +2,7 @@
 //! time, and a card's image. Plus hiring a proposal exactly as proposed, since the phone has no hire sheet.
 
 use super::*;
+use base64::Engine;
 use serde::Serialize;
 
 /// You, as a member of the team: the id the interface uses for you (`YOU_ID` in `lib/org.ts`).
@@ -71,10 +72,10 @@ impl Office {
         if fs::canonicalize(&path).ok().as_deref() != Some(Path::new(&path)) {
             return Err(AppError::not_found(format!("Nothing is at {path} any more.")));
         }
-        if fs::metadata(&path)?.len() > CARD_IMAGE_BYTES {
-            return Err(AppError::invalid("That image is too large to send to the phone. Open it on the computer."));
-        }
-        image_data_url(Path::new(&path))
+        let mime = image_mime(Path::new(&path)).ok_or_else(|| AppError::invalid(format!("{path} is not a local image")))?;
+        let bytes = read_file(Path::new(&path), CARD_IMAGE_BYTES)?
+            .ok_or_else(|| AppError::invalid("That image is too large to send to the phone. Open it on the computer."))?;
+        Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
     }
 
     /// Hires from proposal `proposal_id` exactly as proposed, as the hire sheet does when you change nothing.
