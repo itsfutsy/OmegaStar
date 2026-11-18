@@ -198,7 +198,7 @@ fn items(root: &Path, dir: &Path) -> Option<Vec<Item>> {
         let Some(name) = entry_name(root, &path) else { continue };
         // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash. A restored
         // phone pairing, or its copy mid-save, would bring a second computer into the same relay room.
-        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name.starts_with(remote::FILE)) {
+        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name == remote::FILE || name == remote::TEMP) {
             continue;
         }
         let meta = e.metadata().ok();
@@ -436,7 +436,8 @@ mod tests {
         big(&office.join("runs/r1/transcript.jsonl"));
         put(&office.join(RUNNING_MARKER), "");
         put(&office.join(remote::FILE), "{}");
-        put(&office.join(format!("{}.partial", remote::FILE)), "{}");
+        put(&office.join(remote::TEMP), "{}");
+        put(&office.join("remote.json-notes/keep.md"), "keep me");
         let out = temp_office("bulk-out");
         let snapshot = out.join("snapshot.db");
         put(&snapshot, "db");
@@ -449,9 +450,11 @@ mod tests {
         let names: Vec<&str> = owned.iter().map(|n| n.as_ref()).collect();
         assert!(names.contains(&"employees/e1/notes.md"), "{names:?}");
         assert!(names.contains(&"runs/r1/transcript.jsonl"), "transcripts are kept: {names:?}");
-        for gone in ["node_modules", "Tool.app", "scratch", "data.bin", RUNNING_MARKER, remote::FILE] {
+        assert!(names.contains(&"remote.json-notes/keep.md"), "only the pairing's own files are left out: {names:?}");
+        for gone in ["node_modules", "Tool.app", "scratch", "data.bin", RUNNING_MARKER] {
             assert!(!names.iter().any(|n| n.contains(gone)), "{gone} left out: {names:?}");
         }
+        assert!(!names.iter().any(|n| [remote::FILE, remote::TEMP].contains(n)), "the pairing is left out: {names:?}");
 
         let _ = fs::remove_dir_all(&office);
         let _ = fs::remove_dir_all(&out);

@@ -10,6 +10,8 @@ use std::path::Path;
 
 /// The saved pairing's file name, at the top of the office folder.
 pub const FILE: &str = "remote.json";
+/// Its copy while a save is under way.
+pub const TEMP: &str = "remote.json.partial";
 
 /// Where the paired phone's pushes go: its address at Apple or Google.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,7 +60,7 @@ pub fn load(dir: &Path) -> Option<Pairing> {
 
 /// Saves `pairing`, replacing the file whole so a crash never leaves half of it.
 pub fn save(dir: &Path, pairing: &Pairing) -> io::Result<()> {
-    let tmp = dir.join(format!("{FILE}.partial"));
+    let tmp = dir.join(TEMP);
     let _ = fs::remove_file(&tmp);
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
