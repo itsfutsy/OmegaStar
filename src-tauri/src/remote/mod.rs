@@ -557,9 +557,10 @@ impl Actor {
             Some(&wire::SEALED) => {
                 let Some(keys) = self.keys.as_mut() else { return true };
                 let Some(plain) = keys.open(&bytes) else {
-                    log!("phone link: a frame did not open; the session ends");
+                    log!("phone link: a frame did not open; the connection starts again");
                     self.end_session();
-                    return true;
+                    send(tx, Message::Close(None)).await;
+                    return false;
                 };
                 if self.link != State::Session {
                     self.start_session(target);

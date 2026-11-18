@@ -296,6 +296,21 @@ async fn a_phone_that_reconnects_is_not_connected_until_its_first_frame() {
 }
 
 #[tokio::test]
+async fn a_frame_that_does_not_open_starts_the_connection_again() {
+    let f = Fixture::new("remote-garbled").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let mut phone = paired_phone(&remote, &relay).await;
+
+    let mut garbled = phone.keys.seal(b"{}");
+    *garbled.last_mut().unwrap() ^= 1;
+    phone.tx.send(Message::Binary(garbled.into())).await.unwrap();
+    while next(&mut phone.rx).await != peer("left") {}
+    while next(&mut phone.rx).await != peer("joined") {}
+}
+
+#[tokio::test]
 async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
     let f = Fixture::new("remote-replaced").await;
     let relay = fake_relay().await;

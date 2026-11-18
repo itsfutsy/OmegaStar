@@ -195,8 +195,9 @@ session and discards the old keys.
 - **Plaintext:** one UTF-8 JSON message (section 8).
 - **Output:** ciphertext followed by the 16-byte tag.
 
-A frame that fails to open ends the session. The computer drops its keys and waits for a new hello. The phone
-reconnects. After three failures in a row the phone shows **Pair again**.
+A frame that fails to open ends the session. The computer drops its keys and closes its socket, then reconnects with
+the usual backoff, so the phone hears `left` and then `joined` and starts a new handshake. After three failures in a
+row the phone shows **Pair again**.
 
 ### Why this is enough
 
@@ -567,7 +568,7 @@ The README's promise of no cloud service needs a line for this opt-in feature.
 | Computer asleep, off, or OmegaStar closed | The phone connects, hears no `joined`, and shows **Your computer is offline**. It updates the moment `joined` arrives. |
 | Relay unreachable | Both sides retry with backoff. The phone says it cannot reach the relay. |
 | Relay redeployed | Sockets drop. Both sides reconnect, spread out by the jitter. |
-| A frame fails to open | New handshake. Three in a row: **Pair again**. |
+| A frame fails to open | The computer reconnects, and the phone starts a new handshake on `joined`. Three in a row: **Pair again**. |
 | Versions too far apart | The hello answers with `update_phone` or `update_desktop`, and the phone says which to update. |
 | A write's response is lost | The phone resends with the same `op`, or fetches the Inbox again. |
 | The item changed in the meantime | The `Office` returns its usual error. The phone shows the message and fetches again. |
