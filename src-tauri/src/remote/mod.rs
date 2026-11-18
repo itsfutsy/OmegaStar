@@ -305,6 +305,17 @@ async fn until(at: Option<Instant>) {
     }
 }
 
+/// Sends `msg` to the relay. False when the connection is gone or the send stalls.
+async fn send<S: futures_util::Sink<Message> + Unpin>(tx: &mut S, msg: Message) -> bool {
+    match tokio::time::timeout(PONG_WITHIN, tx.send(msg)).await {
+        Ok(sent) => sent.is_ok(),
+        Err(_) => {
+            log!("phone link: a send to the relay stalled");
+            false
+        }
+    }
+}
+
 /// Joins `target`'s room at the relay as the computer.
 async fn connect(target: &Target) -> std::result::Result<Ws, String> {
     let mut req = room_url(&target.relay).into_client_request().map_err(|e| e.to_string())?;
@@ -444,7 +455,7 @@ impl Actor {
                 },
                 _ = ping.tick() => {
                     pong_by.get_or_insert(Instant::now() + PONG_WITHIN);
-                    tx.send(Message::Ping(Default::default())).await.is_ok()
+                    send(&mut tx, Message::Ping(Default::default())).await
                 }
                 _ = until(pong_by) => {
                     log!("phone link: the relay stopped answering");
@@ -469,7 +480,7 @@ impl Actor {
                 return;
             }
             if self.target().as_ref() != Some(target) {
-                let _ = tx.send(Message::Close(None)).await;
+                send(&mut tx, Message::Close(None)).await;
                 return;
             }
         }
@@ -479,7 +490,7 @@ impl Actor {
     async fn event(&mut self, tx: &mut Sink, event: Value) -> bool {
         let Some(keys) = self.keys.as_mut() else { return true };
         let frame = keys.seal(event.to_string().as_bytes());
-        tx.send(Message::Binary(frame.into())).await.is_ok()
+        send(tx, Message::Binary(frame.into())).await
     }
 
     /// Handles one message from the relay in `target`'s room. False when the connection is gone.
@@ -504,10 +515,10 @@ impl Actor {
                     None => true,
                     Some(wire::Answer::Refuse { frame }) => {
                         self.end_session();
-                        tx.send(Message::Binary(frame.into())).await.is_ok()
+                        send(tx, Message::Binary(frame.into())).await
                     }
                     Some(wire::Answer::Start { frame, keys }) => {
-                        if tx.send(Message::Binary(frame.into())).await.is_err() {
+                        if !send(tx, Message::Binary(frame.into())).await {
                             return false;
                         }
                         self.start_session(*keys, target);
@@ -526,7 +537,7 @@ impl Actor {
                 let answer = self.answer(target, &req);
                 let Some(keys) = self.keys.as_mut() else { return true };
                 let frame = keys.seal(&api::response(req.id, &answer));
-                tx.send(Message::Binary(frame.into())).await.is_ok()
+                send(tx, Message::Binary(frame.into())).await
             }
             _ => true,
         }
@@ -741,6 +752,8 @@ impl Backoff {
 #[cfg(test)]
 mod unit {
     use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     #[test]
     fn a_relay_on_this_computer_goes_without_tls() {
@@ -760,6 +773,31 @@ mod unit {
             let base = base as f64;
             assert!((base * 0.8..=base * 1.2).contains(&wait), "{wait} is not within 20% of {base}");
         }
+    }
+
+    /// A connection that never takes another byte.
+    struct Stalled;
+
+    impl futures_util::Sink<Message> for Stalled {
+        type Error = ();
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context) -> Poll<std::result::Result<(), ()>> {
+            Poll::Pending
+        }
+        fn start_send(self: Pin<&mut Self>, _: Message) -> std::result::Result<(), ()> {
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context) -> Poll<std::result::Result<(), ()>> {
+            Poll::Pending
+        }
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context) -> Poll<std::result::Result<(), ()>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_send_counts_as_a_dropped_connection() {
+        assert!(!send(&mut Stalled, Message::Ping(Default::default())).await);
+        assert!(send(&mut futures_util::sink::drain(), Message::Ping(Default::default())).await);
     }
 
     #[test]

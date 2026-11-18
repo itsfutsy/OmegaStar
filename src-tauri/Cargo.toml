@@ -42,6 +42,9 @@ qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

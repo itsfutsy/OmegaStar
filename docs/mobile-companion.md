@@ -139,7 +139,7 @@ it if the other role is absent.
 
 **Keep-alive.** Each client sends a WebSocket protocol ping every 30 seconds. Cloudflare answers these itself without
 waking the room, and they are not billed. If no pong arrives within 10 seconds, the client drops the socket and
-reconnects.
+reconnects. The desktop does the same when a send to the relay does not finish within 10 seconds.
 
 **Reconnect.** Wait 1 second, then double each time up to 60 seconds, with 20% random jitter. Reset after a
 connection has lasted 30 seconds. The desktop reconnects for as long as a pairing exists. The phone connects when
