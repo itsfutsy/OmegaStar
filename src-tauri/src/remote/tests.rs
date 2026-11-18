@@ -181,7 +181,8 @@ async fn paired_phone(remote: &Remote, relay: &str) -> Phone {
     let room = paired["ret"]["roomId"].as_str().unwrap().to_string();
     let key = wire::decode32(paired["ret"]["key"].as_str().unwrap()).unwrap();
     wait_for(remote, |s| s.device_name.as_deref() == Some("Test Phone") && s.state == State::Online).await;
-    let phone = Phone::join(relay, &room, &key).await;
+    let mut phone = Phone::join(relay, &room, &key).await;
+    assert_eq!(phone.call("inbox", json!({}), None).await["ok"], true);
     wait_for(remote, |s| s.state == State::Session && s.last_seen_at.is_some()).await;
     phone
 }
@@ -244,6 +245,23 @@ async fn the_phone_can_unpair_and_a_cancelled_code_stops_pairing() {
     remote.pair_start().await.unwrap();
     remote.pair_cancel().await.unwrap();
     assert_eq!(remote.status().state, State::Off);
+}
+
+#[tokio::test]
+async fn a_hello_alone_is_not_a_session() {
+    let f = Fixture::new("remote-hello").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    drop(paired_phone(&remote, &relay).await);
+    let seen = wait_for(&remote, |s| s.state == State::Online).await.last_seen_at;
+
+    let room = store::load(&f.dir).unwrap().room_id;
+    let _stranger = Phone::join(&relay, &room, &[0; 32]).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let status = remote.status();
+    assert_eq!((status.state, status.last_seen_at), (State::Online, seen));
+    assert_eq!(store::load(&f.dir).unwrap().last_seen_at, seen);
 }
 
 #[tokio::test]

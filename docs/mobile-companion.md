@@ -450,7 +450,8 @@ All in this repository, behind one setting that is off until the user pairs a ph
 | `push.rs` | The `POST /v1/push` call |
 | `store.rs` | Reading and writing the saved pairing |
 
-**States:** `off` -> `pairing` -> `connecting` -> `online` (no phone) -> `session` (phone connected).
+**States:** `off` -> `pairing` -> `connecting` -> `online` (no phone) -> `session` (phone connected). A phone's
+hello only derives the keys; `session`, and the saved `lastSeenAt`, wait for its first sealed frame to open.
 
 **Start-up.** The sink is created before the `Office`, and the remote needs both, so:
 

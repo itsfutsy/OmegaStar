@@ -529,7 +529,8 @@ impl Actor {
                         if !send(tx, Message::Binary(frame.into())).await {
                             return false;
                         }
-                        self.start_session(*keys, target);
+                        self.end_session();
+                        self.keys = Some(*keys);
                         true
                     }
                 }
@@ -541,6 +542,9 @@ impl Actor {
                     self.end_session();
                     return true;
                 };
+                if self.link != State::Session {
+                    self.start_session(target);
+                }
                 let Some(req) = api::request(&plain) else { return true };
                 let answer = self.answer(target, &req);
                 let Some(keys) = self.keys.as_mut() else { return true };
@@ -551,10 +555,8 @@ impl Actor {
         }
     }
 
-    /// Starts a phone session with `keys`, discarding any before it.
-    fn start_session(&mut self, keys: wire::Keys, target: &Target) {
-        self.keys = Some(keys);
-        self.pending = 0;
+    /// Marks the phone session live, once its first sealed frame has opened: a hello alone proves nothing.
+    fn start_session(&mut self, target: &Target) {
         self.link = State::Session;
         if target.kind == Room::Paired {
             if let Some(p) = self.pairing.as_mut() {
