@@ -50,6 +50,9 @@ const CHANGED_EVERY: Duration = Duration::from_secs(1);
 const MAX_DEVICE_NAME: usize = 60;
 const UNREACHABLE: &str = "OmegaStar cannot reach the phone relay.";
 const NO_LINK: &str = "This copy of OmegaStar cannot link a phone.";
+const REPLACED: &str = "Another computer is using this phone link.";
+/// The relay's close code for a socket another one replaced.
+const REPLACED_CODE: u16 = 4001;
 
 /// The relay to use: `OMEGASTAR_RELAY` when set, else `RELAY`.
 pub fn relay() -> String {
@@ -284,6 +287,8 @@ struct Actor {
     error: Option<String>,
     /// What changed since the last `changed` event (`What::bit`).
     pending: u8,
+    /// Another computer took the paired room, so this one stays out until the next pairing or app start.
+    replaced: bool,
 }
 
 /// Waits until `at`, or forever when there is no `at`.
@@ -355,6 +360,7 @@ impl Actor {
             link: State::Connecting,
             error: None,
             pending: 0,
+            replaced: false,
             office,
         }
     }
@@ -366,7 +372,7 @@ impl Actor {
         loop {
             let Some(target) = self.target() else {
                 backoff = Backoff::default();
-                self.error = None;
+                self.error = self.replaced.then(|| REPLACED.into());
                 self.publish();
                 match self.rx.recv().await {
                     Some(cmd) => self.handle(cmd),
@@ -410,7 +416,7 @@ impl Actor {
         if let Some(p) = &self.pair {
             return Some(Target { relay: p.relay.clone(), room: p.room.clone(), key: p.key, kind: Room::Pairing });
         }
-        let p = self.pairing.as_ref()?;
+        let p = self.pairing.as_ref().filter(|_| !self.replaced)?;
         Some(Target { relay: p.relay.clone(), room: p.room_id.clone(), key: wire::decode32(&p.key)?, kind: Room::Paired })
     }
 
@@ -513,7 +519,14 @@ impl Actor {
                 return true;
             }
             Message::Binary(bytes) => bytes,
-            Message::Close(_) => return false,
+            Message::Close(close) => {
+                if target.kind == Room::Paired && close.is_some_and(|c| u16::from(c.code) == REPLACED_CODE) {
+                    log!("phone link: another computer joined the paired room; this one stays out");
+                    self.replaced = true;
+                    self.link = State::Online;
+                }
+                return false;
+            }
             _ => return true,
         };
         match bytes.first() {
@@ -624,6 +637,7 @@ impl Actor {
         let ret = json!({ "roomId": pairing.room_id, "key": pairing.key, "companyName": company });
         self.pairing = Some(pairing);
         self.pair = None;
+        self.replaced = false;
         self.ops = Ops::default();
         self.publish();
         Ok(ret)
@@ -641,6 +655,7 @@ impl Actor {
     fn forget(&mut self) -> Result<()> {
         store::delete(&self.dir).map_err(|e| AppError::internal(format!("OmegaStar could not forget the phone: {e}")))?;
         self.pairing = None;
+        self.replaced = false;
         self.ops = Ops::default();
         self.publish();
         Ok(())

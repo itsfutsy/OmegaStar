@@ -143,7 +143,9 @@ waking the room, and they are not billed. If no pong arrives within 10 seconds, 
 reconnects. The desktop does the same when a send to the relay does not finish within 10 seconds.
 
 **Reconnect.** Wait 1 second, then double each time up to 60 seconds, with 20% random jitter. Reset after a
-connection has lasted 30 seconds. The desktop reconnects for as long as a pairing exists. The phone connects when
+connection has lasted 30 seconds. The desktop reconnects for as long as a pairing exists, unless its socket in the
+long-term room is closed with 4001: another computer holds the room, so it stays out and Settings says so until the
+next pairing or app start. The phone connects when
 the app comes to the foreground and disconnects when it leaves.
 
 ## 7. Encryption

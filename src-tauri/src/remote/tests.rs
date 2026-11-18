@@ -7,12 +7,13 @@ use futures_util::stream::{SplitSink, SplitStream};
 use std::collections::HashMap;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::handshake::server::{Callback, ErrorResponse, Request as Upgrade, Response as Upgraded};
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 
 /// Each room's sockets, by role.
 type Rooms = Arc<Mutex<HashMap<String, HashMap<String, mpsc::UnboundedSender<Message>>>>>;
 
-/// A relay with the real one's room rules: one socket per role, binary frames forwarded to the other role, and
-/// `peer` text frames when the other role joins or leaves. Returns its host:port.
+/// A relay with the real one's room rules: one socket per role, the one replaced closed with 4001, binary frames
+/// forwarded to the other role, and `peer` text frames when the other role joins or leaves. Returns its host:port.
 async fn fake_relay() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -53,7 +54,9 @@ async fn relay_socket(tcp: TcpStream, rooms: Rooms) {
     {
         let mut rooms = rooms.lock().unwrap();
         let sockets = rooms.entry(room.clone()).or_default();
-        sockets.insert(role.clone(), tx.clone());
+        if let Some(old) = sockets.insert(role.clone(), tx.clone()) {
+            let _ = old.send(Message::Close(Some(CloseFrame { code: REPLACED_CODE.into(), reason: "replaced".into() })));
+        }
         if let Some(them) = sockets.get(other) {
             let _ = them.send(peer("joined"));
             let _ = tx.send(peer("joined"));
@@ -85,7 +88,25 @@ async fn relay_socket(tcp: TcpStream, rooms: Rooms) {
     writer.abort();
 }
 
-type PhoneStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+type PhoneStream = SplitStream<Ws>;
+
+/// Joins `room` at `relay` as `role`.
+async fn socket(relay: &str, room: &str, role: &str) -> Ws {
+    let mut req = format!("ws://{relay}/v1/room?role={role}").into_client_request().unwrap();
+    req.headers_mut().insert(AUTHORIZATION, format!("Bearer {room}").parse().unwrap());
+    tokio_tungstenite::connect_async(req).await.unwrap().0
+}
+
+/// Waits until the relay closes `ws` as replaced.
+async fn replaced(ws: &mut Ws) {
+    while let Some(Ok(msg)) = ws.next().await {
+        if let Message::Close(Some(c)) = msg {
+            assert_eq!(u16::from(c.code), REPLACED_CODE);
+            return;
+        }
+    }
+    panic!("the socket closed without a close frame");
+}
 
 /// The next message from the relay, within 10 seconds.
 async fn next(rx: &mut PhoneStream) -> Message {
@@ -94,7 +115,7 @@ async fn next(rx: &mut PhoneStream) -> Message {
 
 /// A test phone in a room, with a session open.
 struct Phone {
-    tx: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    tx: SplitSink<Ws, Message>,
     rx: PhoneStream,
     keys: wire::Keys,
     next_id: u64,
@@ -103,10 +124,7 @@ struct Phone {
 impl Phone {
     /// Joins `room` at `relay` as the phone, waits for the computer, and runs the handshake with `key`.
     async fn join(relay: &str, room: &str, key: &[u8; 32]) -> Phone {
-        let mut req = format!("ws://{relay}/v1/room?role=phone").into_client_request().unwrap();
-        req.headers_mut().insert(AUTHORIZATION, format!("Bearer {room}").parse().unwrap());
-        let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-        let (mut tx, mut rx) = ws.split();
+        let (mut tx, mut rx) = socket(relay, room, "phone").await.split();
         while next(&mut rx).await != peer("joined") {}
         let hello = json!({ "v": 1, "nonce": wire::encode(&wire::random_bytes()), "api": { "min": 1, "max": 1 }, "app": { "platform": "ios", "version": "1.0.0" } }).to_string();
         let mut frame = vec![wire::HELLO];
@@ -262,6 +280,29 @@ async fn a_hello_alone_is_not_a_session() {
     let status = remote.status();
     assert_eq!((status.state, status.last_seen_at), (State::Online, seen));
     assert_eq!(store::load(&f.dir).unwrap().last_seen_at, seen);
+}
+
+#[tokio::test]
+async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
+    let f = Fixture::new("remote-replaced").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let _phone = paired_phone(&remote, &relay).await;
+
+    let room = store::load(&f.dir).unwrap().room_id;
+    let mut other = socket(&relay, &room, "laptop").await;
+    wait_for(&remote, |s| s.state == State::Online && s.error.as_deref() == Some(REPLACED)).await;
+    assert!(tokio::time::timeout(Duration::from_secs(2), replaced(&mut other)).await.is_err(), "it does not fight back");
+
+    let relaunched = Remote::new(relay.clone());
+    relaunched.start(f.office.clone());
+    tokio::time::timeout(Duration::from_secs(10), replaced(&mut other)).await.expect("a fresh start joins again");
+
+    remote.unpair().await.unwrap();
+    assert_eq!(remote.status(), Status::default());
+    remote.pair_start().await.unwrap();
+    assert_eq!(remote.status().state, State::Pairing);
 }
 
 #[tokio::test]
