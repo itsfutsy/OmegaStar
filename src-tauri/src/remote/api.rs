@@ -159,18 +159,22 @@ impl Ops {
     }
 }
 
-/// Answers a read or write in the paired room. A write runs once per `op`: a resent one gets the saved answer.
+/// Answers a read or write in the paired room. A write runs once per `op`, a UUID: a resent one gets the saved
+/// answer, which is `too_large` when the result would not fit in a frame.
 pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Instant) -> Answer {
     if kind != Kind::Write {
         return call(office, req);
     }
-    let Some(op) = req.op.as_deref().filter(|o| !o.is_empty()) else {
-        return Err(Failure::remote(RemoteCode::BadRequest, format!("{} needs an op.", req.cmd)));
+    let Some(op) = req.op.as_deref().filter(|o| uuid::Uuid::parse_str(o).is_ok()) else {
+        return Err(Failure::remote(RemoteCode::BadRequest, format!("{} needs an op, a UUID.", req.cmd)));
     };
     if let Some(saved) = ops.get(op, now) {
         return saved;
     }
-    let answer = call(office, req);
+    let mut answer = call(office, req);
+    if !fits(&res(req.id, &answer)) {
+        answer = Err(too_large());
+    }
     ops.put(op, now, answer.clone());
     answer
 }
@@ -311,16 +315,27 @@ fn call(office: &Office, req: &Request) -> Answer {
 /// The response to request `id`, as the JSON to seal. A result too large for one sealed frame is answered
 /// `too_large` instead.
 pub fn response(id: u64, answer: &Answer) -> Vec<u8> {
+    let bytes = res(id, answer);
+    if fits(&bytes) { bytes } else { res(id, &Err(too_large())) }
+}
+
+/// The response to request `id`, whatever its size.
+fn res(id: u64, answer: &Answer) -> Vec<u8> {
     let json = match answer {
         Ok(ret) => json!({ "t": "res", "id": id, "ok": true, "ret": ret }),
         Err(err) => json!({ "t": "res", "id": id, "ok": false, "err": err }),
     };
-    let bytes = serde_json::to_vec(&json).unwrap_or_default();
-    if wire::sealed_len(bytes.len()) <= MAX_FRAME {
-        return bytes;
-    }
-    let err = Failure::remote(RemoteCode::TooLarge, "That is too large to send to the phone. Open it on the computer.");
-    serde_json::to_vec(&json!({ "t": "res", "id": id, "ok": false, "err": err })).unwrap_or_default()
+    serde_json::to_vec(&json).unwrap_or_default()
+}
+
+/// Whether `response` fits in one sealed frame.
+fn fits(response: &[u8]) -> bool {
+    wire::sealed_len(response.len()) <= MAX_FRAME
+}
+
+/// The answer to a result too large for one sealed frame.
+fn too_large() -> Failure {
+    Failure::remote(RemoteCode::TooLarge, "That is too large to send to the phone. Open it on the computer.")
 }
 
 #[cfg(test)]
@@ -337,6 +352,7 @@ mod tests {
     }
 
     const NOT_ALLOWED: Code = Code::Remote(RemoteCode::NotAllowed);
+    const OP: &str = "0b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b";
 
     #[test]
     fn every_command_outside_the_list_is_refused() {
@@ -378,8 +394,10 @@ mod tests {
         let now = Instant::now();
         let bad = run(&f.office, &mut ops, Kind::Read, &req(1, "thread", json!({"run": "x"}), None), now).unwrap_err();
         assert_eq!(bad.code, Code::Remote(RemoteCode::BadRequest));
-        let no_op = run(&f.office, &mut ops, Kind::Write, &req(2, "retry_run", json!({"runId": f.failed}), None), now).unwrap_err();
-        assert_eq!(no_op.code, Code::Remote(RemoteCode::BadRequest));
+        for op in [None, Some(""), Some("op-1")] {
+            let no_op = run(&f.office, &mut ops, Kind::Write, &req(2, "retry_run", json!({"runId": f.failed}), op), now).unwrap_err();
+            assert_eq!(no_op.code, Code::Remote(RemoteCode::BadRequest), "{op:?}");
+        }
         let missing = run(&f.office, &mut ops, Kind::Read, &req(3, "thread", json!({"runId": "nope"}), None), now).unwrap_err();
         assert_eq!(serde_json::to_value(&missing).unwrap()["code"], "notFound", "the Office's own codes keep their names");
     }
@@ -389,7 +407,7 @@ mod tests {
         let f = Fixture::new("remote-api-ops").await;
         let mut ops = Ops::default();
         let now = Instant::now();
-        let archive = req(1, "set_archived", json!({"runId": f.done, "archived": true}), Some("op-1"));
+        let archive = req(1, "set_archived", json!({"runId": f.done, "archived": true}), Some(OP));
         let first = run(&f.office, &mut ops, Kind::Write, &archive, now).unwrap();
         f.office.unarchive(std::slice::from_ref(&f.done)).unwrap();
 
@@ -400,6 +418,17 @@ mod tests {
         let later = run(&f.office, &mut ops, Kind::Write, &archive, now + OPS_FOR + Duration::from_secs(1)).unwrap();
         assert_eq!(later, first);
         assert!(f.office.run(&f.done).unwrap().archived_at.is_some(), "after ten minutes the op runs again");
+    }
+
+    #[tokio::test]
+    async fn a_write_whose_result_is_too_large_is_kept_as_too_large() {
+        let f = Fixture::new("remote-api-big").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let reply = req(1, "reply_to_run", json!({"runId": f.done, "text": "x".repeat(MAX_FRAME), "archive": false}), Some(OP));
+        let first = run(&f.office, &mut ops, Kind::Write, &reply, now).unwrap_err();
+        assert_eq!(first.code, Code::Remote(RemoteCode::TooLarge));
+        assert_eq!(ops.get(OP, now), Some(Err(first)), "the resent op hears too_large, not a result it cannot take");
     }
 
     #[test]

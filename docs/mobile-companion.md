@@ -238,8 +238,9 @@ Rules:
 - **Writes carry `op`,** a UUID the phone creates once per user action. The computer remembers the results of the
   last 200 ops for 10 minutes, failures included. If the same `op` arrives again, it returns the saved result without
   running the command again. This makes it safe for the phone to resend a write whose response was lost. A write
-  without `op` gets `bad_request`.
-- One message is at most 4 MiB once sealed. The computer answers `too_large` if a result would not fit.
+  without `op`, or whose `op` is not a UUID, gets `bad_request`.
+- One message is at most 4 MiB once sealed. The computer answers `too_large` if a result would not fit, and keeps
+  `too_large` as a write's saved result, never the result itself.
 
 ### Compatibility
 

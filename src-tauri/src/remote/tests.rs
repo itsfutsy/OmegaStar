@@ -221,7 +221,7 @@ async fn a_phone_pairs_reads_acts_hears_changes_and_is_unpaired() {
     assert_eq!(inbox["ok"], true);
     assert!(inbox["ret"]["threads"].as_array().unwrap().iter().any(|t| t["root"]["id"] == f.carded.as_str()));
     let answer = json!({ "runId": f.carded, "card": 0, "answer": { "type": "choice", "index": 1 } });
-    assert_eq!(phone.call("answer_card", answer, Some("op-1")).await["ok"], true);
+    assert_eq!(phone.call("answer_card", answer, Some("0b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b")).await["ok"], true);
     assert!(f.office.run(&f.carded).unwrap().cards[0].answer.is_some());
 
     let registered = phone.call("push_register", json!({ "platform": "ios", "token": "t1", "sandbox": true }), None).await;

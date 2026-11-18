@@ -185,7 +185,7 @@ pub fn shapes(f: &Fixture) -> Value {
     let mut out = Map::new();
     for (i, (cmd, args)) in calls.into_iter().enumerate() {
         let kind = api::check(api::Room::Paired, cmd).unwrap();
-        let op = (kind == Kind::Write).then(|| format!("op-{i}"));
+        let op = (kind == Kind::Write).then(|| format!("00000000-0000-4000-8000-{i:012}"));
         let req = Request { id: i as u64, cmd: cmd.into(), args, op };
         let ret = api::run(&f.office, &mut ops, kind, &req, Instant::now()).unwrap_or_else(|e| panic!("{cmd}: {}", e.message));
         out.insert(cmd.into(), shape(&ret));
