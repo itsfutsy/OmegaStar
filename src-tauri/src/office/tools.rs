@@ -907,6 +907,18 @@ mod tests {
         assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"));
         std::os::unix::fs::symlink(o.dir.join("office.db"), &draft).unwrap();
         assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"), "a link put in its place is not followed");
+        fs::remove_file(&draft).unwrap();
+        fs::write(&draft, "x".repeat(cards::FILE_BYTES as usize + 1)).unwrap();
+        assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("It is now over"));
+        fs::remove_file(&draft).unwrap();
+        fs::create_dir(&draft).unwrap();
+        assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"), "a folder put in its place");
+        fs::remove_dir(&draft).unwrap();
+        assert!(std::process::Command::new("mkfifo").arg(&draft).status().unwrap().success());
+        let (reader, id, (tx, rx)) = (office.clone(), r.id.clone(), std::sync::mpsc::channel());
+        std::thread::spawn(move || tx.send(reader.card_file(&id, 0)));
+        let read = rx.recv_timeout(Duration::from_secs(5)).expect("a pipe put in its place never holds the read");
+        assert!(read.unwrap_err().message.starts_with("Nothing is at"));
         drop(office);
     }
 

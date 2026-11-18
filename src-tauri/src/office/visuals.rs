@@ -35,6 +35,24 @@ pub fn image_mime(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// The file at `path`, read through the one handle that was checked, or `None` when it is over `limit` bytes. It
+/// must be a regular file: opened without waiting, a pipe put in its place is refused rather than read forever.
+pub fn read_file(path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut opts = OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut opts, libc::O_NONBLOCK);
+    let gone = || AppError::not_found(format!("Nothing is at {} any more.", path.display()));
+    let file = opts.open(path).map_err(|_| gone())?;
+    if !file.metadata()?.is_file() {
+        return Err(gone());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= limit).then_some(bytes))
+}
+
 /// A local image, by its full path, as a data URL.
 pub fn image_data_url(path: &Path) -> Result<String> {
     let shown = path.display();

@@ -30,6 +30,7 @@
    both themes, as a code must be dark on light to scan. Its 29 modules draw at a whole 3px each, so they stay sharp,
    inside the four modules of white a code needs around it. */
 .set-support { margin-top: 20px; display: flex; align-items: center; gap: 20px; padding: var(--sp-4); border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.set-qr { display: block; margin-top: var(--sp-3); width: 160px; height: 160px; border-radius: 8px; background: #fff; }
 .set-support-qr { flex: none; display: block; width: 111px; height: 111px; padding: 12px; border-radius: 8px; background: #fff; }
 .set-support-text { margin-top: var(--sp-1); max-width: 52ch; font-size: var(--t-sm); line-height: 1.5; color: var(--muted); }
 .set-support-act { margin-top: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); }

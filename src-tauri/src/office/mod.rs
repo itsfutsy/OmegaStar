@@ -8,6 +8,7 @@ mod fixtures;
 mod handoffs;
 mod inbox;
 mod members;
+mod phone;
 mod requests;
 mod runs;
 mod schedules;
@@ -18,6 +19,7 @@ mod tools;
 mod visuals;
 
 pub use visuals::{image_data_url, image_mime, PAGE_CSP};
+use visuals::read_file;
 
 use crate::backup;
 use crate::catalog;
@@ -441,6 +443,21 @@ impl Office {
 
     pub fn data_dir(&self) -> &Path {
         &self.0.data_dir
+    }
+
+    /// A test copy (`sandbox`), which never links a phone either.
+    pub fn is_sandbox(&self) -> bool {
+        self.0.sandbox
+    }
+
+    /// This build's version, as the app shows it.
+    pub fn version(&self) -> &str {
+        &self.0.build.version
+    }
+
+    /// Runs `task` on the runtime the office runs on, for as long as the app runs.
+    pub fn spawn(&self, task: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.0.rt.spawn(task);
     }
 
     fn employee_dir(&self, id: &str) -> PathBuf {

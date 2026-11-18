@@ -62,6 +62,8 @@ const settingsChange = (label, ms = 0) => async (p) => {
   if (ms) await p.waitForTimeout(ms);
 };
 const scrollTo = (text) => (p) => p.getByText(text, { exact: true }).first().scrollIntoViewIfNeeded();
+/** The Phone section at the top of the page. */
+const phoneSection = (p) => p.locator("#set-phone").evaluate((el) => el.scrollIntoView({ block: "start" }));
 const scrollToEnd = (p) => p.evaluate(() => {
   for (const el of document.querySelectorAll(".content *")) {
     if (el.scrollHeight > el.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(el).overflowY)) el.scrollTop = el.scrollHeight;
@@ -187,6 +189,15 @@ const SHOTS = [
     await p.getByRole("button", { name: "Set up", exact: true }).click();
     await p.getByLabel("CLI proxy address").click();
   } }),
+  // The phone: not paired, its code showing after Connect phone, and paired.
+  S("settings", "settings-phone", "full", "#/settings", { act: phoneSection }),
+  S("settings", "settings-phone-pairing", "full", "#/settings", { act: async (p) => {
+    await phoneSection(p);
+    await p.getByRole("button", { name: "Connect phone" }).click();
+    await p.locator(".set-qr").waitFor();
+    await phoneSection(p);
+  } }),
+  S("settings", "settings-phone", "phone-paired", "#/settings", { act: phoneSection }),
   S("settings", "settings-saving", "slow-saves", "#/settings", { act: settingsChange("Pause schedules") }),
   S("settings", "settings-saved", "slow-saves", "#/settings", { act: settingsChange("Pause schedules", 1600) }),
   // A failure's line fades in after the save answers (0.6 s); the shot waits for it to settle.

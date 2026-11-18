@@ -14,6 +14,7 @@ import { PathRow, SkillsDesc } from "./settings/ClaudeCode";
 import { CHANNELS, SupportCard, UpdateRow, aboutDesc } from "./settings/About";
 import { NotificationsGroup, RepliesGroup } from "./settings/Notifications";
 import { BackupsGroup } from "./settings/Backups";
+import { PhoneGroup } from "./settings/Phone";
 import { ProxyGroup } from "./settings/Proxy";
 import "./Settings.css";
 
@@ -110,6 +111,8 @@ export function SettingsScreen() {
             <NotificationsGroup n={n} change={change} />
 
             <RepliesGroup w={s.watch} change={change} />
+
+            <PhoneGroup saves={saves} />
 
             <Group title="Appearance">
               <Row title="Theme" desc="System follows your computer's light or dark setting.">

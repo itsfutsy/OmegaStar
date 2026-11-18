@@ -21,7 +21,7 @@ fn failure(message: impl Into<String>) -> Failure {
 
 /// An HTTP client. reqwest's TLS comes with no crypto provider of its own (the updater's features
 /// choose it), so one is installed first, as the updater does: without it, building a client panics.
-fn client() -> reqwest::Client {
+pub(crate) fn client() -> reqwest::Client {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }

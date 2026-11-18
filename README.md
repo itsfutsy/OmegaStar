@@ -166,7 +166,7 @@ It ships none. Employees use your CLI tools, user-level MCP servers, claude.ai c
 <details>
 <summary><b>Can I bring my own skills? Will it touch my setup?</b></summary>
 
-Yes. Grant skills from your Claude Code catalog, or import copies for an employee to organise. OmegaStar changes your skills folder only when you click **Make a company skill** or ask it to move imported originals to the Trash. Employees live in OmegaStar's own folder, and there's no account, cloud service or telemetry.
+Yes. Grant skills from your Claude Code catalog, or import copies for an employee to organise. OmegaStar changes your skills folder only when you click **Make a company skill** or ask it to move imported originals to the Trash. Employees live in OmegaStar's own folder, and there's no account, cloud service or telemetry. The one exception is opt-in: pair a phone in Settings and the two talk through OmegaStar's relay, sealed end to end so it can't read your Inbox.
 
 </details>
 

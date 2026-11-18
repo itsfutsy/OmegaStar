@@ -17,6 +17,7 @@ mod own_skills;
 mod power;
 mod proxy;
 mod reader;
+mod remote;
 mod sandbox;
 mod schedule;
 mod store;
@@ -44,6 +45,8 @@ pub(crate) const OLD_PRODUCT_NAME: &str = "Omega Star";
 
 struct TauriSink {
     app: AppHandle,
+    /// The phone link, which mirrors changes and notifications to a paired phone.
+    remote: remote::Remote,
     pause_item: OnceLock<MenuItem<Wry>>,
     /// Notifications waiting to show, as the notification settings say (`notices`).
     notices: Mutex<Notices>,
@@ -58,6 +61,7 @@ impl TauriSink {
         if let Err(e) = self.app.notification().builder().title(title).body(body).show() {
             log!("notification failed: {e}");
         }
+        self.remote.push(title);
     }
 }
 
@@ -66,6 +70,17 @@ fn local_minute() -> u16 {
     use chrono::Timelike;
     let now = chrono::Local::now();
     (now.hour() * 60 + now.minute()) as u16
+}
+
+/// Tells the interface each change of the phone link (`remote:updated`).
+fn spawn_remote_status(app: AppHandle, remote: &remote::Remote) {
+    let mut status = remote.subscribe();
+    tauri::async_runtime::spawn(async move {
+        while status.changed().await.is_ok() {
+            let now = status.borrow_and_update().clone();
+            let _ = app.emit("remote:updated", now);
+        }
+    });
 }
 
 /// Shows the notifications that come due, every `notices::TICK` for as long as the app runs.
@@ -90,9 +105,12 @@ fn pause_label(paused: bool) -> &'static str {
 impl EventSink for TauriSink {
     fn org_changed(&self) {
         let _ = self.app.emit("org:changed", ());
+        self.remote.changed(remote::What::Team);
+        self.remote.changed(remote::What::Inbox);
     }
     fn run_updated(&self, run: &Run) {
         let _ = self.app.emit("run:updated", run);
+        self.remote.changed(remote::What::Inbox);
     }
     fn run_events(&self, run_id: &str, events: &[RunEvent]) {
         let _ = self.app.emit("run:event", serde_json::json!({ "runId": run_id, "events": events }));
@@ -102,6 +120,7 @@ impl EventSink for TauriSink {
     }
     fn proposal_updated(&self, proposal: &HireProposal) {
         let _ = self.app.emit("proposal:updated", proposal);
+        self.remote.changed(remote::What::Proposals);
     }
     fn usage_updated(&self, usage: &UsageLimits) {
         let _ = self.app.emit("usage:updated", usage);
@@ -354,7 +373,9 @@ pub fn run() {
             // `package_info` carries a version set with `tauri build --config`, as dogfood builds do.
             let build = Build::new(app.package_info().version.to_string());
             log!("OmegaStar {} started ({} build {}) on {}", build.version, format!("{:?}", build.channel).to_lowercase(), build.commit, data_dir.display());
-            let sink = Arc::new(TauriSink { app: app.handle().clone(), pause_item: OnceLock::new(), notices: Mutex::new(Notices::default()) });
+            let remote = remote::Remote::new(remote::relay());
+            app.manage(remote.clone());
+            let sink = Arc::new(TauriSink { app: app.handle().clone(), remote: remote.clone(), pause_item: OnceLock::new(), notices: Mutex::new(Notices::default()) });
             let office = match tauri::async_runtime::block_on(Office::open(data_dir.clone(), sink.clone(), build)) {
                 Ok(office) => office,
                 Err(e) => {
@@ -382,6 +403,8 @@ pub fn run() {
             office.spawn_watch_monitor();
             office.spawn_transcript_sweep();
             office.spawn_transcript_compaction();
+            spawn_remote_status(app.handle().clone(), &remote);
+            remote.start(office.clone());
             // Other builds leave the release's login item alone.
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             if model::BuildChannel::current() == model::BuildChannel::Release {
@@ -494,6 +517,11 @@ pub fn run() {
             commands::last_dictation,
             commands::check_update,
             commands::install_update,
+            commands::remote_status,
+            commands::remote_pair_start,
+            commands::remote_pair_cancel,
+            commands::remote_unpair,
+            commands::remote_set_push,
         ])
         .build(tauri::generate_context!())
         .expect("error while building OmegaStar")
