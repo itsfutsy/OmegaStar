@@ -470,7 +470,7 @@ It never starts in a sandbox office.
 |---|---|
 | `run_updated` | `remote.changed(Inbox)` |
 | `proposal_updated` | `remote.changed(Proposals)` |
-| `org_changed` | `remote.changed(Team)` |
+| `org_changed` | `remote.changed(Team)` and `remote.changed(Inbox)`: who is in the Inbox follows the team |
 | `show` | `remote.push(title)` |
 
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.

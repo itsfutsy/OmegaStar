@@ -106,6 +106,7 @@ impl EventSink for TauriSink {
     fn org_changed(&self) {
         let _ = self.app.emit("org:changed", ());
         self.remote.changed(remote::What::Team);
+        self.remote.changed(remote::What::Inbox);
     }
     fn run_updated(&self, run: &Run) {
         let _ = self.app.emit("run:updated", run);
