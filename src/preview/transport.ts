@@ -46,7 +46,7 @@ const notFound = (message: string) => ({ code: "notFound", message });
 const never = <T>() => new Promise<T>(() => {});
 const DAY = 86_400_000;
 /** No phone paired. */
-const UNPAIRED: RemoteStatus = { state: "off", deviceName: null, pairedAt: null, lastSeenAt: null, pushOn: true, error: null };
+const UNPAIRED: RemoteStatus = { state: "off", deviceName: null, pairedAt: null, lastSeenAt: null, pushOn: true, error: null, code: null };
 /** The prompt of a run started with no instruction. Mirrors Rust `DEFAULT_PROMPT`. */
 const DEFAULT_PROMPT = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
@@ -109,7 +109,7 @@ export function previewTransport(): Transport {
   const state: State = STATES.find((s) => s === params.get("preview")) ?? "full";
   const w = worldFor(state);
   let remote: RemoteStatus = state === "phone-paired"
-    ? { state: "session", deviceName: "Maren's iPhone", pairedAt: iso(NOW - 3 * DAY), lastSeenAt: iso(NOW - 2 * 60_000), pushOn: true, error: null }
+    ? { state: "session", deviceName: "Maren's iPhone", pairedAt: iso(NOW - 3 * DAY), lastSeenAt: iso(NOW - 2 * 60_000), pushOn: true, error: null, code: null }
     : UNPAIRED;
 
   installTauriShim();
@@ -746,12 +746,13 @@ export function previewTransport(): Transport {
     open_backup_dir: () => null,
     remote_status: () => remote,
     remote_pair_start: () => {
-      remote = { ...remote, state: "pairing" };
+      const code = { qr: pairQr, link: "omegastar://pair?v=1&relay=relay.example.com&room=preview&key=preview", expiresAt: iso(Date.now() + 5 * 60_000) };
+      remote = { ...remote, state: "pairing", code };
       emit("remote:updated", remote);
-      return { qr: pairQr, link: "omegastar://pair?v=1&relay=relay.example.com&room=preview&key=preview", expiresAt: iso(Date.now() + 5 * 60_000) };
+      return code;
     },
     remote_pair_cancel: () => {
-      remote = { ...remote, state: remote.deviceName ? "online" : "off" };
+      remote = { ...remote, state: remote.deviceName ? "online" : "off", code: null };
       emit("remote:updated", remote);
       return null;
     },

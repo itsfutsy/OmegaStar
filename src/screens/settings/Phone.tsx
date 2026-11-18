@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { call, errorMessage } from "../../api/client";
-import type { PairCode, RemoteStatus } from "../../api/types";
+import type { RemoteStatus } from "../../api/types";
 import { useQuery } from "../../lib/hooks";
 import { relTime } from "../../lib/format";
 import { Icon } from "../../components/Icon";
@@ -32,34 +32,28 @@ function linkWords(st: RemoteStatus): string {
 }
 
 /** The phone: Connect phone, then the code to scan for five minutes, then the paired phone with its notifications
- *  switch and Unpair. */
+ *  switch and Unpair. The code comes from the status, so it shows again when you come back while pairing. */
 export function PhoneGroup({ saves }: { saves: Saves }) {
   const status = useQuery(() => call("remote_status"), [], ["remote:updated"]);
-  const [code, setCode] = useState<PairCode | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
-  const sawPairing = useRef(false);
   const st = status.data;
+  const code = st?.code ?? null;
+  const ticking = !!code;
 
-  // The code goes once pairing ends: the phone paired, or the relay gave up on the code.
   useEffect(() => {
-    if (!code) sawPairing.current = false;
-    else if (st?.state === "pairing") sawPairing.current = true;
-    else if (sawPairing.current) setCode(null);
-  }, [code, st?.state]);
-  useEffect(() => {
-    if (!code) return;
+    if (!ticking) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
-  }, [code]);
+  }, [ticking]);
 
   const connect = async () => {
     saves.clear(PHONE);
     setBusy(true);
     try {
-      const next = await call("remote_pair_start");
+      await call("remote_pair_start");
       setNow(Date.now());
-      setCode(next);
+      status.reload();
     } catch (e) {
       saves.failed(PHONE, sentence(errorMessage(e)), () => void connect());
     } finally {
@@ -67,8 +61,7 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
     }
   };
   const cancel = async () => {
-    setCode(null);
-    try { await call("remote_pair_cancel"); }
+    try { await call("remote_pair_cancel"); status.reload(); }
     catch (e) { saves.failed(PHONE, sentence(errorMessage(e)), () => void cancel()); }
   };
   const unpair = async () => {

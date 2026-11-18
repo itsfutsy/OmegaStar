@@ -381,6 +381,7 @@ export type RemoteStatus = {
   lastSeenAt: string | null;   // the last time the phone connected
   pushOn: boolean;             // phone notifications
   error: string | null;        // why the relay can't be reached; cleared once it can
+  code: PairCode | null;       // the code showing while pairing
 };
 /** A code for a phone to scan: the QR as a data URL, the link it holds, and when it stops working. */
 export type PairCode = { qr: string; link: string; expiresAt: string };

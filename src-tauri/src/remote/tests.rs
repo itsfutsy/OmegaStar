@@ -188,7 +188,7 @@ fn room_and_key(link: &str) -> (String, [u8; 32]) {
 /// Pairs a test phone through `relay` and returns it connected to the long-term room.
 async fn paired_phone(remote: &Remote, relay: &str) -> Phone {
     let code = remote.pair_start().await.unwrap();
-    assert_eq!(remote.status().state, State::Pairing);
+    assert_eq!((remote.status().state, remote.status().code.as_ref()), (State::Pairing, Some(&code)), "Settings can show the code again");
     assert!(code.link.contains(&format!("relay={relay}&")));
     let (room, key) = room_and_key(&code.link);
     let mut phone = Phone::join(relay, &room, &key).await;
@@ -262,7 +262,7 @@ async fn the_phone_can_unpair_and_a_cancelled_code_stops_pairing() {
 
     remote.pair_start().await.unwrap();
     remote.pair_cancel().await.unwrap();
-    assert_eq!(remote.status().state, State::Off);
+    assert_eq!(remote.status(), Status::default());
 }
 
 #[cfg(unix)]
@@ -411,7 +411,7 @@ async fn a_code_past_its_time_pairs_nothing() {
     let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
     actor.pair_start().unwrap();
     let target = actor.target().unwrap();
-    actor.pair.as_mut().unwrap().expires_at = chrono::Utc::now();
+    actor.pair.as_mut().unwrap().code.expires_at = chrono::Utc::now();
 
     let refused = actor.paired(&target, PairArgs { device_name: "Test Phone".into() }).unwrap_err();
     assert_eq!(refused.code, api::Code::Remote(api::RemoteCode::NotAllowed));

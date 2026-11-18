@@ -104,16 +104,18 @@ pub struct Status {
     pub last_seen_at: Option<Ts>,
     pub push_on: bool,
     pub error: Option<String>,
+    /// The code showing while pairing, so Settings shows it again when you come back to it.
+    pub code: Option<PairCode>,
 }
 
 impl Default for Status {
     fn default() -> Status {
-        Status { state: State::Off, device_name: None, paired_at: None, last_seen_at: None, push_on: true, error: None }
+        Status { state: State::Off, device_name: None, paired_at: None, last_seen_at: None, push_on: true, error: None, code: None }
     }
 }
 
 /// A pairing code: the QR code as a data URL, the link it holds, and when it stops working.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairCode {
     pub qr: String,
@@ -254,8 +256,9 @@ struct PairRoom {
     relay: String,
     room: String,
     key: [u8; 32],
-    /// When the code stops working, by the wall clock, which keeps time while the computer sleeps.
-    expires_at: Ts,
+    /// The code showing. It stops working at its `expires_at`, by the wall clock, which keeps time while the computer
+    /// sleeps.
+    code: PairCode,
     /// When to wake up and leave the room.
     deadline: Instant,
 }
@@ -631,7 +634,7 @@ impl Actor {
     /// Pairs the phone that sent `pair` in the pairing room: a new long-term room and key, saved, replacing any phone
     /// paired before. The pairing room is left once this is answered.
     fn paired(&mut self, target: &Target, args: PairArgs) -> api::Answer {
-        if self.pair.as_ref().is_none_or(|p| chrono::Utc::now() >= p.expires_at) {
+        if self.pair.as_ref().is_none_or(|p| chrono::Utc::now() >= p.code.expires_at) {
             self.pair = None;
             return Err(api::Failure::remote(api::RemoteCode::NotAllowed, "The pairing code has expired."));
         }
@@ -732,8 +735,9 @@ impl Actor {
         let link = format!("omegastar://pair?v=1&relay={relay}&room={room}&key={}", wire::encode(&key));
         let qr = qr_data_url(&link)?;
         let expires_at = chrono::Utc::now() + chrono::Duration::from_std(PAIR_FOR).unwrap_or_default();
-        self.pair = Some(PairRoom { relay, room, key, expires_at, deadline: Instant::now() + PAIR_FOR });
-        Ok(PairCode { qr, link, expires_at })
+        let code = PairCode { qr, link, expires_at };
+        self.pair = Some(PairRoom { relay, room, key, code: code.clone(), deadline: Instant::now() + PAIR_FOR });
+        Ok(code)
     }
 
     /// Sends a push titled `title` to the paired phone, when it has a token, pushes are on and the link is this
@@ -764,6 +768,7 @@ impl Actor {
             last_seen_at: p.and_then(|p| p.last_seen_at),
             push_on: p.is_none_or(|p| p.push_on),
             error: self.error.clone().filter(|_| state != State::Off),
+            code: self.pair.as_ref().map(|p| p.code.clone()),
         }
     }
 

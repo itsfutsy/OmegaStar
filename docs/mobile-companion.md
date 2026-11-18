@@ -517,7 +517,7 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 
 | Command | Result |
 |---|---|
-| `remote_status` | `{ state, deviceName, pairedAt, lastSeenAt, pushOn, error }` |
+| `remote_status` | `{ state, deviceName, pairedAt, lastSeenAt, pushOn, error, code }`; `code` is the pairing code while one shows, so Settings shows it again when you come back |
 | `remote_pair_start` | `{ qr, link, expiresAt }`; `link` is what the QR code holds |
 | `remote_pair_cancel` | `null` |
 | `remote_unpair` | `null` |
