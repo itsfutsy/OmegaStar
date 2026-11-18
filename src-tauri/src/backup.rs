@@ -4,6 +4,7 @@
 
 use crate::model::*;
 use crate::office::RUNNING_MARKER;
+use crate::remote::store as remote;
 use crate::own_skills;
 use crate::store::{BACKUP_STATUS, DB_FILE};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, Timelike};
@@ -195,8 +196,9 @@ fn items(root: &Path, dir: &Path) -> Option<Vec<Item>> {
             continue;
         }
         let Some(name) = entry_name(root, &path) else { continue };
-        // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash.
-        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER) {
+        // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash. A restored
+        // phone pairing would bring a second computer into the same relay room.
+        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name == remote::FILE) {
             continue;
         }
         let meta = e.metadata().ok();
@@ -433,6 +435,7 @@ mod tests {
         big(&ws.join("data.bin"));
         big(&office.join("runs/r1/transcript.jsonl"));
         put(&office.join(RUNNING_MARKER), "");
+        put(&office.join(remote::FILE), "{}");
         let out = temp_office("bulk-out");
         let snapshot = out.join("snapshot.db");
         put(&snapshot, "db");
@@ -445,7 +448,7 @@ mod tests {
         let names: Vec<&str> = owned.iter().map(|n| n.as_ref()).collect();
         assert!(names.contains(&"employees/e1/notes.md"), "{names:?}");
         assert!(names.contains(&"runs/r1/transcript.jsonl"), "transcripts are kept: {names:?}");
-        for gone in ["node_modules", "Tool.app", "scratch", "data.bin", RUNNING_MARKER] {
+        for gone in ["node_modules", "Tool.app", "scratch", "data.bin", RUNNING_MARKER, remote::FILE] {
             assert!(!names.iter().any(|n| n.contains(gone)), "{gone} left out: {names:?}");
         }
 

@@ -1,0 +1,29 @@
+{
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "roomId": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "phoneHello": "{\"v\":1,\"nonce\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"api\":{\"min\":1,\"max\":1},\"app\":{\"platform\":\"ios\",\"version\":\"1.0.0\"}}",
+  "laptopHello": "{\"v\":1,\"nonce\":\"YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8\",\"api\":1,\"desktop\":{\"version\":\"0.7.0\"}}",
+  "salt": "e5bbd51b38d732adf1ae190bcd48fd9938e39356f2b084aedc2567f6cb830032",
+  "kPhone": "d542531773c87b4ba1c8c4b6b58f01ea2e2d052ac7d05bbc3bc3d48af65a7581",
+  "kLaptop": "bb9f89a5cfa9a0eb8feacfc69e23cc31e6c277ea7baf366c6a2c427b238bc717",
+  "frames": [
+    {
+      "from": "phone",
+      "counter": 0,
+      "plaintext": "{\"t\":\"req\",\"id\":1,\"cmd\":\"inbox\",\"args\":{}}",
+      "frame": "028d3b5eb91fa801fb54d4ca8112756f895e77557a92e38e23122b9a9e57b2b089534116f7526e7b73f59e99cee70f2280cca7dc08f3968f1b0882"
+    },
+    {
+      "from": "phone",
+      "counter": 1,
+      "plaintext": "{\"t\":\"req\",\"id\":2,\"cmd\":\"set_archived\",\"args\":{\"runId\":\"run-1\",\"archived\":true},\"op\":\"00000000-0000-4000-8000-000000000001\"}",
+      "frame": "020c65411d7cb0dd7b2adf58d15c6859e20d752abd78e83451f5a9105035ee55c12dd8e7621b382615b269897426872b627369110a1866c408fb0942503b94e0448fd148199669a0d6083e94b144cdae3a430f70b2a3b807ac3be328f218ef18c2f82c2fdc2fbb9640c09ce5cbee2cbd8263e9022b759ef571f7b89995610091ed746672db55db5a53023f555c"
+    },
+    {
+      "from": "laptop",
+      "counter": 0,
+      "plaintext": "{\"t\":\"res\",\"id\":1,\"ok\":true,\"ret\":{\"threads\":[]}}",
+      "frame": "02b025acdf233048a5ebecbf6c294ab1e1003c52fc430c64fbe53ff6937cbcacce643c4261ea8ee7cf4349c037104f8e5f7f497ecde951ed8e3a0f717d9f9846641f"
+    }
+  ]
+}

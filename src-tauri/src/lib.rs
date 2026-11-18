@@ -17,6 +17,7 @@ mod own_skills;
 mod power;
 mod proxy;
 mod reader;
+mod remote;
 mod sandbox;
 mod schedule;
 mod store;

@@ -37,6 +37,10 @@ base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tauri-plugin-updater = "2"
+ring = "0.17"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [profile.release]
 codegen-units = 1
