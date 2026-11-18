@@ -265,6 +265,31 @@ async fn the_phone_can_unpair_and_a_cancelled_code_stops_pairing() {
     assert_eq!(remote.status().state, State::Off);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn the_phone_hears_unpaired_only_once_the_computer_has_forgotten_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new("remote-unforgotten").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let mut phone = paired_phone(&remote, &relay).await;
+
+    let mode = |p: &std::path::Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    let was = std::fs::metadata(&f.dir).unwrap().permissions().mode();
+    mode(&f.dir.join(store::FILE), 0o400);
+    mode(&f.dir, 0o500);
+    let refused = remote.unpair().await;
+    mode(&f.dir, was);
+    mode(&f.dir.join(store::FILE), 0o600);
+    assert!(refused.is_err());
+    assert!(tokio::time::timeout(Duration::from_millis(500), phone.event()).await.is_err(), "the phone is not told");
+    assert_eq!(remote.status().state, State::Session);
+
+    remote.unpair().await.unwrap();
+    assert_eq!(phone.event().await, json!({ "t": "evt", "name": "unpaired" }));
+}
+
 #[tokio::test]
 async fn a_hello_alone_is_not_a_session() {
     let f = Fixture::new("remote-hello").await;

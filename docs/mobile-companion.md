@@ -98,8 +98,8 @@ Rules:
 - A photo of the QR code is useless once pairing has finished or the 5 minutes are up.
 - Pairing again replaces the previous phone.
 
-**Unpair.** From the desktop: delete the saved pairing and leave the room. If a phone session is live, send the event
-`unpaired` first so the app wipes its copy. From the phone: send the request `unpair`, then wipe. Either way the old
+**Unpair.** From the desktop: delete the saved pairing, then, if a phone session is live, send the event `unpaired`
+so the app wipes its copy, and leave the room. The phone hears `unpaired` only once the computer has forgotten it. From the phone: send the request `unpair`, then wipe. Either way the old
 `roomId` and `key` are never used again. If the saved pairing cannot be deleted it is emptied instead, and if that
 fails too, Unpair fails and says so, still paired.
 

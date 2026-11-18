@@ -481,11 +481,18 @@ impl Actor {
                     log!("phone link: the relay stopped answering");
                     false
                 }
-                Some(cmd) = self.rx.recv() => {
-                    let told = !matches!(cmd, Cmd::Unpair(_)) || self.event(&mut tx, json!({ "t": "evt", "name": "unpaired" })).await;
-                    self.handle(cmd);
-                    told
-                }
+                Some(cmd) = self.rx.recv() => match cmd {
+                    Cmd::Unpair(reply) => {
+                        let forgot = self.forget();
+                        let told = forgot.is_err() || self.event(&mut tx, json!({ "t": "evt", "name": "unpaired" })).await;
+                        let _ = reply.send(forgot);
+                        told
+                    }
+                    cmd => {
+                        self.handle(cmd);
+                        true
+                    }
+                },
                 _ = until(deadline) => {
                     self.pair = None;
                     true
