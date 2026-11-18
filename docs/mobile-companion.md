@@ -485,7 +485,7 @@ reuse `image_data_url`.
 ```
 
 - Written with owner-only permissions where the system supports it.
-- Left out of backups, by adding it beside the database files that
+- Left out of backups, with its temporary `remote.json.partial`, by adding it beside the database files that
   [`backup.rs`](../src-tauri/src/backup.rs) already skips at the top of the office folder. A restored backup must
   not bring a second computer into the same room.
 - Not in the system keychain. Release builds are not signed with a stable identity, so the keychain would ask again

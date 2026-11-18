@@ -197,8 +197,8 @@ fn items(root: &Path, dir: &Path) -> Option<Vec<Item>> {
         }
         let Some(name) = entry_name(root, &path) else { continue };
         // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash. A restored
-        // phone pairing would bring a second computer into the same relay room.
-        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name == remote::FILE) {
+        // phone pairing, or its copy mid-save, would bring a second computer into the same relay room.
+        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name.starts_with(remote::FILE)) {
             continue;
         }
         let meta = e.metadata().ok();
@@ -436,6 +436,7 @@ mod tests {
         big(&office.join("runs/r1/transcript.jsonl"));
         put(&office.join(RUNNING_MARKER), "");
         put(&office.join(remote::FILE), "{}");
+        put(&office.join(format!("{}.partial", remote::FILE)), "{}");
         let out = temp_office("bulk-out");
         let snapshot = out.join("snapshot.db");
         put(&snapshot, "db");
