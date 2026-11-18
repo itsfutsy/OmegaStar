@@ -247,6 +247,22 @@ async fn the_phone_can_unpair_and_a_cancelled_code_stops_pairing() {
 }
 
 #[tokio::test]
+async fn a_code_past_its_time_pairs_nothing() {
+    let f = Fixture::new("remote-expired").await;
+    let remote = Remote::new(RELAY.into());
+    let rx = remote.0.rx.lock().unwrap().take().unwrap();
+    let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
+    actor.pair_start().unwrap();
+    let target = actor.target().unwrap();
+    actor.pair.as_mut().unwrap().expires_at = chrono::Utc::now();
+
+    let refused = actor.paired(&target, PairArgs { device_name: "Test Phone".into() }).unwrap_err();
+    assert_eq!(refused.code, api::Code::Remote(api::RemoteCode::NotAllowed));
+    assert!(actor.pair.is_none() && actor.pairing.is_none());
+    assert!(store::load(&f.dir).is_none());
+}
+
+#[tokio::test]
 async fn a_sandbox_never_links_a_phone() {
     let dir = crate::fixtures::temp_dir("remote-sandbox");
     std::fs::write(dir.join(crate::sandbox::MARKER), "").unwrap();

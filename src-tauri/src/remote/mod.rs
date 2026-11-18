@@ -183,21 +183,7 @@ impl Remote {
             log!("phone link: off in a sandbox office");
             return;
         }
-        let dir = office.data_dir().to_path_buf();
-        let actor = Actor {
-            shared: self.0.clone(),
-            pairing: store::load(&dir),
-            dir,
-            rx,
-            client: crate::proxy::client(),
-            pair: None,
-            ops: Ops::default(),
-            keys: None,
-            link: State::Connecting,
-            error: None,
-            pending: 0,
-            office: office.clone(),
-        };
+        let actor = Actor::new(self.0.clone(), office.clone(), rx);
         actor.publish();
         office.spawn(actor.run());
     }
@@ -263,6 +249,9 @@ struct PairRoom {
     relay: String,
     room: String,
     key: [u8; 32],
+    /// When the code stops working, by the wall clock, which keeps time while the computer sleeps.
+    expires_at: Ts,
+    /// When to wake up and leave the room.
     deadline: Instant,
 }
 
@@ -351,6 +340,25 @@ struct Peer {
 }
 
 impl Actor {
+    /// The task for `office`, with its saved pairing.
+    fn new(shared: Arc<Shared>, office: Office, rx: mpsc::UnboundedReceiver<Cmd>) -> Actor {
+        let dir = office.data_dir().to_path_buf();
+        Actor {
+            shared,
+            pairing: store::load(&dir),
+            dir,
+            rx,
+            client: crate::proxy::client(),
+            pair: None,
+            ops: Ops::default(),
+            keys: None,
+            link: State::Connecting,
+            error: None,
+            pending: 0,
+            office,
+        }
+    }
+
     /// Runs the link for as long as the app does: in the room it belongs in while there is one, reconnecting with
     /// backoff, and otherwise waiting for a command.
     async fn run(mut self) {
@@ -591,6 +599,10 @@ impl Actor {
     /// Pairs the phone that sent `pair` in the pairing room: a new long-term room and key, saved, replacing any phone
     /// paired before. The pairing room is left once this is answered.
     fn paired(&mut self, target: &Target, args: PairArgs) -> api::Answer {
+        if self.pair.as_ref().is_none_or(|p| chrono::Utc::now() >= p.expires_at) {
+            self.pair = None;
+            return Err(api::Failure::remote(api::RemoteCode::NotAllowed, "The pairing code has expired."));
+        }
         let name: String = args.device_name.trim().chars().take(MAX_DEVICE_NAME).collect();
         if name.is_empty() {
             return Err(api::Failure::remote(api::RemoteCode::BadRequest, "The phone sent no name."));
@@ -682,7 +694,7 @@ impl Actor {
         let link = format!("omegastar://pair?v=1&relay={relay}&room={room}&key={}", wire::encode(&key));
         let qr = qr_data_url(&link)?;
         let expires_at = chrono::Utc::now() + chrono::Duration::from_std(PAIR_FOR).unwrap_or_default();
-        self.pair = Some(PairRoom { relay, room, key, deadline: Instant::now() + PAIR_FOR });
+        self.pair = Some(PairRoom { relay, room, key, expires_at, deadline: Instant::now() + PAIR_FOR });
         Ok(PairCode { qr, link, expires_at })
     }
 

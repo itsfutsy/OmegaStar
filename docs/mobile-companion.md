@@ -93,7 +93,8 @@ Steps:
 Rules:
 
 - In the pairing room the only request allowed is `pair`, and only the first valid one is answered.
-- After 5 minutes, or on Cancel, the desktop leaves the pairing room and forgets `pairRoom` and `pairKey`.
+- After 5 minutes, or on Cancel, the desktop leaves the pairing room and forgets `pairRoom` and `pairKey`. The 5
+  minutes are wall-clock time, so a computer that slept through them refuses `pair` when it wakes.
 - A photo of the QR code is useless once pairing has finished or the 5 minutes are up.
 - Pairing again replaces the previous phone.
 
