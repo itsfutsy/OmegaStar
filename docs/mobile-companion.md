@@ -307,7 +307,8 @@ handshake. The computer saves the token with the pairing.
 
 **Sending.** The desktop already decides when a notification is shown, after batching and quiet hours, in
 `TauriSink::show` in [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs). That same point also sends the push, so the
-phone follows the desktop's notification settings. A switch in Settings turns phone pushes off.
+phone follows the desktop's notification settings. A switch in Settings turns phone pushes off. A computer that
+another has replaced in the room sends none.
 
 ```
 POST https://<relay>/v1/push

@@ -729,9 +729,10 @@ impl Actor {
         Ok(PairCode { qr, link, expires_at })
     }
 
-    /// Sends a push titled `title` to the paired phone, when it has a token and pushes are on.
+    /// Sends a push titled `title` to the paired phone, when it has a token, pushes are on and the link is this
+    /// computer's.
     fn push(&self, title: String) {
-        let Some(p) = self.pairing.as_ref().filter(|p| p.push_on) else { return };
+        let Some(p) = self.pairing.as_ref().filter(|p| p.push_on && !self.replaced) else { return };
         let Some(target) = p.push.clone() else { return };
         let (client, url, tx) = (self.client.clone(), push_url(&p.relay), self.shared.tx.clone());
         tokio::spawn(async move {

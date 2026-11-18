@@ -359,6 +359,25 @@ async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
 }
 
 #[tokio::test]
+async fn a_computer_replaced_in_the_room_sends_no_pushes() {
+    let f = Fixture::new("remote-replaced-push").await;
+    let push_route = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote = Remote::new(RELAY.into());
+    let rx = remote.0.rx.lock().unwrap().take().unwrap();
+    let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
+    let push = PushTarget { platform: "ios".into(), token: "t1".into(), sandbox: true };
+    let relay = push_route.local_addr().unwrap().to_string();
+    actor.pairing = Some(Pairing { relay, room_id: wire::random_id(), key: wire::random_id(), device_name: "Test Phone".into(), paired_at: chrono::Utc::now(), push: Some(push), push_on: true, last_seen_at: None });
+
+    actor.replaced = true;
+    actor.push("Juno needs you".into());
+    assert!(tokio::time::timeout(Duration::from_millis(300), push_route.accept()).await.is_err(), "no push while replaced");
+    actor.replaced = false;
+    actor.push("Juno needs you".into());
+    tokio::time::timeout(Duration::from_secs(5), push_route.accept()).await.expect("a push once the link is back").unwrap();
+}
+
+#[tokio::test]
 async fn a_code_past_its_time_pairs_nothing() {
     let f = Fixture::new("remote-expired").await;
     let remote = Remote::new(RELAY.into());
