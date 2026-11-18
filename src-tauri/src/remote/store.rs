@@ -70,10 +70,14 @@ pub fn save(dir: &Path, pairing: &Pairing) -> io::Result<()> {
     fs::rename(&tmp, dir.join(FILE))
 }
 
-/// Forgets the saved pairing.
+/// Forgets the saved pairing. A file that cannot be removed is emptied instead, which `load` reads as no pairing.
 pub fn delete(dir: &Path) -> io::Result<()> {
-    match fs::remove_file(dir.join(FILE)) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+    let path = dir.join(FILE);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            log!("could not delete {FILE}: {e}");
+            fs::write(&path, "{}")
+        }
         _ => Ok(()),
     }
 }
@@ -117,6 +121,27 @@ mod tests {
         let dir = temp_dir("remote-store-mode");
         save(&dir, &pairing()).unwrap();
         assert_eq!(fs::metadata(dir.join(FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pairing_that_cannot_be_deleted_is_emptied_or_kept_with_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, m: u32| fs::set_permissions(path, fs::Permissions::from_mode(m)).unwrap();
+        let dir = temp_dir("remote-store-locked");
+        save(&dir, &pairing()).unwrap();
+        mode(&dir, 0o500);
+        delete(&dir).unwrap();
+        assert_eq!(load(&dir), None);
+
+        mode(&dir, 0o700);
+        save(&dir, &pairing()).unwrap();
+        mode(&dir.join(FILE), 0o400);
+        mode(&dir, 0o500);
+        assert!(delete(&dir).is_err());
+        assert!(load(&dir).is_some());
+        mode(&dir, 0o700);
         let _ = fs::remove_dir_all(&dir);
     }
 

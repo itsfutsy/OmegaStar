@@ -146,7 +146,7 @@ impl What {
 enum Cmd {
     PairStart(oneshot::Sender<Result<PairCode>>),
     PairCancel(oneshot::Sender<()>),
-    Unpair(oneshot::Sender<()>),
+    Unpair(oneshot::Sender<Result<()>>),
     SetPush(bool, oneshot::Sender<Result<Status>>),
     Changed(What),
     Push(String),
@@ -231,7 +231,7 @@ impl Remote {
 
     /// Forgets the paired phone, telling it first if it is connected.
     pub async fn unpair(&self) -> Result<()> {
-        self.ask(Cmd::Unpair).await
+        self.ask(Cmd::Unpair).await?
     }
 
     /// Turns phone pushes on or off.
@@ -570,7 +570,7 @@ impl Actor {
                 Ok(Value::Null)
             }
             Kind::Session(Session::Unpair) => {
-                self.forget();
+                self.forget()?;
                 Ok(Value::Null)
             }
             Kind::Read | Kind::Write => api::run(&self.office, &mut self.ops, kind, req, Instant::now()),
@@ -611,14 +611,14 @@ impl Actor {
         }
     }
 
-    /// Forgets the paired phone: its room and key are never used again.
-    fn forget(&mut self) {
-        if let Err(e) = store::delete(&self.dir) {
-            log!("phone link: could not delete {}: {e}", store::FILE);
-        }
+    /// Forgets the paired phone: its room and key are never used again. Fails, still paired, when the saved pairing
+    /// cannot be removed, since the next start would load it again.
+    fn forget(&mut self) -> Result<()> {
+        store::delete(&self.dir).map_err(|e| AppError::internal(format!("OmegaStar could not forget the phone: {e}")))?;
         self.pairing = None;
         self.ops = Ops::default();
         self.publish();
+        Ok(())
     }
 
     /// Handles one command from the handle.
@@ -632,8 +632,7 @@ impl Actor {
                 let _ = reply.send(());
             }
             Cmd::Unpair(reply) => {
-                self.forget();
-                let _ = reply.send(());
+                let _ = reply.send(self.forget());
             }
             Cmd::SetPush(on, reply) => {
                 let result = match self.pairing.as_mut() {

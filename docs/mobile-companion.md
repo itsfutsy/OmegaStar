@@ -99,7 +99,8 @@ Rules:
 
 **Unpair.** From the desktop: delete the saved pairing and leave the room. If a phone session is live, send the event
 `unpaired` first so the app wipes its copy. From the phone: send the request `unpair`, then wipe. Either way the old
-`roomId` and `key` are never used again.
+`roomId` and `key` are never used again. If the saved pairing cannot be deleted it is emptied instead, and if that
+fails too, Unpair fails and says so, still paired.
 
 ## 6. Connecting to the relay
 
