@@ -630,6 +630,6 @@ These are assumptions in this design that were not confirmed against documentati
 | How the phone apps are built | Not decided: native Swift and Kotlin as for Vibe Typer, or one shared codebase |
 | What a push says | The notification title only, as in section 10 |
 | Keep the computer awake while a phone is paired | No for version 1 |
-| Where the relay lives | A private repository, on its own hostname |
+| Where the relay lives | A private repository, at `relay.abramindustries.com` |
 | Phones per computer | One |
 | How the app is sold | Paid upfront, which needs no accounts |

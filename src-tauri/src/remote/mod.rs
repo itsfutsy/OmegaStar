@@ -34,7 +34,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 /// The relay every build talks to, unless `OMEGASTAR_RELAY` names another (host, or host:port).
-pub const RELAY: &str = "relay.omegastar.app";
+pub const RELAY: &str = "relay.abramindustries.com";
 /// How long a pairing code works.
 const PAIR_FOR: Duration = Duration::from_secs(5 * 60);
 const PING_EVERY: Duration = Duration::from_secs(30);
@@ -825,7 +825,7 @@ mod unit {
     fn a_relay_on_this_computer_goes_without_tls() {
         assert_eq!(room_url("localhost:8787"), "ws://localhost:8787/v1/room?role=laptop");
         assert_eq!(room_url("127.0.0.1"), "ws://127.0.0.1/v1/room?role=laptop");
-        assert_eq!(room_url(RELAY), "wss://relay.omegastar.app/v1/room?role=laptop");
+        assert_eq!(room_url(RELAY), "wss://relay.abramindustries.com/v1/room?role=laptop");
         assert_eq!(push_url("127.0.0.1:9000"), "http://127.0.0.1:9000/v1/push");
         assert_eq!(push_url("relay.example.com"), "https://relay.example.com/v1/push");
         assert!(!is_local("localhost.example.com"));
