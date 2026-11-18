@@ -358,6 +358,34 @@ async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
     assert_eq!(remote.status().state, State::Pairing);
 }
 
+/// A pairing through `relay`, with a push token and pushes on.
+fn pairing(relay: &str) -> Pairing {
+    let push = PushTarget { platform: "ios".into(), token: "t1".into(), sandbox: true };
+    Pairing { relay: relay.into(), room_id: wire::random_id(), key: wire::random_id(), device_name: "Test Phone".into(), paired_at: chrono::Utc::now(), push: Some(push), push_on: true, last_seen_at: None }
+}
+
+#[tokio::test]
+async fn a_phone_setting_that_cannot_be_saved_says_so_and_off_still_holds() {
+    let f = Fixture::new("remote-unsaved").await;
+    let remote = Remote::new(RELAY.into());
+    let rx = remote.0.rx.lock().unwrap().take().unwrap();
+    let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
+    actor.pairing = Some(pairing(RELAY));
+    std::fs::create_dir(f.dir.join(store::TEMP)).unwrap();
+
+    for on in [false, true] {
+        let (reply, answer) = oneshot::channel();
+        actor.handle(Cmd::SetPush(on, reply));
+        assert!(answer.await.unwrap().is_err(), "Settings hears the save failed");
+        assert!(!actor.pairing.as_ref().unwrap().push_on, "off holds at once; on waits for a save");
+    }
+
+    let target = actor.target().unwrap();
+    let req = api::request(json!({ "t": "req", "id": 1, "cmd": "push_register", "args": { "platform": "ios", "token": "t2", "sandbox": true } }).to_string().as_bytes()).unwrap();
+    assert!(actor.answer(&target, &req).is_err(), "the phone hears its token was not kept");
+    assert_eq!(actor.pairing.as_ref().unwrap().push.as_ref().unwrap().token, "t1");
+}
+
 #[tokio::test]
 async fn a_computer_replaced_in_the_room_sends_no_pushes() {
     let f = Fixture::new("remote-replaced-push").await;
@@ -365,9 +393,7 @@ async fn a_computer_replaced_in_the_room_sends_no_pushes() {
     let remote = Remote::new(RELAY.into());
     let rx = remote.0.rx.lock().unwrap().take().unwrap();
     let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
-    let push = PushTarget { platform: "ios".into(), token: "t1".into(), sandbox: true };
-    let relay = push_route.local_addr().unwrap().to_string();
-    actor.pairing = Some(Pairing { relay, room_id: wire::random_id(), key: wire::random_id(), device_name: "Test Phone".into(), paired_at: chrono::Utc::now(), push: Some(push), push_on: true, last_seen_at: None });
+    actor.pairing = Some(pairing(&push_route.local_addr().unwrap().to_string()));
 
     actor.replaced = true;
     actor.push("Juno needs you".into());

@@ -589,7 +589,7 @@ impl Actor {
             if let Some(p) = self.pairing.as_mut() {
                 p.last_seen_at = Some(chrono::Utc::now());
                 let p = p.clone();
-                self.save(&p);
+                let _ = self.save(&p);
             }
         }
         self.publish();
@@ -612,7 +612,7 @@ impl Actor {
                 let push: PushTarget = api::args(req)?;
                 if let Some(mut p) = self.pairing.clone().filter(|p| p.push.as_ref() != Some(&push)) {
                     p.push = Some(push);
-                    self.save(&p);
+                    self.save(&p)?;
                     self.pairing = Some(p);
                 }
                 Ok(Value::Null)
@@ -657,11 +657,12 @@ impl Actor {
         Ok(ret)
     }
 
-    /// Saves `pairing`, logging a failure: the link keeps working from memory.
-    fn save(&self, pairing: &Pairing) {
-        if let Err(e) = store::save(&self.dir, pairing) {
+    /// Saves `pairing`, logging a failure.
+    fn save(&self, pairing: &Pairing) -> Result<()> {
+        store::save(&self.dir, pairing).map_err(|e| {
             log!("phone link: could not save {}: {e}", store::FILE);
-        }
+            AppError::internal(format!("OmegaStar could not save the phone's settings: {e}"))
+        })
     }
 
     /// Forgets the paired phone: its room and key are never used again. Fails, still paired, when the saved pairing
@@ -689,12 +690,15 @@ impl Actor {
                 let _ = reply.send(self.forget());
             }
             Cmd::SetPush(on, reply) => {
-                let result = match self.pairing.as_mut() {
-                    Some(p) => {
+                let result = match self.pairing.clone() {
+                    // Off holds from memory even when it cannot be saved, so no push goes out after the switch.
+                    Some(mut p) => {
                         p.push_on = on;
-                        let p = p.clone();
-                        self.save(&p);
-                        Ok(self.status())
+                        let saved = self.save(&p);
+                        if saved.is_ok() || !on {
+                            self.pairing = Some(p);
+                        }
+                        saved.map(|()| self.status())
                     }
                     None => Err(AppError::conflict("No phone is paired.")),
                 };
@@ -709,7 +713,7 @@ impl Actor {
             Cmd::TokenGone(token) => {
                 if let Some(mut p) = self.pairing.clone().filter(|p| p.push.as_ref().is_some_and(|t| t.token == token)) {
                     p.push = None;
-                    self.save(&p);
+                    let _ = self.save(&p);
                     self.pairing = Some(p);
                 }
             }

@@ -303,7 +303,7 @@ The phone never works out for itself what belongs in the Inbox. It asks.
 ## 10. Push notifications
 
 **Registering.** The phone gets its device token from Apple or Google and sends `push_register` after the next
-handshake. The computer saves the token with the pairing.
+handshake. The computer saves the token with the pairing, and answers with an error when it cannot.
 
 **Sending.** The desktop already decides when a notification is shown, after batching and quiet hours, in
 `TauriSink::show` in [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs). That same point also sends the push, so the
@@ -518,7 +518,7 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 | `remote_pair_start` | `{ qr, link, expiresAt }`; `link` is what the QR code holds |
 | `remote_pair_cancel` | `null` |
 | `remote_unpair` | `null` |
-| `remote_set_push` with `{ on }` | the status |
+| `remote_set_push` with `{ on }` | the status, or an error when it cannot be saved. Off still holds until restart. |
 
 New event: `remote:updated`, carrying the status.
 

@@ -84,14 +84,13 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
     }
   };
   const setPush = async (on: boolean) => {
-    const before = st;
-    if (before) status.set({ ...before, pushOn: on });
+    if (st) status.set({ ...st, pushOn: on });
     saves.saving(PUSH);
     try {
       status.set(await call("remote_set_push", { on }));
       saves.saved(PUSH);
     } catch (e) {
-      if (before) status.set(before);
+      status.reload();
       saves.failed(PUSH, sentence(errorMessage(e)), () => void setPush(on));
     }
   };
