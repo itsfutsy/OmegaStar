@@ -160,7 +160,8 @@ Every binary frame starts with one type byte.
 ### Handshake
 
 A session starts each time the phone learns the computer is present: on connect if told `joined`, or when `joined`
-arrives later.
+arrives later. When the computer hears `joined` it ends any session it had, since that was the old socket's, and shows
+the phone as connected again only once the new socket's first sealed frame opens.
 
 | Step | Sender | Frame |
 |---|---|---|

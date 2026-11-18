@@ -283,6 +283,19 @@ async fn a_hello_alone_is_not_a_session() {
 }
 
 #[tokio::test]
+async fn a_phone_that_reconnects_is_not_connected_until_its_first_frame() {
+    let f = Fixture::new("remote-rejoin").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let _phone = paired_phone(&remote, &relay).await;
+
+    let room = store::load(&f.dir).unwrap().room_id;
+    let _replacement = socket(&relay, &room, "phone").await;
+    wait_for(&remote, |s| s.state == State::Online).await;
+}
+
+#[tokio::test]
 async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
     let f = Fixture::new("remote-replaced").await;
     let relay = fake_relay().await;

@@ -518,7 +518,7 @@ impl Actor {
         let bytes = match msg {
             Message::Text(text) => {
                 if let Ok(peer) = serde_json::from_str::<Peer>(&text) {
-                    if peer.t == "peer" && peer.state == "left" {
+                    if peer.t == "peer" && (peer.state == "left" || peer.state == "joined") {
                         self.end_session();
                     }
                 }
