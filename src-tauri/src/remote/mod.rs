@@ -299,9 +299,15 @@ async fn until(at: Option<Instant>) {
     }
 }
 
+/// How long a send of `len` bytes may take: 10 seconds, and a second more per 256 KiB, so a big image still goes out
+/// on a slow upload.
+fn send_within(len: usize) -> Duration {
+    PONG_WITHIN + Duration::from_secs((len / (256 * 1024)) as u64)
+}
+
 /// Sends `msg` to the relay. False when the connection is gone or the send stalls.
 async fn send<S: futures_util::Sink<Message> + Unpin>(tx: &mut S, msg: Message) -> bool {
-    match tokio::time::timeout(PONG_WITHIN, tx.send(msg)).await {
+    match tokio::time::timeout(send_within(msg.len()), tx.send(msg)).await {
         Ok(sent) => sent.is_ok(),
         Err(_) => {
             log!("phone link: a send to the relay stalled");
@@ -827,6 +833,9 @@ mod unit {
     async fn a_stalled_send_counts_as_a_dropped_connection() {
         assert!(!send(&mut Stalled, Message::Ping(Default::default())).await);
         assert!(send(&mut futures_util::sink::drain(), Message::Ping(Default::default())).await);
+        let started = tokio::time::Instant::now();
+        assert!(!send(&mut Stalled, Message::Binary(vec![0; 1024 * 1024].into())).await);
+        assert_eq!(started.elapsed(), Duration::from_secs(14), "a 1 MiB frame gets 4 seconds more");
     }
 
     #[test]
