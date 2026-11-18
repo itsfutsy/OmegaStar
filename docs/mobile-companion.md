@@ -229,8 +229,9 @@ Rules:
 - `err` has the shape of OmegaStar's existing `ApiError`. The remote layer adds three codes: `not_allowed` (the
   command is not in the list), `bad_request` and `too_large`.
 - **Writes carry `op`,** a UUID the phone creates once per user action. The computer remembers the results of the
-  last 200 ops for 10 minutes. If the same `op` arrives again, it returns the saved result without running the
-  command again. This makes it safe for the phone to resend a write whose response was lost.
+  last 200 ops for 10 minutes, failures included. If the same `op` arrives again, it returns the saved result without
+  running the command again. This makes it safe for the phone to resend a write whose response was lost. A write
+  without `op` gets `bad_request`.
 - One message is at most 4 MiB once sealed. The computer answers `too_large` if a result would not fit.
 
 ### Compatibility
@@ -470,15 +471,17 @@ It never starts in a sandbox office.
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.
 
 **Commands.** `api.rs` calls the same `Office` methods as the adapters in
-[`commands.rs`](../src-tauri/src/commands.rs). Four reads are new and belong on the `Office`: `inbox`, `team`,
-`member_image` and `card_image`. `card_image` must take the path from the card itself, never from the phone, and
+[`commands.rs`](../src-tauri/src/commands.rs). Four reads are new and belong on the `Office`: `inbox`, `members`
+(the `team` command; `Office::team` already exists), `member_image` and `card_image`, plus `company_name` for the
+`pair` answer and `approve_proposal_as_proposed` for `approve_proposal`. `card_image` must take the path from the card itself, never from the phone, and
 reuse `image_data_url`.
 
 **The saved pairing** lives in `remote.json` in the office folder:
 
 ```json
 { "relay": "relay.example.com", "roomId": "...", "key": "...", "deviceName": "Maren's iPhone",
-  "pairedAt": "2026-11-18T09:00:00Z", "push": { "platform": "ios", "token": "...", "sandbox": false } }
+  "pairedAt": "2026-11-18T09:00:00Z", "push": { "platform": "ios", "token": "...", "sandbox": false },
+  "pushOn": true, "lastSeenAt": "2026-11-18T09:05:00Z" }
 ```
 
 - Written with owner-only permissions where the system supports it.
@@ -503,7 +506,7 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 | Command | Result |
 |---|---|
 | `remote_status` | `{ state, deviceName, pairedAt, lastSeenAt, pushOn, error }` |
-| `remote_pair_start` | `{ qr, expiresAt }` |
+| `remote_pair_start` | `{ qr, link, expiresAt }`; `link` is what the QR code holds |
 | `remote_pair_cancel` | `null` |
 | `remote_unpair` | `null` |
 | `remote_set_push` with `{ on }` | the status |
