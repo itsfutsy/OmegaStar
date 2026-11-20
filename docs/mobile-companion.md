@@ -495,6 +495,12 @@ It never starts in a sandbox office.
 
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.
 
+**Phone activity.** Each session the phone starts, and each change it makes (a write that worked, counted once per
+`op`), is kept with the pairing as `{ at, what }`, the latest 10, and written to the log, which outlasts the pairing.
+`what` is `connected`, the write's command (`set_archived` to false counts as `unarchive_runs`), or `push_register`
+when the phone changes where its pushes go. Settings lists them under the paired phone, so use of the link that is
+not the owner's shows on the computer.
+
 **Commands.** `api.rs` calls the same `Office` methods as the adapters in
 [`commands.rs`](../src-tauri/src/commands.rs). Four reads are new and belong on the `Office`: `inbox`, `members`
 (the `team` command; `Office::team` already exists), `member_image` and `card_image`, plus `company_name` for the
@@ -508,7 +514,8 @@ task, on a blocking thread, and are answered with an error after 10 seconds, so 
 ```json
 { "relay": "relay.example.com", "roomId": "...", "key": "...", "deviceName": "Maren's iPhone",
   "pairedAt": "2026-11-18T09:00:00Z", "push": { "platform": "ios", "token": "...", "sandbox": false },
-  "pushOn": true, "lastSeenAt": "2026-11-18T09:05:00Z" }
+  "pushOn": true, "lastSeenAt": "2026-11-18T09:05:00Z",
+  "activity": [{ "at": "2026-11-18T09:05:00Z", "what": "connected" }] }
 ```
 
 - Written with owner-only permissions where the system supports it.
@@ -532,7 +539,7 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 
 | Command | Result |
 |---|---|
-| `remote_status` | `{ state, deviceName, pairedAt, lastSeenAt, pushOn, error, code }`; `code` is the pairing code while one shows, so Settings shows it again when you come back |
+| `remote_status` | `{ state, deviceName, pairedAt, lastSeenAt, pushOn, error, code, activity }`; `code` is the pairing code while one shows, so Settings shows it again when you come back, and `activity` is what the phone did lately, newest first |
 | `remote_pair_start` | `{ qr, link, expiresAt }`; `link` is what the QR code holds |
 | `remote_pair_cancel` | `null` |
 | `remote_unpair` | `null` |
@@ -541,8 +548,8 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 New event: `remote:updated`, carrying the status.
 
 A new **Phone** section in Settings, beside the existing ones in `src/screens/settings/`. It shows the state, the QR
-code while pairing (blurred until clicked), the paired phone's name, the push switch and **Unpair**. The browser
-preview in `src/preview/` needs the same commands with invented data.
+code while pairing (blurred until clicked), the paired phone's name, the push switch, what the phone did lately and
+**Unpair**. The browser preview in `src/preview/` needs the same commands with invented data.
 
 ## 13. What the phone app must do
 
@@ -572,7 +579,7 @@ hire proposal, settings.
 | The QR code is seen or photographed | Settings blurs it until clicked, so it is on screen only when the user chooses. It works once, for 5 minutes, and whoever scans it first is paired; the desktop shows which phone that was. After that it opens nothing. |
 | The phone is lost | Unpair on the desktop. The room and key are abandoned. |
 | The phone app is taken over | It can do what the API allows and nothing else: no file reads, no settings, no skills, no arbitrary commands. It can allow tools and approve hires, so an app lock is worth adding later. |
-| Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it |
+| Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it. Whoever copies it can act as the phone until Unpair. Settings lists what the phone did lately and the log keeps it, so that use shows on the computer. |
 | Strangers use the relay for free or to run up a bill | Rate limits, the frame cap, two sockets per room |
 
 **What the relay can see:** client addresses, room ids, when frames pass and how large they are, and for a push the

@@ -24,7 +24,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use store::{Pairing, PushTarget};
+use store::{Activity, Pairing, PushTarget};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -48,6 +48,8 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const STEADY: Duration = Duration::from_secs(30);
 /// `changed` events go out at most this often, combined.
 const CHANGED_EVERY: Duration = Duration::from_secs(1);
+/// How many of the phone's sessions and changes are kept for Settings to show.
+const ACTIVITY_KEPT: usize = 10;
 /// The longest phone name kept, in characters.
 const MAX_DEVICE_NAME: usize = 60;
 const UNREACHABLE: &str = "OmegaStar cannot reach the phone relay.";
@@ -106,11 +108,13 @@ pub struct Status {
     pub error: Option<String>,
     /// The code showing while pairing, so Settings shows it again when you come back to it.
     pub code: Option<PairCode>,
+    /// What the paired phone did lately, newest first: the sessions it started and the changes it made.
+    pub activity: Vec<Activity>,
 }
 
 impl Default for Status {
     fn default() -> Status {
-        Status { state: State::Off, device_name: None, paired_at: None, last_seen_at: None, push_on: true, error: None, code: None }
+        Status { state: State::Off, device_name: None, paired_at: None, last_seen_at: None, push_on: true, error: None, code: None, activity: vec![] }
     }
 }
 
@@ -594,10 +598,22 @@ impl Actor {
         if target.kind == Room::Paired {
             if let Some(p) = self.pairing.as_mut() {
                 p.last_seen_at = Some(chrono::Utc::now());
-                let p = p.clone();
-                let _ = self.save(&p);
             }
+            log!("phone link: the phone connected");
+            self.did("connected");
         }
+        self.publish();
+    }
+
+    /// Keeps that the paired phone did `what` (`connected`, the write it sent, or `push_register` for a new push
+    /// token) for Settings to show. Each is logged too, where it is noted: the log outlasts the pairing.
+    fn did(&mut self, what: &str) {
+        let Some(p) = self.pairing.as_mut() else { return };
+        p.activity.push(Activity { at: chrono::Utc::now(), what: what.into() });
+        let extra = p.activity.len().saturating_sub(ACTIVITY_KEPT);
+        p.activity.drain(..extra);
+        let p = p.clone();
+        let _ = self.save(&p);
         self.publish();
     }
 
@@ -620,15 +636,32 @@ impl Actor {
                     p.push = Some(push);
                     self.save(&p)?;
                     self.pairing = Some(p);
+                    log!("phone link: the phone changed where its pushes go");
+                    self.did("push_register");
                 }
                 Ok(Value::Null)
             }
             Kind::Session(Session::Unpair) => {
                 self.forget()?;
+                log!("phone link: the phone unpaired");
                 Ok(Value::Null)
             }
             Kind::Read => read(self.office.clone(), req.clone()).await,
-            Kind::Write => api::run(&self.office, &mut self.ops, kind, req, Instant::now()),
+            Kind::Write => {
+                let now = Instant::now();
+                let resent = req.op.as_deref().is_some_and(|op| self.ops.has(op, now));
+                let answer = api::run(&self.office, &mut self.ops, kind, req, now);
+                if answer.is_ok() && !resent {
+                    // Taking a conversation back out of Done is the same change by either command.
+                    let back = req.cmd == "set_archived" && req.args["archived"] == false;
+                    let what = if back { "unarchive_runs" } else { &req.cmd };
+                    // Only what reads as an id goes in the log, so the phone cannot write lines of its own there.
+                    let id = |key: &str| req.args[key].as_str().filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+                    log!("phone link: the phone sent {what} for {}", id("runId").or(id("proposalId")).unwrap_or("its runs"));
+                    self.did(what);
+                }
+                answer
+            }
         }
     }
 
@@ -653,6 +686,7 @@ impl Actor {
             push: None,
             push_on: true,
             last_seen_at: None,
+            activity: vec![],
         };
         store::save(&self.dir, &pairing).map_err(AppError::from)?;
         let ret = json!({ "roomId": pairing.room_id, "key": pairing.key, "companyName": company });
@@ -770,6 +804,7 @@ impl Actor {
             push_on: p.is_none_or(|p| p.push_on),
             error: self.error.clone().filter(|_| state != State::Off),
             code: self.pair.as_ref().map(|p| p.code.clone()),
+            activity: p.map(|p| p.activity.iter().rev().cloned().collect()).unwrap_or_default(),
         }
     }
 

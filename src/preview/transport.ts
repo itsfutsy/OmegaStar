@@ -46,7 +46,7 @@ const notFound = (message: string) => ({ code: "notFound", message });
 const never = <T>() => new Promise<T>(() => {});
 const DAY = 86_400_000;
 /** No phone paired. */
-const UNPAIRED: RemoteStatus = { state: "off", deviceName: null, pairedAt: null, lastSeenAt: null, pushOn: true, error: null, code: null };
+const UNPAIRED: RemoteStatus = { state: "off", deviceName: null, pairedAt: null, lastSeenAt: null, pushOn: true, error: null, code: null, activity: [] };
 /** The prompt of a run started with no instruction. Mirrors Rust `DEFAULT_PROMPT`. */
 const DEFAULT_PROMPT = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
@@ -109,7 +109,15 @@ export function previewTransport(): Transport {
   const state: State = STATES.find((s) => s === params.get("preview")) ?? "full";
   const w = worldFor(state);
   let remote: RemoteStatus = state === "phone-paired"
-    ? { state: "session", deviceName: "Maren's iPhone", pairedAt: iso(NOW - 3 * DAY), lastSeenAt: iso(NOW - 2 * 60_000), pushOn: true, error: null, code: null }
+    ? {
+        state: "session", deviceName: "Maren's iPhone", pairedAt: iso(NOW - 3 * DAY), lastSeenAt: iso(NOW - 2 * 60_000), pushOn: true, error: null, code: null,
+        activity: [
+          { at: iso(NOW - 2 * 60_000), what: "connected" },
+          { at: iso(NOW - 3 * 3_600_000), what: "reply_to_run" },
+          { at: iso(NOW - 3 * 3_600_000 - 40_000), what: "answer_card" },
+          { at: iso(NOW - 3 * 3_600_000 - 90_000), what: "connected" },
+        ],
+      }
     : UNPAIRED;
 
   installTauriShim();

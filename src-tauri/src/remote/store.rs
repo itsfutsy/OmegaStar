@@ -21,6 +21,14 @@ pub struct PushTarget {
     pub sandbox: bool,
 }
 
+/// Something the paired phone did, kept so Settings can show it: a session it started, or a change it made.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Activity {
+    pub at: Ts,
+    /// `connected`, or the command that made the change.
+    pub what: String,
+}
+
 /// A paired phone: the long-term room and key, and what the computer knows about the phone.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +46,9 @@ pub struct Pairing {
     /// When a phone session last started.
     #[serde(default)]
     pub last_seen_at: Option<Ts>,
+    /// What the phone did lately, oldest first.
+    #[serde(default)]
+    pub activity: Vec<Activity>,
 }
 
 /// Phone pushes are on until switched off.
@@ -99,6 +110,7 @@ mod tests {
             push: Some(PushTarget { platform: "ios".into(), token: "t1".into(), sandbox: true }),
             push_on: false,
             last_seen_at: None,
+            activity: vec![Activity { at: chrono::Utc::now(), what: "connected".into() }],
         }
     }
 

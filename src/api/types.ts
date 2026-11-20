@@ -382,7 +382,11 @@ export type RemoteStatus = {
   pushOn: boolean;             // phone notifications
   error: string | null;        // why the relay can't be reached; cleared once it can
   code: PairCode | null;       // the code showing while pairing
+  activity: RemoteActivity[];  // what the paired phone did lately, newest first
 };
+/** Something the paired phone did: `connected` when it started a session, else the change it made, by its remote
+ *  command (`answer_card`, `reply_to_run`, …, and `push_register` for a new push token). */
+export type RemoteActivity = { at: string; what: string };
 /** A code for a phone to scan: the QR as a data URL, the link it holds, and when it stops working. */
 export type PairCode = { qr: string; link: string; expiresAt: string };
 

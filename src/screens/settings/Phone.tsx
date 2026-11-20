@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { RemoteStatus } from "../../api/types";
 import { useQuery } from "../../lib/hooks";
-import { relTime } from "../../lib/format";
+import { relTime, whenInline } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Switch } from "../../components/ui";
 import { Row, States, Swap, sentence, type Saves } from "./rows";
@@ -10,6 +10,21 @@ import { Group } from "./frame";
 
 const PHONE = "Your phone";
 const PUSH = "Notifications on your phone";
+
+/** What the phone did, in words, by what the status calls it. */
+const DID: Record<string, string> = {
+  connected: "Connected",
+  answer_card: "Answered a card",
+  reply_to_run: "Replied",
+  approve_blocked: "Allowed a blocked tool",
+  approve_tidy: "Approved a tidy",
+  approve_proposal: "Approved a hire",
+  decline_proposal: "Declined a hire",
+  set_archived: "Marked a conversation done",
+  unarchive_runs: "Brought a conversation back",
+  retry_run: "Retried a failed run",
+  push_register: "Changed where its notifications go",
+};
 
 /** How long a code still works, as "4:59". */
 function timeLeft(ms: number): string {
@@ -32,9 +47,9 @@ function linkWords(st: RemoteStatus): string {
 }
 
 /** The phone: Connect phone, then the code to scan for five minutes, then the paired phone with its notifications
- *  switch and Unpair. The code comes from the status, so it shows again when you come back while pairing. It is
- *  blurred until you click it: whoever scans it is paired, so it stays off a shared or recorded screen until you
- *  choose to show it. */
+ *  switch, what it did lately and Unpair. The code comes from the status, so it shows again when you come back while
+ *  pairing. It is blurred until you click it: whoever scans it is paired, so it stays off a shared or recorded
+ *  screen until you choose to show it. */
 export function PhoneGroup({ saves }: { saves: Saves }) {
   const status = useQuery(() => call("remote_status"), [], ["remote:updated"]);
   const [now, setNow] = useState(() => Date.now());
@@ -139,6 +154,17 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
         <Row title={PUSH} desc="Your phone gets the notifications this computer shows. Their titles pass through the relay to reach it.">
           <Switch checked={st.pushOn} onChange={(v) => void setPush(v)} label="Notifications on your phone" />
         </Row>
+      ) : null}
+      {st && paired && !shown && st.activity.length ? (
+        <Row
+          title="Phone activity"
+          desc={
+            <>
+              What this phone did lately. Unpair it if any of this was not you.
+              {st.activity.map((a, i) => <span key={i} className="set-note">{DID[a.what] ?? a.what}, {whenInline(a.at)}</span>)}
+            </>
+          }
+        />
       ) : null}
     </Group>
   );

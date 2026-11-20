@@ -150,6 +150,11 @@ impl Ops {
         self.saved.iter().find(|(o, _, _)| o == op).map(|(_, _, a)| a.clone())
     }
 
+    /// Whether `op` has a saved answer at `now`, so a request carrying it is a resend.
+    pub fn has(&self, op: &str, now: Instant) -> bool {
+        self.saved.iter().any(|(o, at, _)| o == op && now.duration_since(*at) < OPS_FOR)
+    }
+
     /// Keeps `answer` to `op` from `now`.
     fn put(&mut self, op: &str, now: Instant, answer: Answer) {
         if self.saved.len() == OPS_KEPT {

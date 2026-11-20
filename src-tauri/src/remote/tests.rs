@@ -251,6 +251,61 @@ async fn a_phone_pairs_reads_acts_hears_changes_and_is_unpaired() {
     assert!(!f.dir.join(store::FILE).exists());
 }
 
+/// What the phone did, newest first, as Settings shows it.
+fn activity(remote: &Remote) -> Vec<String> {
+    remote.status().activity.into_iter().map(|a| a.what).collect()
+}
+
+#[tokio::test]
+async fn what_the_phone_does_shows_in_settings_once_per_change() {
+    let f = Fixture::new("remote-activity").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let mut phone = paired_phone(&remote, &relay).await;
+    assert_eq!(activity(&remote), ["connected"]);
+
+    let op = "0b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b";
+    let archive = json!({ "runId": f.done, "archived": true });
+    assert_eq!(phone.call("set_archived", archive.clone(), Some(op)).await["ok"], true);
+    assert_eq!(phone.call("set_archived", archive, Some(op)).await["ok"], true);
+    assert_eq!(activity(&remote), ["set_archived", "connected"], "a resent write is one change");
+
+    assert_eq!(phone.call("inbox", json!({}), None).await["ok"], true);
+    assert_eq!(phone.call("retry_run", json!({ "runId": "nope" }), Some("1b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b")).await["ok"], false);
+    assert_eq!(activity(&remote), ["set_archived", "connected"], "reads and writes that failed changed nothing");
+
+    let back = json!({ "runId": f.done, "archived": false });
+    assert_eq!(phone.call("set_archived", back, Some("2b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b")).await["ok"], true);
+    assert_eq!(activity(&remote), ["unarchive_runs", "set_archived", "connected"]);
+    let saved: Vec<String> = store::load(&f.dir).unwrap().activity.into_iter().map(|a| a.what).collect();
+    assert_eq!(saved, ["connected", "set_archived", "unarchive_runs"], "kept across a restart, oldest first");
+
+    let token = json!({ "platform": "ios", "token": "t1", "sandbox": true });
+    assert_eq!(phone.call("push_register", token.clone(), None).await["ok"], true);
+    assert_eq!(phone.call("push_register", token, None).await["ok"], true);
+    assert_eq!(activity(&remote)[..2], ["push_register", "unarchive_runs"], "a new push token shows once");
+}
+
+#[tokio::test]
+async fn only_the_phones_latest_activity_is_kept() {
+    let f = Fixture::new("remote-activity-kept").await;
+    let remote = Remote::new(RELAY.into());
+    let rx = remote.0.rx.lock().unwrap().take().unwrap();
+    let mut actor = Actor::new(remote.0.clone(), f.office.clone(), rx);
+    actor.did("connected");
+    assert!(actor.status().activity.is_empty(), "nothing is kept without a paired phone");
+
+    actor.pairing = Some(pairing(RELAY));
+    actor.did("retry_run");
+    for _ in 0..ACTIVITY_KEPT {
+        actor.did("connected");
+    }
+    let kept = actor.status().activity;
+    assert_eq!(kept.len(), ACTIVITY_KEPT);
+    assert!(kept.iter().all(|a| a.what == "connected"), "the oldest goes first");
+}
+
 #[tokio::test]
 async fn the_phone_can_unpair_and_a_cancelled_code_stops_pairing() {
     let f = Fixture::new("remote-unpair").await;
@@ -364,7 +419,7 @@ async fn a_computer_replaced_in_the_room_stays_out_and_says_so() {
 /// A pairing through `relay`, with a push token and pushes on.
 fn pairing(relay: &str) -> Pairing {
     let push = PushTarget { platform: "ios".into(), token: "t1".into(), sandbox: true };
-    Pairing { relay: relay.into(), room_id: wire::random_id(), key: wire::random_id(), device_name: "Test Phone".into(), paired_at: chrono::Utc::now(), push: Some(push), push_on: true, last_seen_at: None }
+    Pairing { relay: relay.into(), room_id: wire::random_id(), key: wire::random_id(), device_name: "Test Phone".into(), paired_at: chrono::Utc::now(), push: Some(push), push_on: true, last_seen_at: None, activity: vec![] }
 }
 
 #[tokio::test]
