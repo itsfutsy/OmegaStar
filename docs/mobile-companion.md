@@ -79,7 +79,8 @@ omegastar://pair?v=1&relay=relay.example.com&room=<pairRoom>&key=<pairKey>
 Steps:
 
 1. The user clicks **Connect phone** in Settings. The desktop creates `pairRoom` and `pairKey`, connects to the relay
-   in `pairRoom` as `laptop`, and shows the QR code with a 5-minute countdown.
+   in `pairRoom` as `laptop`, and shows the QR code with a 5-minute countdown. The code is blurred until the user
+   clicks it.
 2. The phone scans the code, connects to `pairRoom` as `phone`, and runs the normal handshake (section 7) using
    `pairKey`.
 3. The phone sends the request `pair` with `{ deviceName, platform }`, for example
@@ -95,6 +96,8 @@ Rules:
 - In the pairing room the only request allowed is `pair`, and only the first valid one is answered.
 - After 5 minutes, or on Cancel, the desktop leaves the pairing room and forgets `pairRoom` and `pairKey`. The 5
   minutes are wall-clock time, so a computer that slept through them refuses `pair` when it wakes.
+- Whoever scans the code first is paired, so it is a secret for its 5 minutes. Settings keeps it blurred, well past
+  what a scanner can read, until the user clicks it, so it is not caught on a shared or recorded screen before then.
 - A photo of the QR code is useless once pairing has finished or the 5 minutes are up, even to someone who recorded
   what crossed the relay: the answer that carries `roomId` and `key` is sealed with a session key the code alone does
   not give (section 7).
@@ -538,8 +541,8 @@ New Tauri commands, added to `Commands` in [`types.ts`](../src/api/types.ts):
 New event: `remote:updated`, carrying the status.
 
 A new **Phone** section in Settings, beside the existing ones in `src/screens/settings/`. It shows the state, the QR
-code while pairing, the paired phone's name, the push switch and **Unpair**. The browser preview in `src/preview/`
-needs the same commands with invented data.
+code while pairing (blurred until clicked), the paired phone's name, the push switch and **Unpair**. The browser
+preview in `src/preview/` needs the same commands with invented data.
 
 ## 13. What the phone app must do
 
@@ -566,7 +569,7 @@ hire proposal, settings.
 | Someone records the traffic and later gets `key` or a pairing code | Each session's keys also need a private key that lived only for that handshake |
 | The relay replays, reorders or alters frames | Fresh keys per session, counters, and authenticated encryption |
 | A stranger joins a room | They would need the 256-bit room id. Even with it they cannot read or write frames. The worst they can do is knock a client off, which reconnects. |
-| The QR code is photographed | It works once, for 5 minutes, and pairing replaces it with fresh secrets. The desktop shows which phone paired. |
+| The QR code is seen or photographed | Settings blurs it until clicked, so it is on screen only when the user chooses. It works once, for 5 minutes, and whoever scans it first is paired; the desktop shows which phone that was. After that it opens nothing. |
 | The phone is lost | Unpair on the desktop. The room and key are abandoned. |
 | The phone app is taken over | It can do what the API allows and nothing else: no file reads, no settings, no skills, no arbitrary commands. It can allow tools and approve hires, so an app lock is worth adding later. |
 | Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it |

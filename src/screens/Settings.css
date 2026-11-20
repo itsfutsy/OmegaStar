@@ -30,7 +30,12 @@
    both themes, as a code must be dark on light to scan. Its 29 modules draw at a whole 3px each, so they stay sharp,
    inside the four modules of white a code needs around it. */
 .set-support { margin-top: 20px; display: flex; align-items: center; gap: 20px; padding: var(--sp-4); border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-.set-qr { display: block; margin-top: var(--sp-3); width: 160px; height: 160px; border-radius: 8px; background: #fff; }
+/* The pairing code's tile. Until you click it the code is blurred well past reading (a module is under 3px), so a
+   shared or recorded screen does not give it away; the tile clips the blur to its own corners. */
+.set-qr { position: relative; display: block; margin-top: var(--sp-3); width: 160px; height: 160px; border-radius: 8px; background: #fff; overflow: hidden; }
+.set-qr img { display: block; width: 100%; height: 100%; }
+.set-qr-hidden img { filter: blur(10px); }
+.set-qr-show { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 5px 11px; border-radius: 999px; background: #fff; color: #17171a; font-size: 12.5px; font-weight: 600; white-space: nowrap; box-shadow: 0 1px 3px rgb(0 0 0 / 0.22); }
 .set-support-qr { flex: none; display: block; width: 111px; height: 111px; padding: 12px; border-radius: 8px; background: #fff; }
 .set-support-text { margin-top: var(--sp-1); max-width: 52ch; font-size: var(--t-sm); line-height: 1.5; color: var(--muted); }
 .set-support-act { margin-top: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); }

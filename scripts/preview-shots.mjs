@@ -189,12 +189,18 @@ const SHOTS = [
     await p.getByRole("button", { name: "Set up", exact: true }).click();
     await p.getByLabel("CLI proxy address").click();
   } }),
-  // The phone: not paired, its code showing after Connect phone, and paired.
+  // The phone: not paired, its code blurred after Connect phone, the code once you click it, and paired.
   S("settings", "settings-phone", "full", "#/settings", { act: phoneSection }),
   S("settings", "settings-phone-pairing", "full", "#/settings", { act: async (p) => {
     await phoneSection(p);
     await p.getByRole("button", { name: "Connect phone" }).click();
     await p.locator(".set-qr").waitFor();
+    await phoneSection(p);
+  } }),
+  S("settings", "settings-phone-code-shown", "full", "#/settings", { act: async (p) => {
+    await phoneSection(p);
+    await p.getByRole("button", { name: "Connect phone" }).click();
+    await p.getByRole("button", { name: "Show the pairing code" }).click();
     await phoneSection(p);
   } }),
   S("settings", "settings-phone", "phone-paired", "#/settings", { act: phoneSection }),

@@ -32,11 +32,15 @@ function linkWords(st: RemoteStatus): string {
 }
 
 /** The phone: Connect phone, then the code to scan for five minutes, then the paired phone with its notifications
- *  switch and Unpair. The code comes from the status, so it shows again when you come back while pairing. */
+ *  switch and Unpair. The code comes from the status, so it shows again when you come back while pairing. It is
+ *  blurred until you click it: whoever scans it is paired, so it stays off a shared or recorded screen until you
+ *  choose to show it. */
 export function PhoneGroup({ saves }: { saves: Saves }) {
   const status = useQuery(() => call("remote_status"), [], ["remote:updated"]);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+  /** The link of the code you chose to show; a new code starts blurred again. */
+  const [revealed, setRevealed] = useState<string | null>(null);
   const st = status.data;
   const code = st?.code ?? null;
   const ticking = !!code;
@@ -100,7 +104,14 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
       <>
         Scan this with the OmegaStar app on your phone. It works for <span className="num">{timeLeft(left)}</span>.
         {st.error ? <span className="set-note set-err">{sentence(st.error)}</span> : null}
-        <img className="set-qr" src={shown.qr} width={160} height={160} alt="Pairing code for the OmegaStar app on your phone." />
+        {revealed === shown.link ? (
+          <span className="set-qr"><img src={shown.qr} width={160} height={160} alt="Pairing code for the OmegaStar app on your phone." /></span>
+        ) : (
+          <button type="button" className="set-qr set-qr-hidden" onClick={() => setRevealed(shown.link)} aria-label="Show the pairing code">
+            <img src={shown.qr} width={160} height={160} alt="" />
+            <span className="set-qr-show">Click to show</span>
+          </button>
+        )}
       </>
     );
     control = <button className="btn" onClick={() => void cancel()}>Cancel</button>;
