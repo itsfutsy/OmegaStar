@@ -549,7 +549,8 @@ impl Actor {
         };
         match bytes.first() {
             Some(&wire::HELLO) => {
-                let answer = wire::answer_hello(&bytes[1..], &target.key, &target.room, self.office.version(), &wire::random_bytes());
+                let answer =
+                    wire::answer_hello(&bytes[1..], &target.key, &target.room, self.office.version(), &wire::random_bytes(), wire::Exchange::generate());
                 match answer {
                     None => true,
                     Some(wire::Answer::Refuse { frame }) => {

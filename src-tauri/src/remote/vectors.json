@@ -1,29 +1,32 @@
 {
   "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
   "roomId": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
-  "phoneHello": "{\"v\":1,\"nonce\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"api\":{\"min\":1,\"max\":1},\"app\":{\"platform\":\"ios\",\"version\":\"1.0.0\"}}",
-  "laptopHello": "{\"v\":1,\"nonce\":\"YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8\",\"api\":1,\"desktop\":{\"version\":\"0.7.0\"}}",
-  "salt": "e5bbd51b38d732adf1ae190bcd48fd9938e39356f2b084aedc2567f6cb830032",
-  "kPhone": "d542531773c87b4ba1c8c4b6b58f01ea2e2d052ac7d05bbc3bc3d48af65a7581",
-  "kLaptop": "bb9f89a5cfa9a0eb8feacfc69e23cc31e6c277ea7baf366c6a2c427b238bc717",
+  "phonePrivate": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+  "laptopPrivate": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+  "phoneHello": "{\"v\":1,\"nonce\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8\",\"pub\":\"ST6C_HRGSlkmiBdiPSBTxeuOLMSpiLT-4XnsawENUx0\",\"api\":{\"min\":1,\"max\":1},\"app\":{\"platform\":\"ios\",\"version\":\"1.0.0\"}}",
+  "laptopHello": "{\"v\":1,\"nonce\":\"YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8\",\"pub\":\"YFpyXSpK3-6xop4X7dYhwbdZPujNvESsbEq24vgF0jw\",\"api\":1,\"desktop\":{\"version\":\"0.7.0\"}}",
+  "shared": "c6dea8dd115ef27b7e0953539b2b19e59b7abf3ffd57985ec76de86ec31d1b42",
+  "salt": "ebff3030e632c58e756042e5b957418e7afd11b1aff6a8a4dc7bd1445613e7d7",
+  "kPhone": "d8adaf71c9bc3c9c8f14c9478baebfba6577f169a70ece04a6d8fe670e946957",
+  "kLaptop": "897db6a3e593478cf896a64d6be4f6b2fcaa36d38b6bedfec865b0534a44a2d4",
   "frames": [
     {
       "from": "phone",
       "counter": 0,
       "plaintext": "{\"t\":\"req\",\"id\":1,\"cmd\":\"inbox\",\"args\":{}}",
-      "frame": "028d3b5eb91fa801fb54d4ca8112756f895e77557a92e38e23122b9a9e57b2b089534116f7526e7b73f59e99cee70f2280cca7dc08f3968f1b0882"
+      "frame": "0297910c1e43481b95a865648cea5481140f0257139951693ed41ca7c953737f7738eefa37513c24f9b2c66af2f3cf3f5f0f199bf28220c0b93253"
     },
     {
       "from": "phone",
       "counter": 1,
       "plaintext": "{\"t\":\"req\",\"id\":2,\"cmd\":\"set_archived\",\"args\":{\"runId\":\"run-1\",\"archived\":true},\"op\":\"00000000-0000-4000-8000-000000000001\"}",
-      "frame": "020c65411d7cb0dd7b2adf58d15c6859e20d752abd78e83451f5a9105035ee55c12dd8e7621b382615b269897426872b627369110a1866c408fb0942503b94e0448fd148199669a0d6083e94b144cdae3a430f70b2a3b807ac3be328f218ef18c2f82c2fdc2fbb9640c09ce5cbee2cbd8263e9022b759ef571f7b89995610091ed746672db55db5a53023f555c"
+      "frame": "020adb80c9d114634f89e560d75e90899bc28e4593fa69bc1b8cbaaace3346c137e73f6b15951beeb4d109e5618a8ad919e6cca7fb9970b1a2fdfae633f157932ccf96b26a2fcc06434a34039e71e07826ce100c8e37b2816adbfa3427cf130d737990d2604207146c6f696cefc0cff74642e321cbbd533b10f9264d258ae1c95b91910f75b90d773e9b5abd81"
     },
     {
       "from": "laptop",
       "counter": 0,
       "plaintext": "{\"t\":\"res\",\"id\":1,\"ok\":true,\"ret\":{\"threads\":[]}}",
-      "frame": "02b025acdf233048a5ebecbf6c294ab1e1003c52fc430c64fbe53ff6937cbcacce643c4261ea8ee7cf4349c037104f8e5f7f497ecde951ed8e3a0f717d9f9846641f"
+      "frame": "02e08c6966f36d00bdcb234484ad851d8bcce4a567fbbc57cc89af5a3060d4bfa897d717eb45b371a5a19617e93b822781090bb52eca22f70ecf82347b79464eabc6"
     }
   ]
 }

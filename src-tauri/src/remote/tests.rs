@@ -126,13 +126,16 @@ impl Phone {
     async fn join(relay: &str, room: &str, key: &[u8; 32]) -> Phone {
         let (mut tx, mut rx) = socket(relay, room, "phone").await.split();
         while next(&mut rx).await != peer("joined") {}
-        let hello = json!({ "v": 1, "nonce": wire::encode(&wire::random_bytes()), "api": { "min": 1, "max": 1 }, "app": { "platform": "ios", "version": "1.0.0" } }).to_string();
+        let exchange = wire::Exchange::generate();
+        let hello = json!({ "v": 1, "nonce": wire::encode(&wire::random_bytes()), "pub": wire::encode(exchange.public()), "api": { "min": 1, "max": 1 }, "app": { "platform": "ios", "version": "1.0.0" } }).to_string();
         let mut frame = vec![wire::HELLO];
         frame.extend_from_slice(hello.as_bytes());
         tx.send(Message::Binary(frame.into())).await.unwrap();
         let Message::Binary(reply) = next(&mut rx).await else { panic!("the computer's hello is binary") };
         assert_eq!(reply[0], wire::HELLO);
-        let (k_phone, k_laptop) = wire::derive(key, hello.as_bytes(), &reply[1..]);
+        let theirs: Value = serde_json::from_slice(&reply[1..]).unwrap();
+        let shared = exchange.shared(&wire::decode32(theirs["pub"].as_str().unwrap()).unwrap()).unwrap();
+        let (k_phone, k_laptop) = wire::derive(key, &shared, hello.as_bytes(), &reply[1..]);
         Phone { tx, rx, keys: wire::Keys::new(&k_phone, &k_laptop, room), next_id: 0 }
     }
 

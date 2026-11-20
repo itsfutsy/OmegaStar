@@ -95,7 +95,9 @@ Rules:
 - In the pairing room the only request allowed is `pair`, and only the first valid one is answered.
 - After 5 minutes, or on Cancel, the desktop leaves the pairing room and forgets `pairRoom` and `pairKey`. The 5
   minutes are wall-clock time, so a computer that slept through them refuses `pair` when it wakes.
-- A photo of the QR code is useless once pairing has finished or the 5 minutes are up.
+- A photo of the QR code is useless once pairing has finished or the 5 minutes are up, even to someone who recorded
+  what crossed the relay: the answer that carries `roomId` and `key` is sealed with a session key the code alone does
+  not give (section 7).
 - Pairing again replaces the previous phone.
 
 **Unpair.** From the desktop: delete the saved pairing, then, if a phone session is live, send the event `unpaired`
@@ -151,9 +153,9 @@ the app comes to the foreground and disconnects when it leaves.
 
 ## 7. Encryption
 
-Algorithms: AES-256-GCM, HKDF-SHA256 and SHA-256. All three are built into `ring` (already in OmegaStar's
+Algorithms: AES-256-GCM, HKDF-SHA256, SHA-256 and X25519. All four are built into `ring` (already in OmegaStar's
 dependencies) and Apple CryptoKit. Android's `javax.crypto` has AES-GCM, SHA-256 and HMAC-SHA256 built in, and HKDF
-is a few lines on top of that HMAC.
+is a few lines on top of that HMAC. X25519 on Android is in section 19.
 
 Every binary frame starts with one type byte.
 
@@ -165,8 +167,12 @@ the phone as connected again only once the new socket's first sealed frame opens
 
 | Step | Sender | Frame |
 |---|---|---|
-| 1 | Phone | `0x01` then JSON: `{ "v": 1, "nonce": "<32 random bytes>", "api": { "min": 1, "max": 1 }, "app": { "platform": "ios", "version": "1.0.0" } }` |
-| 2 | Computer | `0x01` then JSON: `{ "v": 1, "nonce": "<32 random bytes>", "api": 1, "desktop": { "version": "0.7.0" } }` |
+| 1 | Phone | `0x01` then JSON: `{ "v": 1, "nonce": "<32 random bytes>", "pub": "<X25519 public key>", "api": { "min": 1, "max": 1 }, "app": { "platform": "ios", "version": "1.0.0" } }` |
+| 2 | Computer | `0x01` then JSON: `{ "v": 1, "nonce": "<32 random bytes>", "pub": "<X25519 public key>", "api": 1, "desktop": { "version": "0.7.0" } }` |
+
+`pub` is the public half of an X25519 key pair, 32 bytes as base64url. Each side makes a new pair for every hello it
+sends, keeps the private half in memory for that handshake only, and never saves it. The computer ignores a hello
+whose `pub` is missing or gives no shared secret.
 
 If the versions cannot work together, the computer answers `{ "v": 1, "error": "update_phone" }` or
 `{ "v": 1, "error": "update_desktop" }` and no session starts.
@@ -174,8 +180,9 @@ If the versions cannot work together, the computer answers `{ "v": 1, "error": "
 Both sides then derive two keys:
 
 ```
+shared   = X25519( own private key, the other side's pub )
 salt     = SHA-256( phone hello JSON bytes || computer hello JSON bytes )
-prk      = HKDF-Extract( salt, key )
+prk      = HKDF-Extract( salt, key || shared )
 kPhone   = HKDF-Expand( prk, "omegastar-remote v1 phone",  32 )    seals phone -> computer
 kLaptop  = HKDF-Expand( prk, "omegastar-remote v1 laptop", 32 )    seals computer -> phone
 ```
@@ -205,9 +212,14 @@ row the phone shows **Pair again**.
 - Each session mixes in fresh randomness from both sides, so frames recorded from an old session cannot be replayed.
 - Counters stop frames being replayed or reordered within a session.
 - The hello frames are not sealed, but they feed the key derivation, so changing them only makes the session fail.
+  That covers `pub` too: a relay that swaps in its own public key gets a session neither side can use, since it
+  lacks `key`.
+- A session's keys need `shared`, and so one of the two private halves, which are gone once the handshake is done.
+  Someone who records the traffic and later gets `key`, or the code of a pairing, still cannot open what they
+  recorded. That holds for the pairing room as well, where the answer to `pair` carries the long-term `key`.
 
-Known limit: there is no forward secrecy. Someone who records the traffic *and* later steals `key` could read old
-sessions. Only the relay sees the traffic, and it stores nothing, so this is accepted for version 1.
+Known limit: `key` itself does not change. Someone who holds it can join the room as the phone for as long as the
+pairing lasts. Section 14 covers a stolen key.
 
 ## 8. Messages inside sealed frames
 
@@ -534,6 +546,7 @@ needs the same commands with invented data.
 - **Store** `relay`, `roomId` and `key` in the Keychain on iOS and Keystore-backed storage on Android, readable only
   on that device.
 - **Connect** when the app comes to the foreground, and disconnect when it leaves.
+- **Make a new X25519 key pair for every hello**, and never store its private half.
 - **Raise the incoming message limit** of its WebSocket client to at least 4 MiB.
 - **Show one of these states** at all times: not paired, connecting, computer offline, connected, update needed,
   pair again.
@@ -550,6 +563,7 @@ hire proposal, settings.
 | Threat | What stops it |
 |---|---|
 | The relay, or Cloudflare, reads content | Everything is sealed with a key the relay never has |
+| Someone records the traffic and later gets `key` or a pairing code | Each session's keys also need a private key that lived only for that handshake |
 | The relay replays, reorders or alters frames | Fresh keys per session, counters, and authenticated encryption |
 | A stranger joins a room | They would need the 256-bit room id. Even with it they cannot read or write frames. The worst they can do is knock a client off, which reconnects. |
 | The QR code is photographed | It works once, for 5 minutes, and pairing replaces it with fresh secrets. The desktop shows which phone paired. |
@@ -592,8 +606,8 @@ Expected bill: about $5 a month until several thousand customers, on the earlier
 
 ## 17. Testing
 
-- **Shared test vectors.** One JSON file with a fixed key, both hello frames, the two derived keys and a few sealed
-  frames. The Rust, iOS and Android code must all reproduce it.
+- **Shared test vectors.** One JSON file with a fixed key, both sides' private keys, both hello frames, the shared
+  secret, the two derived keys and a few sealed frames. The Rust, iOS and Android code must all reproduce it.
 - **Relay.** Vitest in the Workers pool: two clients in a room, binary frames forwarded, text ignored, `joined` and
   `left`, replacement, the size and rate caps, and the push route against mocked Apple and Google.
 - **Desktop.** Unit tests for `wire.rs`. A fake relay in the test process to drive pairing, handshake, a request and
@@ -622,6 +636,7 @@ These are assumptions in this design that were not confirmed against documentati
 - That several Worker instances each signing their own APNs token does not trigger Apple's limit on token refreshes.
   If it does, share the token through a cache.
 - The default incoming message limit of each phone WebSocket client.
+- Which Android versions have X25519 built in, and which library to use on the ones that do not.
 
 ## 20. Decisions still open
 
