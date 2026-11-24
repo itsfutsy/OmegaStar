@@ -310,6 +310,9 @@ export type TeamStats = {
   asks: { at: string; answeredAt: string | null; open: boolean }[];
   /** Each employee's latest weekly number, from their newest weekly review that reported one. */
   numbers: { employeeId: string; metric: string; value: string; change: string }[];
+  /** Tokens finished runs used, per local day, employee (who did the work), model id and the colleague who handed the
+   *  work over (null for their own). Re-reads of the prompt cache are left out. Runs from before tokens were kept add none. */
+  tokens: { day: string; employeeId: string; handedOverBy: string | null; model: string; tokens: number }[];
 };
 
 /** What runs did and used since a time. Usage (costUsd) is what runs cost at API list price, as Claude Code reckons it. */

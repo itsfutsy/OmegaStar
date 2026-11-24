@@ -36,6 +36,9 @@ function shareWords(f: number): string {
   if (word === "most") return "Most";
   return `${Math.abs(f - near) < 0.015 ? "About" : f < near ? "Nearly" : "Just over"} ${word}`;
 }
+/** A token count, short: "840", "12k", "3.4M". The exact number is in its tooltip. */
+const tokenWords = (n: number) =>
+  !n ? "–" : n >= 1e6 ? `${(n / 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 })}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 /** Midday on a `YYYY-MM-DD` day, so no time zone shift lands it on the day before. */
 const dayDate = (day: string) => new Date(`${day}T12:00:00`);
 
@@ -94,9 +97,49 @@ export function AnalyticsScreen() {
               })}
             </div>
           </Section>
+          <Tokens s={s} />
         </>
       ) : null}
     </PageColumn>
+  );
+}
+
+/**
+ * Tokens each person used in the range, one column per model, and the tokens used by work they handed to a colleague.
+ * A handed-over run counts to whoever did it, so nothing is counted twice across the Used columns.
+ */
+function Tokens({ s }: { s: TeamSummary }) {
+  const { snap } = useOrg();
+  const since = s.tokensSince ? dayDate(s.tokensSince).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
+  const cols = { gridTemplateColumns: `20px 120px repeat(${s.models.length}, minmax(56px, 1fr)) 64px 96px` };
+  return (
+    <Section title="Tokens each person used, by model">
+      {s.tokens.length ? (
+        <div className="an-rows">
+          <div className="an-row an-trow an-head" style={cols} aria-hidden="true">
+            <span /><span />{s.models.map((m) => <span key={m} className="an-r">{m}</span>)}<span className="an-r">Total</span><span className="an-r">Handed over</span>
+          </div>
+          {s.tokens.map((p) => {
+            const e = snap?.employees.find((x) => x.id === p.employeeId);
+            return (
+              <div className="an-row an-trow" style={cols} key={p.employeeId}>
+                {e ? <Avatar name={e.name} hue={e.hue} image={e.image} size={20} /> : <span />}
+                <span className="an-name" title={p.name}>{p.name}</span>
+                {s.models.map((m) => <span key={m} className="an-tok num" title={`${(p.used[m] ?? 0).toLocaleString()} ${m} tokens`}>{tokenWords(p.used[m] ?? 0)}</span>)}
+                <span className="an-tok an-tok-total num" title={`${p.total.toLocaleString()} tokens`}>{tokenWords(p.total)}</span>
+                <span className="an-tok num" title={`${p.handedOver.toLocaleString()} tokens used by work ${p.name} asked a colleague for`}>{tokenWords(p.handedOver)}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      <p className="an-foot">
+        {s.tokens.length
+          ? "Work counts to whoever did it. Handed over is what the work they asked colleagues for used. "
+          : "No tokens counted in this range. "}
+        {since ? `Counted since ${since}; earlier runs kept no token counts.` : "Runs keep token counts from this version on."}
+      </p>
+    </Section>
   );
 }
 
