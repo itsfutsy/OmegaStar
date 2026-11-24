@@ -52,13 +52,13 @@ function firstSentence(text: string): string {
   return capitalize(out);
 }
 
-/** What a piece of work is called where a person's state is shown: the conversation's name without "Re:", the task a
- *  manager handed over without "Delegated by", in its own first sentence. */
+/** What a piece of work is called where a person's state is shown: the conversation's name without "Re:", the task or
+ *  question handed over without "Delegated by" or "Task from", in its own first sentence. */
 export function workTitle(run: Run, employees: EmployeeView[], people: PersonView[]): string {
   if (run.title) return run.title;
   switch (run.kind.type) {
     case "reply": case "task": return run.kind.label;
-    case "delegated": return firstSentence(run.prompt) || workLabel(run, employees, people);
+    case "delegated": case "asked": return firstSentence(run.prompt) || workLabel(run, employees, people);
     case "manual": {
       const w = workLabel(run, employees, people);
       return w === "Manual run" ? w : firstSentence(run.prompt) || w;

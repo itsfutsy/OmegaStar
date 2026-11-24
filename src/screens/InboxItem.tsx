@@ -52,8 +52,8 @@ export type ItemActions = {
 
 const handOff = (r: Run): boolean => r.kind.type === "asked" || r.kind.type === "delegated" || r.kind.type === "answered";
 
-/** A thread's own name: its title, a routine's label or a conversation's name. Null for a hand-off with no title of
- *  its own, which `threadTitle` names by how it came, as "Task from Bo". */
+/** A thread's own name: its title, a routine's label, a conversation's name or a hand-off's task. Null for an answer
+ *  that came back with no title of its own, which `threadTitle` names by how it came, as "Answer from Bo". */
 function ownName(r: Run, employees: EmployeeView[], people: PersonView[]): string | null {
   // A run you started by hand is named by what you asked, not "Manual run".
   if (r.kind.type === "manual" && !r.title) return taskLabel(r.prompt, r.attachments);

@@ -160,11 +160,13 @@ export function runKindLabel(kind: RunKind, names: { manager?: string; person?: 
 }
 
 /** What a thread is called: the name the employee gave it (`name_thread`), else as `runKindLabel` names its first run,
- *  but an older build's chat message an answer came back into is a conversation you started, so it is named from what
- *  you wrote, as Rust names it in a reply. */
+ *  but an older build's chat message an answer came back into is a conversation you started, and work a colleague
+ *  handed over is about its task, not who sent it, so both are named from what was asked. Rust `threads::reply_label`
+ *  names a reply's thread the same way, except that a conversation you started keeps what you wrote over its name. */
 export function threadTitle(root: Run, names: { manager?: string; person?: string; asker?: string } = {}): string {
   if (root.title) return root.title;
-  return root.kind.type === "chat" ? taskLabel(root.prompt, root.attachments) : runKindLabel(root.kind, names);
+  const asked = root.kind.type === "chat" || root.kind.type === "asked" || root.kind.type === "delegated";
+  return asked ? taskLabel(root.prompt, root.attachments) : runKindLabel(root.kind, names);
 }
 
 // Long enough for a whole sentence: the screens cut a name to fit, with the rest in a tooltip.
