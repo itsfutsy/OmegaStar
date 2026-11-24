@@ -1,0 +1,50 @@
+name: Intel Mac proof (throwaway, never merge)
+
+# Builds both Mac apps the way release.yml does, unsigned and with no release, and starts each one.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/intel-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: macos-26-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - run: npm ci
+
+      - run: uname -m && sw_vers
+
+      - run: npx tauri build --target ${{ matrix.target }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        env:
+          OMEGA_CHANNEL: release
+
+      - run: |
+          for app in src-tauri/target/*/release/bundle/macos/*.app; do
+            lipo -archs "$app/Contents/MacOS/omega-star"
+            scripts/check-app-starts.sh "$app"
+          done
+          ls -l src-tauri/target/*/release/bundle/dmg/
