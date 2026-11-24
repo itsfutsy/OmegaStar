@@ -23,7 +23,7 @@ import { imageUrl, installTauriShim } from "./pages";
 /** What `?preview=` can be. */
 const STATES = [
   "full", "empty", "first-run", "first-run-no-claude", "first-run-signed-out", "loading", "loading-boot", "error", "error-boot",
-  "update-failed", "usage-limit", "rate-limit", "api-key",
+  "update-failed", "usage-limit", "rate-limit", "api-key", "proxy-no-key",
   "first-run-recheck", "first-run-opening", "first-run-error", "slow-saves", "failed-saves", "quiet", "large-org", "inbox-more",
   "live-more", "thread-error", "notes-gone", "live-arrives", "live-ends", "star-ask",
 ] as const;
@@ -65,6 +65,10 @@ function worldFor(state: State): World {
       if (state === "rate-limit") w.usage = { ...w.usage, heldUntil: ahead(13), heldForRateLimit: true };
       if (state === "api-key") w.usage = { ...w.usage, fiveHour: null, sevenDay: null, subscription: false };
       if (state === "star-ask") w.update = null;
+      if (state === "proxy-no-key") {
+        w.settings.proxy = { url: "http://127.0.0.1:8317", apiKey: "preview-key", managementKey: "" };
+        w.usage = { ...w.usage, fiveHour: null, sevenDay: null, observedAt: null, accounts: [], proxyIssue: "Add the CLI proxy's management key in Settings to see its accounts' usage limits." };
+      }
       return w;
     }
   }

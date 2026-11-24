@@ -551,7 +551,8 @@ impl Office {
 /// account has ends a usage limit's hold. A window it does not report holds nothing back: a pool of Team seats has
 /// no 7-day limit. A rate limit is not in the windows, so room there never ends its hold.
 fn merge_usage(old: &UsageLimits, sample: claude::UsageSample, from_probe: bool, now: Ts) -> UsageLimits {
-    let subscription = sample.five_hour.is_some() || sample.seven_day.is_some();
+    // A CLI proxy's accounts have limits even when none reports a 5-hour or 7-day window.
+    let subscription = sample.five_hour.is_some() || sample.seven_day.is_some() || !sample.accounts.is_empty();
     let account_issue = old.account_issue.clone();
     let proxy_issue = old.proxy_issue.clone();
     if from_probe && !subscription {
@@ -632,6 +633,9 @@ mod tests {
         assert_eq!(no_week.held_until, None, "an account with no 7-day window is not held for one");
         let full_week = merge_usage(&old, claude::UsageSample { five_hour: None, seven_day: window(100.0), accounts: vec![] }, true, at);
         assert_eq!(full_week.held_until, old.held_until);
+        let account = AccountUsage { name: "a@example.com".into(), five_hour: None, seven_day: None, model_weeks: vec![] };
+        let pool = merge_usage(&old, claude::UsageSample { five_hour: None, seven_day: None, accounts: vec![account] }, true, at);
+        assert!(pool.subscription && pool.accounts.len() == 1, "a proxy's accounts are kept even when none reports a window");
         let rate = UsageLimits { held_for_rate_limit: true, ..old.clone() };
         let room = merge_usage(&rate, claude::UsageSample { five_hour: window(12.0), seven_day: window(40.0), accounts: vec![] }, true, at);
         assert_eq!((room.held_until, room.held_for_rate_limit), (old.held_until, true), "room in the windows never ends a rate limit's hold");
@@ -653,6 +657,11 @@ mod tests {
         };
 
         assert!(office.save_settings(with("api-key", "api-key")).is_err(), "an API key is not the management key");
+        office.save_settings(with("api-key", "")).unwrap();
+        office.refresh_usage().await;
+        let u = office.usage_limits();
+        assert!(u.subscription, "a pool with no management key is not taken for an API-key account with no limits");
+        assert!(u.proxy_issue.is_some_and(|i| i.contains("management key")), "it says how to show the limits");
         office.save_settings(with("api-key", "wrong-key")).unwrap();
         assert_eq!(office.usage_limits().held_until, None, "the signed-in account's hold means nothing for the pool");
         assert_eq!(office.db().held_until().unwrap(), None);
