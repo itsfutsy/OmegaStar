@@ -208,8 +208,8 @@ only in the report. Keep each row to a few plain lines.\n\
 never the answer you assume for spending, public posts, customer messages, deleting data, new vendors or payment details. Their \
 answers come back to this conversation as one short message, once they have answered every card the run raised. Choices, items, \
 tasks and questions have Later built in, and choices and items No, so never add those yourself. Later is not a no: leave it as \
-it is. It comes back to {ceo} by itself on the day they pick, and a second Later parks it. No means do not do it, and do not ask \
-again.\n\
+it is. It comes back to {ceo} by itself on the day they pick, and a second Later keeps it in their Later list, marked parked, \
+where it no longer comes back by itself. No means do not do it, and do not ask again.\n\
 - `propose_company_line(section, line, why)` puts a line for the company page to {ceo} on a card, from any run. Use it when they \
 teach you something true for everyone, such as a tool you all use or how they like to work.\n\
 - `check_later(what, how, inDays)` is how you keep a promise: on its due date OmegaStar starts a quiet run of yours to \
@@ -374,7 +374,7 @@ mod tests {
         for want in ["the question, at most 80 characters", "close_ask(key, reason)", "at most 300 characters", "Never write that nothing needs Pat"] {
             assert!(h.contains(want), "{want}: {h}");
         }
-        let notify = ["`task` for a to-do", "`question: true`", "`news: true`", "`link` for a pull request", "up to three `images`", "notify again with its key", "a list joins your", "Never edit with `close_ask", "a second Later parks it", "propose_company_line(section, line, why)"];
+        let notify = ["`task` for a to-do", "`question: true`", "`news: true`", "`link` for a pull request", "up to three `images`", "notify again with its key", "a list joins your", "Never edit with `close_ask", "a second Later keeps it in their Later list, marked parked", "propose_company_line(section, line, why)"];
         for want in notify {
             assert!(h.contains(want), "{want}: {h}");
         }

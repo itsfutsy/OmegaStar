@@ -72,7 +72,7 @@ The app's own hash routes (`src/lib/router.ts`), with these ids:
   old link, `#/run/<run>`, opens its conversation.
 - Activity: `#/activity` (runs), `#/activity/numbers`, `#/activity/skills`.
 - Analytics: `#/analytics`.
-- The Inbox: `#/inbox/<view>/<item>`, view `inbox`, `snoozed`, `parked` or `archive`, item the id the Inbox gives an
+- The Inbox: `#/inbox/<view>/<item>`, view `inbox`, `snoozed` or `archive`, item the id the Inbox gives an
   entry (`openInbox` in `src/lib/router.ts`). It opens that item once the Inbox reads the route.
 
 | Thread or run | What it is |

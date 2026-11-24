@@ -8,8 +8,8 @@ import { conversationOf, threadFocus } from "./threads";
 export type PanelTab = "work" | "skills" | "profile";
 export type ActivityView = "runs" | "numbers" | "skills";
 /** The Inbox's tabs. */
-export type InboxView = "inbox" | "snoozed" | "parked" | "archive";
-const INBOX_VIEWS: InboxView[] = ["inbox", "snoozed", "parked", "archive"];
+export type InboxView = "inbox" | "snoozed" | "archive";
+const INBOX_VIEWS: InboxView[] = ["inbox", "snoozed", "archive"];
 
 export type Route =
   /** The org chart, with a member's panel open. On the Skills tab, `focus` says which file or change is open. */

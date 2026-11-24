@@ -26,13 +26,11 @@ import "./Inbox.css";
 const VIEWS: { id: InboxView; label: string }[] = [
   { id: "inbox", label: "Inbox" },
   { id: "snoozed", label: "Later" },
-  { id: "parked", label: "Parked" },
   { id: "archive", label: "Archive" },
 ];
 /** One line under the head of each view but the Inbox, where its filters would be. */
 const NOTES: Record<Exclude<InboxView, "inbox">, string> = {
-  snoozed: "Each comes back at the time you picked.",
-  parked: "Parked cards wait here, without reminders.",
+  snoozed: "Each comes back at the time you picked, unless parked.",
   archive: "What needed nothing from you.",
 };
 
@@ -71,7 +69,7 @@ function said(card: Card | undefined, reply: CardReply, who: string): string {
     case "seen": return "Got it";
     case "dismiss": return "Not now";
     case "reject": return `No. ${who} drops it.`;
-    case "later": return card?.timesBack ? "Parked. It won't come back by itself." : `Later. Back ${whenInline(reply.until)}.`;
+    case "later": return card?.timesBack ? "Parked in Later. It won't come back by itself." : `Later. Back ${whenInline(reply.until)}.`;
     case "text": case "ask": return `To ${who}: your answer`;
   }
 }
@@ -95,8 +93,8 @@ function inPlace(before: string[], now: Row[], extra: Map<string, Row>): Row[] {
  * needs (hire proposals first, then decisions oldest waiting first, then replies newest first); the item you are on is
  * open on the right, its evidence above and its actions in a bar at the foot, the main one on Enter. Settling an item
  * takes it out of the list at once (an answer still inside its Undo window included, with Undo in a toast), and the
- * next rises into its place. Later, Parked and the Archive are views in the list's head. Keys act on the open item;
- * an entry that leaves while the pointer is over the list keeps its place, faded, so nothing moves under it.
+ * next rises into its place. Later (with the cards you parked) and the Archive are views in the list's head. Keys act on
+ * the open item; an entry that leaves while the pointer is over the list keeps its place, faded, so nothing moves under it.
  */
 export function InboxScreen() {
   const route = useRoute();
@@ -147,16 +145,24 @@ export function InboxScreen() {
       ...lists.replies.map((d): Row => ({ kind: "decision", id: d.id, d, group: null })),
     ];
   }, [inboxDecisions, allProposals, proposals, pending]);
+  // Later: what comes back at a time you picked, soonest first, then the cards you parked, newest first.
+  const laterRows = useMemo((): Row[] | null => {
+    if (!snoozedDecisions || !parked.data) return null;
+    return [
+      ...snoozedDecisions.filter((d) => !pending.has(d.id)).map((d): Row => ({ kind: "decision", id: d.id, d, group: null })),
+      ...parked.data.map((run): Row => ({ kind: "parked", id: run.id, run })),
+    ];
+  }, [snoozedDecisions, parked.data, pending]);
   const viewRows: Row[] | null =
     view === "inbox" ? inboxRows
-    : view === "snoozed" ? snoozedDecisions?.filter((d) => !pending.has(d.id)).map((d): Row => ({ kind: "decision", id: d.id, d, group: null })) ?? null
-    : view === "parked" ? parked.data?.map((run): Row => ({ kind: "parked", id: run.id, run })) ?? null
+    : view === "snoozed" ? laterRows
     : snap && archive.data ? archive.data.flatMap((t: Thread): Row[] => {
       const item = toItem(t, snap, false, ctx);
       return item ? [{ kind: "archived", id: t.root.id, item, day: dayHeading(archiveAt(item.thread)) }] : [];
     }) : null;
-  const loadError = view === "archive" ? archive.error : view === "parked" ? parked.error : error;
-  const reload = view === "archive" ? archive.reload : view === "parked" ? parked.reload : refreshConversations;
+  const laterError = view === "snoozed" ? parked.error : null;
+  const loadError = view === "archive" ? archive.error : laterError ?? error;
+  const reload = view === "archive" ? archive.reload : laterError ? parked.reload : refreshConversations;
 
   // Rows that left by themselves while the pointer was over the list keep their place; your own settles never wait.
   if (viewRows) {
@@ -487,8 +493,7 @@ export function InboxScreen() {
   // Each view with how many it holds; the Archive's once it has been read.
   const counts_: Record<InboxView, number | null> = {
     inbox: inboxRows ? inboxCount : null,
-    snoozed: snoozedDecisions?.length ?? null,
-    parked: parked.data?.length ?? null,
+    snoozed: laterRows?.length ?? null,
     archive: archive.data?.length ?? null,
   };
   const viewItems: ViewItem[] = VIEWS.map((v) => ({ label: v.label, count: counts_[v.id], current: v.id === view, onSelect: () => pickView(v.id) }));
@@ -499,7 +504,7 @@ export function InboxScreen() {
     let card: ReactNode;
     if (loadError) {
       card = (
-        <EmptyCard title={`Couldn't load ${view === "archive" ? "the Archive" : view === "parked" ? "Parked" : view === "snoozed" ? "Later" : "the Inbox"}`} alert>
+        <EmptyCard title={`Couldn't load ${view === "archive" ? "the Archive" : view === "snoozed" ? "Later" : "the Inbox"}`} alert>
           <p>{loadError}</p>
           <div className="ibx-empty-acts"><button type="button" className="btn btn-primary" onClick={reload}><Icon name="refresh" size={14} /> Try again</button></div>
         </EmptyCard>
@@ -938,8 +943,7 @@ function EmptyView({ view, hired, snoozedNext, laterCount, onView, onHire }: {
     );
   }
   const [title, text] =
-    view === "snoozed" ? ["Nothing for later", "Later puts an item away until a time you pick, and it comes back by itself."] as const
-    : view === "parked" ? ["Nothing parked", "A card put off twice waits here until you answer it."] as const
+    view === "snoozed" ? ["Nothing for later", "Later puts an item away until a time you pick, and it comes back by itself. A card put off twice stays here, parked, until you answer it."] as const
     : ["Nothing in the Archive", "What needs nothing from you lands here, with what you archive."] as const;
   return (
     <EmptyCard title={title}>

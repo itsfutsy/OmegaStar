@@ -46,7 +46,7 @@ pub struct Card {
     /// Times it came back after a Later.
     #[serde(default)]
     pub times_back: u32,
-    /// You said Later again once it came back: it waits in your Parked list, answerable, and never comes back by itself.
+    /// You said Later again once it came back: parked in your Later list, answerable, it never comes back by itself.
     #[serde(default)]
     pub parked: bool,
     /// What OmegaStar does when you go ahead: the card is its proposal, not an employee's ask.
@@ -110,7 +110,7 @@ impl Card {
         self.answer.is_none()
     }
 
-    /// You put it off with Later: it comes back by itself (`back_at`), or waits in your Parked list.
+    /// You put it off with Later: it comes back by itself (`back_at`), or waits in your Later list, parked.
     pub fn put_off(&self) -> bool {
         self.back_at.is_some() || self.parked
     }

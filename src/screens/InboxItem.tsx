@@ -170,8 +170,8 @@ function ageLong(iso: string | null): string {
 
 export type RowContext = { employees: EmployeeView[]; people: PersonView[] };
 
-/** What a row shows in the list: who, the title, the line under it, its word and its age. */
-export type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | null; side: string; sideTip: string; unread: boolean };
+/** What a row shows in the list: who, the title, the line under it, its word (or, in Later, the parked tag) and its age. */
+export type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | "Parked" | null; side: string; sideTip: string; unread: boolean };
 
 export function rowView(row: Row, { employees, people }: RowContext): RowView {
   if (row.kind === "hire") {
@@ -190,7 +190,7 @@ export function rowView(row: Row, { employees, people }: RowContext): RowView {
       title: cards.length === 1 ? cards[0].message : `${Count(cards.length)} parked questions`,
       meta: `${e ? firstName(e.name) : "Former employee"} · ${topic({ root: row.run, replies: [], related: [] }, employees, people)}`,
       avatar: e ? <Avatar name={e.name} hue={e.hue} image={e.image} size={28} /> : <span className="irow-noav" />,
-      word: null, side: shortAge(at), sideTip: dateLong(at), unread: false,
+      word: "Parked", side: shortAge(at), sideTip: dateLong(at), unread: false,
     };
   }
   if (row.kind === "archived") {
@@ -267,7 +267,7 @@ export type DetailContext = RowContext & {
   /** Settle entries `ids` while `go` runs; they come back if it resolves false. */
   settle: (ids: string[], go: () => Promise<boolean>) => void;
   /** Every other row from this employee, for a hire proposal's "Also waiting from". */
-  alsoFrom: (employeeId: string, except: string) => { id: string; title: string; word: Word | null; age: string }[];
+  alsoFrom: (employeeId: string, except: string) => { id: string; title: string; word: RowView["word"]; age: string }[];
   select: (id: string) => void;
   reviewProposal: (p: HireProposal, from: HTMLElement | null) => void;
   reopen: (id: string) => void;

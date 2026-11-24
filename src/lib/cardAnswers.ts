@@ -81,7 +81,7 @@ export async function answerCard(run: Run, index: number, reply: CardReply, name
     : reply.type === "done" ? (replies.length > 1 ? `Done. ${replies.length} runs carry on.` : `Done. ${name} carries on.`)
     : reply.type === "cant" ? `Sent to ${to}: you can't do it.`
     : reply.type === "reject" ? `No. ${name} drops it.`
-    : reply.type === "later" ? (card?.timesBack ? "Parked. It won't come back by itself." : `Later. It comes back ${whenInline(reply.until)}.`)
+    : reply.type === "later" ? (card?.timesBack ? "Parked in Later. It won't come back by itself." : `Later. It comes back ${whenInline(reply.until)}.`)
     : ask?.type === "chore" ? "Not now."
     : `Not now. ${name} brings it back tomorrow.`;
   toast(said, "ok");

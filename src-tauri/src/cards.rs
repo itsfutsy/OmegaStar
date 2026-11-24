@@ -380,7 +380,7 @@ pub fn later_text(ceo: &str, until: Ts) -> String {
 
 /// What Later tells the employee about a card that came back once already: it is parked.
 pub fn parked_text(ceo: &str) -> String {
-    format!("Later again: {ceo} parked it in their Parked list. It no longer comes back by itself.")
+    format!("Later again: {ceo} parked it. It stays in their Later list and no longer comes back by itself.")
 }
 
 /// 9 am on the day after `at`, on your local calendar: when Not now on a decision brings it back.
@@ -405,7 +405,7 @@ pub fn answer(card: &mut Card, reply: &CardReply, ceo: &str, at: Ts) -> Result<(
     let waits = matches!(card.ask, CardAsk::Choices { .. } | CardAsk::Items { .. } | CardAsk::Task { .. } | CardAsk::Question);
     let (text, back_at, parked) = match later {
         Some(_) if !waits => return Err(AppError::invalid("That answer does not fit this card.")),
-        Some(_) if card.parked => return Err(AppError::conflict("That card is parked already: answer it, or leave it in Parked.")),
+        Some(_) if card.parked => return Err(AppError::conflict("That card is parked already: answer it, or leave it in Later.")),
         Some(until) if until <= at => return Err(AppError::invalid("Pick a time after now.")),
         Some(_) if card.times_back > 0 => (parked_text(ceo), None, true),
         Some(until) => (later_text(ceo, until), Some(until), false),
@@ -769,8 +769,8 @@ mod tests {
         (c.answer, c.back_at, c.times_back) = (None, None, 1);
         answer(&mut c, &CardReply::Later { until }, "Pat", at).unwrap();
         assert_eq!((c.answer.as_ref().map(|a| a.text.clone()), c.back_at, c.parked), (Some(parked_text("Pat")), None, true));
-        assert_eq!(parked_text("Pat"), "Later again: Pat parked it in their Parked list. It no longer comes back by itself.");
-        assert_eq!(answer(&mut c, &CardReply::Later { until }, "Pat", at).unwrap_err().message, "That card is parked already: answer it, or leave it in Parked.");
+        assert_eq!(parked_text("Pat"), "Later again: Pat parked it. It stays in their Later list and no longer comes back by itself.");
+        assert_eq!(answer(&mut c, &CardReply::Later { until }, "Pat", at).unwrap_err().message, "That card is parked already: answer it, or leave it in Later.");
         answer(&mut c, &CardReply::Choice { index: 0 }, "Pat", at).unwrap();
         assert_eq!((c.answer.as_ref().map(|a| (a.how, a.text.clone())), c.parked), (Some((AnswerHow::Tapped, "Chose: Book it.".into())), false), "any answer takes its place");
 
