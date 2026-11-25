@@ -1,5 +1,6 @@
 //! The saved pairing, `remote.json` in the office folder. Owner-only where the system has file modes, left out of
-//! backups (`backup.rs`), and never in the keychain, which would ask again after every unsigned update.
+//! backups (`backup.rs`) and sandbox copies (`scripts/office-copy.sh`), and never in the keychain, which would ask
+//! again after every unsigned update.
 
 use crate::log::log;
 use crate::model::Ts;

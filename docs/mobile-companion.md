@@ -522,6 +522,8 @@ task, on a blocking thread, and are answered with an error after 10 seconds, so 
 - Left out of backups, with its temporary `remote.json.partial`, by adding it beside the database files that
   [`backup.rs`](../src-tauri/src/backup.rs) already skips at the top of the office folder. A restored backup must
   not bring a second computer into the same room.
+- Left out of sandbox copies too ([`office-copy.sh`](../scripts/office-copy.sh)). Whoever is given a copy must not
+  be able to act as the phone in the office it was copied from.
 - Not in the system keychain. Release builds are not signed with a stable identity, so the keychain would ask again
   after every update.
 
