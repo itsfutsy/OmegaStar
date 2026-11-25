@@ -79,8 +79,8 @@ omegastar://pair?v=1&relay=relay.example.com&room=<pairRoom>&key=<pairKey>
 Steps:
 
 1. The user clicks **Connect phone** in Settings. The desktop creates `pairRoom` and `pairKey`, connects to the relay
-   in `pairRoom` as `laptop`, and shows the QR code with a 5-minute countdown. The code is blurred until the user
-   clicks it.
+   in `pairRoom` as `laptop`, and shows the QR code, blurred until the user clicks it. The code goes away after 5
+   minutes, with no countdown.
 2. The phone scans the code, connects to `pairRoom` as `phone`, and runs the normal handshake (section 7) using
    `pairKey`.
 3. The phone sends the request `pair` with `{ deviceName, platform }`, for example

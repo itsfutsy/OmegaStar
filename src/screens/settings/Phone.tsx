@@ -26,12 +26,6 @@ const DID: Record<string, string> = {
   push_register: "Changed where its notifications go",
 };
 
-/** How long a code still works, as "4:59". */
-function timeLeft(ms: number): string {
-  const s = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
 /** Where a paired phone's link stands, in words. */
 function linkWords(st: RemoteStatus): string {
   switch (st.state) {
@@ -60,6 +54,7 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
   const code = st?.code ?? null;
   const ticking = !!code;
 
+  // The code goes away when its five minutes are up.
   useEffect(() => {
     if (!ticking) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -117,7 +112,7 @@ export function PhoneGroup({ saves }: { saves: Saves }) {
   } else if (shown) {
     desc = (
       <>
-        Scan this with the OmegaStar app on your phone. It works for <span className="num">{timeLeft(left)}</span>.
+        Scan this with the OmegaStar app on your phone.
         {st.error ? <span className="set-note set-err">{sentence(st.error)}</span> : null}
         {revealed === shown.link ? (
           <span className="set-qr"><img src={shown.qr} width={160} height={160} alt="Pairing code for the OmegaStar app on your phone." /></span>
