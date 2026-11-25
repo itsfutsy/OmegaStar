@@ -341,8 +341,9 @@ mod tests {
 
     #[test]
     fn the_shared_vectors_match_the_committed_file_and_each_frame_opens() {
-        let committed = include_str!("vectors.json");
-        assert_eq!(vectors(), committed);
+        // Git on Windows may check the file out with its own line endings.
+        let committed = &include_str!("vectors.json").replace("\r\n", "\n");
+        assert_eq!(&vectors(), committed);
 
         let v: Value = serde_json::from_str(committed).unwrap();
         let k_phone: [u8; 32] = unhex(v["kPhone"].as_str().unwrap()).try_into().unwrap();

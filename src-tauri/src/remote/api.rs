@@ -469,7 +469,8 @@ mod tests {
         }
         assert_eq!(
             text,
-            std::fs::read_to_string(&path).unwrap(),
+            // Git on Windows may check the file out with its own line endings.
+            std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n"),
             "a remote command's result changed shape: if the phone can live with it, rerun with UPDATE_SHAPES=1 and \
              raise `wire::API` when a field it reads was removed or changed"
         );
