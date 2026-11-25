@@ -86,6 +86,7 @@ impl Fixture {
         let mut card = Card::new("Order the spare parts?", Some("The pump is wearing out.".into()), None, CardAsk::Choices { choices: vec!["Not now".into(), "Order".into()], recommended: 1 });
         card.file = Some(dir.join("order.md").display().to_string());
         card.images = vec![dir.join("parts.png").display().to_string()];
+        card.brief = vec![BriefRow { label: "The part".into(), text: "A new seal kit.".into(), shows: Some(Shows::Images) }];
         carded.needs_you = vec!["Order the spare parts?".into()];
         carded.cards = vec![card];
 

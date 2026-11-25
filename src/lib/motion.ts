@@ -25,32 +25,44 @@ export function rollAnimations(out: HTMLElement, inn: HTMLElement, up: boolean, 
   ];
 }
 
+/** A list's children that carry a `data-key`, in order. */
+function keyed(host: HTMLElement): HTMLElement[] {
+  return [...host.children].filter((el): el is HTMLElement => el instanceof HTMLElement && !!el.dataset.key);
+}
+
+/** Where each keyed child is drawn right now, inside its list's scrolled content. */
+function places(host: HTMLElement): Map<string, { x: number; y: number }> {
+  const box = host.getBoundingClientRect();
+  return new Map(keyed(host).map((el) => {
+    const r = el.getBoundingClientRect();
+    return [el.dataset.key as string, { x: r.left - box.left + host.scrollLeft, y: r.top - box.top + host.scrollTop }];
+  }));
+}
+
 /**
  * Rows that move rather than swap. Put the returned ref on a list whose children carry a stable `data-key`, and pass
  * anything that changes when the list does (its keys joined, a version). Each child that changed place travels from
- * where it was over --d-arrive on --ease-move; a new child drops in from just above once its room is half open. A child
- * that leaves should close its own space first (`.collapse` with data-open="false"), then unmount. Under reduced motion
- * nothing travels and new rows fade in.
+ * where it was drawn just before the change over --d-arrive on --ease-move; a new child drops in from just above once
+ * its room is half open. A child that leaves should close its own space first (`.collapse` with data-open="false"),
+ * then unmount. Under reduced motion nothing travels and new rows fade in.
  */
 export function useFlip<T extends HTMLElement>(change: unknown) {
   const ref = useRef<T>(null);
-  const last = useRef(new Map<string, { x: number; y: number }>());
+  const last = useRef(change);
+  const drawnBeforeChange = useRef<Map<string, { x: number; y: number }> | null>(null);
+  if (!Object.is(last.current, change) && ref.current) drawnBeforeChange.current = places(ref.current);
   useLayoutEffect(() => {
+    if (Object.is(last.current, change)) return;
+    last.current = change;
+    const was = drawnBeforeChange.current;
+    drawnBeforeChange.current = null;
     const host = ref.current;
-    if (!host) return;
-    const box = host.getBoundingClientRect();
-    const kids = [...host.children].filter((el): el is HTMLElement => el instanceof HTMLElement && !!el.dataset.key);
-    const now = new Map(kids.map((el) => {
-      const r = el.getBoundingClientRect();
-      return [el.dataset.key as string, { x: r.left - box.left + host.scrollLeft, y: r.top - box.top + host.scrollTop }];
-    }));
-    const before = last.current;
-    last.current = now;
-    if (!before.size) return;
+    if (!host || !was?.size) return;
+    const now = places(host);
     const reduced = reducedMotion();
-    for (const el of kids) {
+    for (const el of keyed(host)) {
       const a = now.get(el.dataset.key as string)!;
-      const b = before.get(el.dataset.key as string);
+      const b = was.get(el.dataset.key as string);
       if (!b) {
         el.animate(
           reduced ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }],

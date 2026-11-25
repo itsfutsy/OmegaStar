@@ -20,7 +20,8 @@
 .mpage-short .mpage-acts { align-self: center; padding-top: 0; }
 
 /* The band: what they are doing now, full width, on one line. Nothing in it is ever cut: the task is its short name,
-   and the right side (a number, a short report) gives way first on a narrow page. */
+   and the right side (a number, a short report) gives way whenever it does not fit beside the work: it wraps onto a
+   second line that the band's fixed height hides. */
 .band {
   flex: none; display: flex; align-items: flex-start; gap: 16px; min-height: 40px; padding: 10px 24px; font-size: var(--t-base); line-height: 20px;
   background: var(--raised); color: var(--ink-2); box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
@@ -47,8 +48,7 @@
 .band-attn::before, .band-fail::before { background: var(--err); }
 .band-warn::before { background: var(--warn); }
 .band-plain::before { display: none; }
-/* No room for the number beside the work: the work keeps the band. */
-@container (max-width: 760px) { .band-employee .band-right { display: none; } }
+.band-employee { flex-wrap: wrap; height: 40px; overflow: hidden; }
 
 .mpage-tabs { flex: none; display: flex; align-items: flex-end; padding: 0 16px 0 24px; box-shadow: inset 0 -1px 0 var(--line); }
 .mpage-tabs .tabs { border-bottom: 0; flex: none; padding: 0; }

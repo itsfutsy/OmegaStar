@@ -152,9 +152,10 @@ function useLeaving<T>(items: T[], keyOf: (t: T) => string, ms: number): { item:
 }
 
 /**
- * Rows that move rather than jump when the set of rows changes: like `useFlip`, but it measures where each row was just
+ * Rows that move rather than jump when the set of rows changes: like `useFlip`, it measures where each row was just
  * before the change, so a row that closed its own space in between (and is gone now) never makes the others jump back.
- * A new row drops in from just above as its room opens. Under reduced motion nothing travels and new rows fade in.
+ * Unlike `useFlip`, a row also drops into a list that was empty. A new row drops in from just above as its room opens.
+ * Under reduced motion nothing travels and new rows fade in.
  */
 function useMoveRows<T extends HTMLElement>(keys: string) {
   const ref = useRef<T>(null);

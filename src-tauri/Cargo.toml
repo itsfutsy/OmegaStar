@@ -1,6 +1,6 @@
 [package]
 name = "omega-star"
-version = "0.6.5"
+version = "0.6.6"
 description = "OmegaStar: a company of Claude Code employees"
 authors = ["Abram Industries Pty Ltd"]
 license = "AGPL-3.0-only"

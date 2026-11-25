@@ -239,7 +239,7 @@ mod tests {
         assert_eq!((card.message.as_str(), card.key.as_deref(), card.proposal.clone()), ("Use Ada's update to what they own?", Some("owns:ada"), Some(Proposal::Owns)));
         assert_eq!(card.why.as_deref(), Some("Adds \"The signups and the churn.\", removes \"The signups.\""));
         let saved = card.file.clone().unwrap();
-        assert!(saved.ends_with("workspace/proposals/what-you-own.md") && fs::read_to_string(&saved).unwrap() == theirs, "{saved}");
+        assert!(Path::new(&saved).ends_with("workspace/proposals/what-you-own.md") && fs::read_to_string(&saved).unwrap() == theirs, "{saved}");
         assert!(office.run(&run.id).unwrap().flags().next().is_none(), "a card in place of the flag");
 
         let told = office.answer_card(&run.id, 0, CardReply::Choice { index: 0 }).unwrap();

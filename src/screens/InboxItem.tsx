@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { call, errorMessage } from "../api/client";
-import type { Card, CardReply, EmployeeView, HireProposal, NewAttachment, OrgSnapshot, PersonView, Run, SkillInfo, Thread } from "../api/types";
+import type { BriefRow, Card, CardReply, EmployeeView, HireProposal, NewAttachment, OrgSnapshot, PersonView, Run, SkillInfo, Thread } from "../api/types";
 import { askAboutCard, usePendingAnswers } from "../lib/cardAnswers";
 import type { CardDecision, Decision, Group } from "../lib/decisions";
 import { dateLong, firstName, listNames, plural, runKindLabel, shortAge, taskLabel, threadTitle, whenInline } from "../lib/format";
@@ -316,8 +316,38 @@ function From({ e, verb, about, at }: { e: { name: string; hue: number; image?: 
   );
 }
 
-/** The open item's title: Display, a step smaller when it is a long question in the employee's own words. */
-const Title = ({ text }: { text: string }) => <h2 className={`d-title ${text.length > 90 ? "d-title-sm" : ""}`}>{text}</h2>;
+/** The open item's title: Display, a step smaller when it is a long question in the employee's own words, or over a
+ *  card's brief. */
+const Title = ({ text, memo = false }: { text: string; memo?: boolean }) => <h2 className={`d-title ${text.length > 90 ? "d-title-sm" : memo ? "d-title-memo" : ""}`}>{text}</h2>;
+
+/** A card's brief: each fact once, in labelled rows, with the attachment a row shows under its text. */
+function Brief({ card, runId, index }: { card: Card; runId: string; index: number }) {
+  const link = webUrl(card.link);
+  const shown = (shows: BriefRow["shows"]): ReactNode => {
+    switch (shows) {
+      case "images": return card.images.length ? <div className="d-brief-pics"><CardImages paths={card.images.slice(0, 3)} /></div> : null;
+      case "file": return card.file ? <div className="cv-card d-brief-att"><CardFile runId={runId} index={index} path={card.file} /></div> : null;
+      case "link": return link ? <div className="cv-card d-brief-att"><div className="card-about"><CardLink url={link} /></div></div> : null;
+      default: return null;
+    }
+  };
+  return (
+    <dl className="d-brief">
+      {card.brief.map((r, i) => (
+        <Fragment key={i}>
+          <dt>{r.label}</dt>
+          <dd><Markdown text={r.text} breaks />{shown(r.shows)}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+/** A card as the card under its brief shows it: without the attachments its brief's rows show already. */
+function unshown(card: Card): Card {
+  const shows = new Set(card.brief.map((r) => r.shows));
+  return { ...card, images: shows.has("images") ? [] : card.images, file: shows.has("file") ? null : card.file, link: shows.has("link") ? null : card.link };
+}
 
 /** The report a decision came from, in full: the evidence for it. */
 function Report({ who, text }: { who: string; text: string | null }) {
@@ -397,7 +427,8 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
         const c = d.cards[0];
         body = (
           <>
-            <div className="d-card d-card-main"><CardView card={c.card} runId={c.run.id} index={c.index} e={e} working={isLive(c.run)} onAnswer={(reply) => act.answer(c.run, c.index, reply)} actionsSlot={slot} /></div>
+            {c.card.brief.length ? <Brief card={c.card} runId={c.run.id} index={c.index} /> : null}
+            <div className="d-card d-card-main"><CardView card={unshown(c.card)} runId={c.run.id} index={c.index} e={e} working={isLive(c.run)} onAnswer={(reply) => act.answer(c.run, c.index, reply)} actionsSlot={slot} /></div>
             {also ? <p className="d-note">{also} {d.also.length === 1 ? "asks" : "ask"} the same. Your answer goes to everyone asking.</p> : null}
             {d.differ.length ? <OtherChoices cards={d.differ} employees={employees} act={act} /> : null}
             {group ? <GroupMore d={d} group={group} who={who} act={act} actions={actions} /> : null}
@@ -431,14 +462,18 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
       foot = archive(true);
       break;
   }
-  const report = d.type === "answered" || d.type === "proposal" || failures ? null : d.run.summary;
+  // A card's brief holds what the report would say, so the report shows only beside cards without one.
+  const open = d.type === "card" ? d.cards.filter((c) => isOpen(c.card)) : [];
+  const briefed = open.length > 0 && open.every((c) => c.card.brief.length > 0);
+  const memo = d.type === "card" && d.cards.length === 1 && d.cards[0].card.brief.length > 0;
+  const report = d.type === "answered" || d.type === "proposal" || failures || briefed ? null : d.run.summary;
   return (
     <>
       {failures
         ? <From e={null} verb={<><b>{names(failures.map((f) => f.run.employeeId), employees)}</b> couldn't finish</>} about={null} at={since(d)} />
         : <From e={e} verb={verbOf(d)} about={d.type === "answered" ? null : topic(d.thread, employees, people)} at={since(d)} />}
-      <Title text={d.type === "answered" ? topic(d.thread, employees, people) : title} />
-      {why ? <p className="d-why">{why}</p> : null}
+      <Title text={d.type === "answered" ? topic(d.thread, employees, people) : title} memo={memo} />
+      {why && !memo ? <p className="d-why">{why}</p> : null}
       {body}
       <Report who={who} text={report} />
       {foot ? actions(foot) : null}
@@ -515,7 +550,7 @@ function CardSet({ d, e, act, actions }: { d: CardDecision<Item>; e: EmployeeVie
           return (
             <li key={c.index} className="d-q">
               <div className="d-q-t">{c.card.message}</div>
-              {c.card.why ? <div className="d-q-why">{c.card.why}</div> : null}
+              {c.card.brief.length ? <Brief card={c.card} runId={c.run.id} index={c.index} /> : c.card.why ? <div className="d-q-why">{c.card.why}</div> : null}
               {a.type === "choices" && isOpen(c.card) && !on(c) ? (<>
                 <CardProposal proposal={c.card.proposal} />
                 <div className="d-q-picks">
@@ -546,9 +581,9 @@ function CardSet({ d, e, act, actions }: { d: CardDecision<Item>; e: EmployeeVie
                     />
                   </div>
                 ) : null}
-                <CardContext card={c.card} runId={c.run.id} index={c.index} />
+                <CardContext card={unshown(c.card)} runId={c.run.id} index={c.index} />
               </>) : (
-                <div className="d-card"><CardView card={c.card} runId={c.run.id} index={c.index} e={e} working={isLive(c.run)} onAnswer={(reply) => act.answer(c.run, c.index, reply)} /></div>
+                <div className="d-card"><CardView card={unshown(c.card)} runId={c.run.id} index={c.index} e={e} working={isLive(c.run)} onAnswer={(reply) => act.answer(c.run, c.index, reply)} /></div>
               )}
             </li>
           );
@@ -669,17 +704,19 @@ function ParkedBody({ run, ctx, slot }: { run: Run; ctx: DetailContext; slot: HT
   const one = cards.length === 1 ? cards[0] : null;
   const working = isLive(run);
   const answer = (index: number, reply: CardReply) => ctx.answerParked(run, index, reply);
+  const memo = !!one?.card.brief.length;
   return (
     <>
       <From e={e} verb="asked, and you parked it" about={topic({ root: run, replies: [], related: [] }, ctx.employees, ctx.people)} at={run.endedAt ?? run.createdAt} />
-      <Title text={one ? one.card.message : `${Count(cards.length)} parked questions`} />
-      {one?.card.why ? <p className="d-why">{one.card.why}</p> : null}
+      <Title text={one ? one.card.message : `${Count(cards.length)} parked questions`} memo={memo} />
+      {one?.card.why && !memo ? <p className="d-why">{one.card.why}</p> : null}
+      {one && memo ? <Brief card={one.card} runId={run.id} index={one.index} /> : null}
       <div className="d-card d-card-main">
         {one
-          ? <CardView card={one.card} runId={run.id} index={one.index} e={e} working={working} onAnswer={(reply) => answer(one.index, reply)} actionsSlot={slot} />
+          ? <CardView card={unshown(one.card)} runId={run.id} index={one.index} e={e} working={working} onAnswer={(reply) => answer(one.index, reply)} actionsSlot={slot} />
           : <CardList runId={run.id} cards={cards} e={e} working={working} onAnswer={answer} />}
       </div>
-      <Report who={who} text={run.summary} />
+      <Report who={who} text={memo ? null : run.summary} />
     </>
   );
 }

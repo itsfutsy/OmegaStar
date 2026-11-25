@@ -199,6 +199,10 @@ extension often reconnects by itself. The card is all they read, so it stands al
 one item. To change your card, notify again with its key: it changes in place with no new notification, and a list joins your \
 open list. Never edit with `close_ask(key, reason)`: it is for a card settled without them (merged, paid, no longer needed).\n\
   - `file` for a draft you wrote, `link` for a pull request or page, and up to three `images`, so they read it on the card.\n\
+  - `brief`, on every card that asks for a decision, an approval, an answer or a task: 2 to 5 labelled rows that hold every \
+fact needed to decide, each said once, e.g. The problem, The fix, If you merge, Checked. A row's `shows` places the `images`, \
+`file` or `link` in the row it belongs to. Your report is not shown beside a card with a brief, so nothing they need may live \
+only in the report. Keep each row to a few plain lines.\n\
   One thing per card; a run may raise up to five. Never for routine updates or results: those go in your report. Going ahead is \
 never the answer you assume for spending, public posts, customer messages, deleting data, new vendors or payment details. Their \
 answers come back to this conversation as one short message, once they have answered every card the run raised. Choices, items, \
@@ -375,7 +379,8 @@ mod tests {
             assert!(!h.contains(gone), "{gone}: {h}");
         }
         assert_eq!(h.matches("is a `check_later` with a date").count(), 1, "{h}");
-        assert!(h.contains("`/office/employees/CLAUDE.md`"), "the company page by its path: {h}");
+        let page = std::path::Path::new("/office/employees").join("CLAUDE.md");
+        assert!(h.contains(&format!("`{}`", page.display())), "the company page by its path: {h}");
         assert!(h.contains("goes to Pat's Inbox. A quiet schedule's report"), "{h}");
 
         let mut s = snap();

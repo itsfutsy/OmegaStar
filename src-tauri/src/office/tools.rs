@@ -868,7 +868,6 @@ mod tests {
         fs::write(o.dir.join("outside.md"), "Not theirs").unwrap();
         fs::write(home.join("big.md"), "x".repeat(cards::FILE_BYTES as usize + 1)).unwrap();
         fs::write(home.join("binary.md"), [0xff, 0xfe, 0x00]).unwrap();
-        std::os::unix::fs::symlink(o.dir.join("outside.md"), home.join("link.md")).unwrap();
         let workspaces = vec![repo.to_string_lossy().into_owned()];
         let at = |raw: &str| card_file_path(&home, &workspaces, raw);
         let real = |p: PathBuf| fs::canonicalize(p).unwrap();
@@ -878,11 +877,15 @@ mod tests {
             ("workspace/drafts/gone.md", "No file at"),
             ("workspace/drafts", "No file at"),
             ("../../outside.md", "file must be in your folder"),
-            ("link.md", "file must be in your folder"),
             ("big.md", "KB, and a card shows files up to 200 KB"),
             ("binary.md", "is not plain text"),
         ] {
             assert!(at(raw).unwrap_err().message.contains(why), "{raw}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(o.dir.join("outside.md"), home.join("link.md")).unwrap();
+            assert!(at("link.md").unwrap_err().message.contains("file must be in your folder"), "judged by where a link leads");
         }
     }
 
@@ -905,20 +908,26 @@ mod tests {
         assert_eq!(office.card_file(&r.id, 1).unwrap_err().message, "That card shows no file.");
         fs::remove_file(&draft).unwrap();
         assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"));
-        std::os::unix::fs::symlink(o.dir.join("office.db"), &draft).unwrap();
-        assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"), "a link put in its place is not followed");
-        fs::remove_file(&draft).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(o.dir.join("office.db"), &draft).unwrap();
+            assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"), "a link put in its place is not followed");
+            fs::remove_file(&draft).unwrap();
+        }
         fs::write(&draft, "x".repeat(cards::FILE_BYTES as usize + 1)).unwrap();
         assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("It is now over"));
         fs::remove_file(&draft).unwrap();
         fs::create_dir(&draft).unwrap();
         assert!(office.card_file(&r.id, 0).unwrap_err().message.starts_with("Nothing is at"), "a folder put in its place");
         fs::remove_dir(&draft).unwrap();
-        assert!(std::process::Command::new("mkfifo").arg(&draft).status().unwrap().success());
-        let (reader, id, (tx, rx)) = (office.clone(), r.id.clone(), std::sync::mpsc::channel());
-        std::thread::spawn(move || tx.send(reader.card_file(&id, 0)));
-        let read = rx.recv_timeout(Duration::from_secs(5)).expect("a pipe put in its place never holds the read");
-        assert!(read.unwrap_err().message.starts_with("Nothing is at"));
+        #[cfg(unix)]
+        {
+            assert!(std::process::Command::new("mkfifo").arg(&draft).status().unwrap().success());
+            let (reader, id, (tx, rx)) = (office.clone(), r.id.clone(), std::sync::mpsc::channel());
+            std::thread::spawn(move || tx.send(reader.card_file(&id, 0)));
+            let read = rx.recv_timeout(Duration::from_secs(5)).expect("a pipe put in its place never holds the read");
+            assert!(read.unwrap_err().message.starts_with("Nothing is at"));
+        }
         drop(office);
     }
 
@@ -1002,7 +1011,6 @@ mod tests {
         fs::create_dir_all(home.join("workspace/shots")).unwrap();
         fs::write(home.join("workspace/shots/before.png"), [0x89, b'P', b'N', b'G']).unwrap();
         fs::write(home.join("workspace/shots/notes.md"), "Notes").unwrap();
-        std::os::unix::fs::symlink(home.join("workspace/shots/notes.md"), home.join("workspace/shots/fake.png")).unwrap();
         fs::write(o.dir.join("outside.png"), [0u8]).unwrap();
         let merge = |extra: Value| {
             let mut args = json!({ "message": "Merge PR #12?", "key": "pr:12", "choices": [{ "label": "Merge" }] });
@@ -1016,8 +1024,14 @@ mod tests {
         let v = office.notify_tool(&r.id, &ada, &merge(json!({ "link": "https://example.com/acme/site/pull/12" }))).unwrap();
         assert!(v.get("tip").is_none(), "{v}");
         assert_eq!(saved(&o.db, &r.id).cards[0].link.as_deref(), Some("https://example.com/acme/site/pull/12"));
-        for (raw, why) in [("../../outside.png", "file must be in your folder"), ("workspace/shots/gone.png", "No file at"), ("workspace/shots/fake.png", "is not a png, jpg, gif or webp file")] {
-            assert!(office.notify_tool(&r.id, &ada, &merge(json!({ "images": [raw] }))).unwrap_err().message.contains(why), "{raw}");
+        let refused = |raw: &str| office.notify_tool(&r.id, &ada, &merge(json!({ "images": [raw] }))).unwrap_err().message;
+        for (raw, why) in [("../../outside.png", "file must be in your folder"), ("workspace/shots/gone.png", "No file at")] {
+            assert!(refused(raw).contains(why), "{raw}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(home.join("workspace/shots/notes.md"), home.join("workspace/shots/fake.png")).unwrap();
+            assert!(refused("workspace/shots/fake.png").contains("is not a png, jpg, gif or webp file"), "judged by where a link leads");
         }
         drop(office);
     }
@@ -1163,7 +1177,6 @@ mod tests {
         fs::write(home.join("workspace/RUN.TXT"), "Log").unwrap();
         fs::create_dir_all(home.join("workspace/old.md")).unwrap();
         fs::write(theirs.join("draft.md"), "Bo's draft").unwrap();
-        std::os::unix::fs::symlink(o.dir.join("outside.md"), home.join("link.md")).unwrap();
         let real = |p: PathBuf| fs::canonicalize(p).unwrap().to_string_lossy().into_owned();
         let open = |target: &str| office.open_tool(&talking.id, &ada, target);
 
@@ -1201,9 +1214,13 @@ mod tests {
             ("http://acme.example", "Nothing is at 'http://acme.example'"),
             ("workspace/gone.pdf", "Nothing is at"),
             ("../../outside.md", "You can open what is in your folder"),
-            ("link.md", "You can open what is in your folder"),
         ] {
             assert!(open(target).unwrap_err().message.starts_with(why), "{target}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(o.dir.join("outside.md"), home.join("link.md")).unwrap();
+            assert!(open("link.md").unwrap_err().message.starts_with("You can open what is in your folder"), "judged by where a link leads");
         }
         assert_eq!(open("workspace/broken.fail").unwrap_err().message, "It did not open: its app is gone. Tell Pat where it is instead.");
         assert_eq!(lock(&screen.0).len(), want.len(), "nothing it refused reached the screen");

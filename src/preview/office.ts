@@ -183,7 +183,7 @@ export function mk(id: string, employeeId: string, kind: RunKind, prompt: string
 }
 
 function card(message: string, ask: CardAsk, extra: Partial<Card> = {}): Card {
-  return { message, why: null, key: null, file: null, ask, answer: null, link: null, images: [], backAt: null, timesBack: 0, parked: false, proposal: null, ...extra };
+  return { message, why: null, key: null, file: null, ask, answer: null, link: null, images: [], backAt: null, timesBack: 0, parked: false, proposal: null, brief: [], ...extra };
 }
 
 const sched = (s: Schedule, slot: string): RunKind => ({ type: "scheduled", scheduleId: s.id, slot, label: s.label, quiet: s.quiet, ...(s.review ? { review: true } : {}) });
@@ -395,6 +395,12 @@ export function fullOffice(): World {
     cards: [card("Upgrade the staging database to Postgres 16 this weekend?", { type: "choices", choices: ["Upgrade Saturday night", "Wait until after the price change"], recommended: 0 }, {
       why: "Postgres 14 stops getting security fixes next week. Staging would be down for about 20 minutes.", key: "ask:staging-db:upgrade",
       link: "https://code.fernbrook.app/fernbrook/infra/pulls/88",
+      brief: [
+        { label: "The problem", text: "Staging still runs Postgres 14, which stops getting security fixes next week. Production is already on 16.", shows: null },
+        { label: "The fix", text: "Upgrade staging to 16 on Saturday night, when nobody books classes. The change is ready to merge.", shows: "link" },
+        { label: "If you go ahead", text: "Staging is down for about 20 minutes. Production and bookings aren't touched.", shows: null },
+        { label: "Checked", text: "- Last night's backup restored cleanly on the test server (3.1 GB, 4 minutes)\n- The upgrade ran on that restored copy with no errors", shows: null },
+      ],
     })],
   }), [init(8), ...tool("g1", "Bash", "pg_restore --list nightly.dump", "Restored to test-db"), ...tool("g2", "Bash", "psql -c 'select version()'", "PostgreSQL 14.13"), said(pgSummary)]);
   const slowAnswer = "One slow query made the booking page drag on Tuesday evening. It's fixed: the page opens in 310 ms again, down from 2.3 s.\n\n- The class list counted every past booking, with no index to help.\n- I added the index and limited the count to the last 90 days.\n- Three studios noticed. Mae has answered all three.\n\nThe timings and what's still open: `~/Fernbrook/ops/slow-booking-tuesday.md`";
@@ -523,9 +529,18 @@ export function fullOffice(): World {
       card("Lead with the waitlists or with the price change?", { type: "choices", choices: ["Waitlists first", "Price change first"], recommended: 0 }, {
         why: "Leading with something new usually gets more clicks; the price change gets its own email in January.", key: "ask:newsletter:lead", file: draftPath,
         images: [`${HOME}/Fernbrook/marketing/hero-waitlist.png`, `${HOME}/Fernbrook/marketing/hero-reminders.png`],
+        brief: [
+          { label: "The draft", text: "The November newsletter, ready to send. It opens with the waitlists.", shows: "file" },
+          { label: "Why waitlists", text: "Something new usually gets more clicks. Studios that tried waitlists in October filled 31 more spots on average.", shows: "images" },
+          { label: "The price change", text: "It gets its own email in January, so it needs no more than a line here.", shows: null },
+        ],
       }),
       card("Send it Tuesday or Thursday morning?", { type: "choices", choices: ["Tuesday 7 am", "Thursday 7 am"], recommended: 1 }, {
         why: "Thursday sends got 9% more opens over the last six issues.", key: "ask:newsletter:day",
+        brief: [
+          { label: "The numbers", text: "Thursday sends got 9% more opens over the last six issues.", shows: null },
+          { label: "If Thursday", text: "It goes out at 7 am on Thursday. Nothing else is due to studios that week.", shows: null },
+        ],
       }),
     ],
   }), [

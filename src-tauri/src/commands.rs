@@ -652,7 +652,8 @@ mod tests {
     #[test]
     fn report_paths_must_be_full() {
         assert_eq!(report_path("out/summary.pdf").unwrap_err().message, "out/summary.pdf is not a full path");
-        assert_eq!(report_path("/tmp/summary.pdf").unwrap(), PathBuf::from("/tmp/summary.pdf"));
+        let full = std::env::temp_dir().join("summary.pdf");
+        assert_eq!(report_path(&full.to_string_lossy()).unwrap(), full);
         if let Some(home) = dirs::home_dir() {
             assert_eq!(report_path("~/summary.pdf").unwrap(), home.join("summary.pdf"));
         }

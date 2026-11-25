@@ -237,6 +237,13 @@
                 "type": "string"
               },
               "backAt": "null",
+              "brief": [
+                {
+                  "label": "string",
+                  "shows": "string",
+                  "text": "string"
+                }
+              ],
               "file": "string",
               "images": [
                 "string"
@@ -473,6 +480,13 @@
             "type": "string"
           },
           "backAt": "null",
+          "brief": [
+            {
+              "label": "string",
+              "shows": "string",
+              "text": "string"
+            }
+          ],
           "file": "string",
           "images": [
             "string"

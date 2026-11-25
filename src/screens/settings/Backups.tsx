@@ -40,7 +40,7 @@ function LastBackup({ st, frequency, hideFailure }: { st: BackupStatus; frequenc
     <>
       {st.lastAt ? <>{whenAt(st.lastAt)}{st.lastBytes != null ? `, ${size(st.lastBytes)}` : null}</> : "No backups yet."}
       {st.skipped > 0 ? <span className="set-note">{plural(st.skipped, "file")} couldn't be read and {st.skipped === 1 ? "was" : "were"} left out.</span> : null}
-      {st.leftOut > 0 ? <span className="set-note">{st.leftOut} large files and build folders were left out.</span> : null}
+      {st.leftOut > 0 ? <span className="set-note">{st.leftOut} installers and build folders were left out.</span> : null}
       {st.lastAt && st.checkedAt && Date.parse(st.checkedAt) > Date.parse(st.lastAt) ? <span className="set-note">Nothing has changed since. Checked {relTime(st.checkedAt)}.</span> : null}
       {failed ? <span className="set-note set-err">Last attempt {relTime(st.lastAttemptAt)} failed: {sentence(st.lastError ?? "")}</span> : null}
       {frequency !== "off" && st.nextAt ? <span className="set-note">Next backup {Date.parse(st.nextAt) <= Date.now() ? "within a minute" : whenAt(st.nextAt, true)}</span> : null}
@@ -110,7 +110,7 @@ export function BackupsGroup({ s, change, saves, onOpenData }: { s: AppSettings;
           ))}
         </div>
       </Row>
-      <Row title="Automatic backups" desc={<Swap on={String(b.frequency === "off")}>{b.frequency === "off" ? "Only when you back up by hand." : "A copy of the office: employees, their history, skills and notes. Skipped when nothing has changed. Large files (over 10 MB) and build and cache folders such as node_modules are left out."}</Swap>}>
+      <Row title="Automatic backups" desc={<Swap on={String(b.frequency === "off")}>{b.frequency === "off" ? "Only when you back up by hand." : "A copy of the office: employees, their history, skills and notes. Skipped when nothing has changed. App installers and build and cache folders such as node_modules are left out."}</Swap>}>
         <div className="seg" role="group" aria-label="Backup frequency">
           {FREQUENCIES.map((f) => (
             <button key={f.value} aria-pressed={b.frequency === f.value} onClick={() => setBackup("Automatic backups", { frequency: f.value })}>{f.label}</button>

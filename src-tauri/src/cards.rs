@@ -42,6 +42,10 @@ const IMAGE_KINDS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 /// A company page heading a line is proposed for, and the line.
 const SECTION_CHARS: usize = 60;
 const LINE_CHARS: usize = 300;
+/// A brief's rows, a row's label and its text.
+const BRIEF_ROWS: std::ops::RangeInclusive<usize> = 2..=5;
+const BRIEF_LABEL_CHARS: usize = 24;
+const BRIEF_TEXT_CHARS: usize = 400;
 /// The question a line for the company page is put to you with.
 pub const ADD_LINE: &str = "Add to the company page?";
 
@@ -160,7 +164,56 @@ Put the reason in why, at most {WHY_CHARS}."
     card.file = file.map(String::from);
     card.link = text("link").map(web_link).transpose()?;
     card.images = images;
+    card.brief = match args.get("brief") {
+        None | Some(Value::Null) => vec![],
+        Some(Value::Array(rows)) if rows.is_empty() => vec![],
+        Some(Value::Array(rows)) => brief(rows, &card)?,
+        Some(_) => return Err(AppError::invalid("brief is a list of rows, e.g. [{\"label\": \"The fix\", \"text\": \"...\"}], not text.")),
+    };
     Ok(card)
+}
+
+/// A card's brief: 2 to 5 rows, each a one-line label and its text, and optionally which of the card's attachments it
+/// shows, each attachment shown by one row at most.
+fn brief(raw: &[Value], card: &Card) -> Result<Vec<BriefRow>> {
+    if !BRIEF_ROWS.contains(&raw.len()) {
+        return Err(AppError::invalid(format!(
+            "brief is {} to {} labelled rows, e.g. [{{\"label\": \"The problem\", \"text\": \"...\"}}, {{\"label\": \"The fix\", \"text\": \"...\", \"shows\": \"link\"}}]. Leave it out on a card that needs none.",
+            BRIEF_ROWS.start(),
+            BRIEF_ROWS.end()
+        )));
+    }
+    let mut rows: Vec<BriefRow> = vec![];
+    for r in raw {
+        if !r.is_object() || r.get("shows").is_some_and(|v| !v.is_string() && !v.is_null()) {
+            return Err(AppError::invalid("Each brief row is {\"label\": \"...\", \"text\": \"...\"}, with shows, if given, one of images, file or link."));
+        }
+        let field = |k: &str| r.get(k).and_then(Value::as_str).map(str::trim).unwrap_or("");
+        let label = one_line(field("label"));
+        if label.is_empty() || label.chars().count() > BRIEF_LABEL_CHARS {
+            return Err(AppError::invalid(format!("Each brief row needs a label of 1 to {BRIEF_LABEL_CHARS} characters on one line, e.g. 'The fix'.")));
+        }
+        let text = field("text");
+        let n = text.chars().count();
+        if n == 0 || n > BRIEF_TEXT_CHARS {
+            return Err(AppError::invalid(format!(
+                "Brief row '{label}': text is 1 to {BRIEF_TEXT_CHARS} characters (it has {n}). Say each fact once; a longer draft goes in file."
+            )));
+        }
+        let shows = match field("shows") {
+            "" => None,
+            "images" if !card.images.is_empty() => Some(Shows::Images),
+            "file" if card.file.is_some() => Some(Shows::File),
+            "link" if card.link.is_some() => Some(Shows::Link),
+            s @ ("images" | "file" | "link") => return Err(AppError::invalid(format!("Brief row '{label}' shows the card's {s}, but the card has none. Add it, or leave shows out."))),
+            _ => return Err(AppError::invalid(format!("Brief row '{label}': shows is one of images, file or link."))),
+        };
+        if let Some(other) = rows.iter().find(|x| shows.is_some() && x.shows == shows) {
+            return Err(AppError::invalid(format!("One brief row at most shows each attachment: '{}' and '{label}' both show it.", other.label)));
+        }
+        rows.push(BriefRow { label, text: text.to_string(), shows });
+    }
+    Ok(rows)
 }
 
 /// Whether `path`'s extension is one of `kinds`, whatever its case.
@@ -596,6 +649,39 @@ mod tests {
         }
         assert_eq!(err(json!({ "choices": go, "images": ["a.png", "b.png", "c.png", "d.png"] })), "Give at most 3 images.");
         assert!(err(json!({ "choices": go, "images": ["chart.svg"] })).starts_with("images must be png, jpg, gif or webp files"));
+    }
+
+    #[test]
+    fn a_brief_is_a_few_labelled_rows_placing_the_attachments() {
+        let go = json!([{ "label": "Merge", "recommended": true }]);
+        let rows = json!([
+            { "label": " The problem ", "text": " Grouped cards leave out the line.\n\n- One\n- Two " },
+            { "label": "The fix", "text": "Show it.", "shows": "images" },
+            { "label": "If you\nmerge", "text": "Only the Inbox changes.", "shows": "link" },
+        ]);
+        let c = card(&asked(json!({ "choices": go, "brief": rows, "images": ["a.png"], "link": "https://example.com/pull/12" }))).unwrap();
+        assert_eq!(c.brief[0], BriefRow { label: "The problem".into(), text: "Grouped cards leave out the line.\n\n- One\n- Two".into(), shows: None });
+        assert_eq!((c.brief[1].shows, c.brief[2].label.as_str(), c.brief[2].shows), (Some(Shows::Images), "If you merge", Some(Shows::Link)));
+        assert!(card(&asked(json!({ "choices": go, "brief": [] }))).unwrap().brief.is_empty(), "an empty brief counts as left out");
+        let row = |label: &str, text: &str| json!({ "label": label, "text": text });
+        let brief_err = |brief: Value| err(json!({ "choices": go, "brief": brief, "file": "draft.md" }));
+        assert!(brief_err(json!([row("Who", "Tim")])).starts_with("brief is 2 to 5 labelled rows"));
+        assert!(brief_err(json!((0..6).map(|i| row(&format!("Row {i}"), "x")).collect::<Vec<_>>())).starts_with("brief is 2 to 5 labelled rows"));
+        assert!(brief_err(json!([row(" ", "x"), row("B", "y")])).starts_with("Each brief row needs a label of 1 to 24 characters"));
+        assert!(brief_err(json!([row(&"l".repeat(25), "x"), row("B", "y")])).starts_with("Each brief row needs a label"));
+        assert_eq!(brief_err(json!([row("Who", " "), row("B", "y")])), "Brief row 'Who': text is 1 to 400 characters (it has 0). Say each fact once; a longer draft goes in file.");
+        assert!(brief_err(json!([row("Who", &"y".repeat(401)), row("B", "y")])).starts_with("Brief row 'Who': text is 1 to 400 characters (it has 401)"));
+        assert!(card(&asked(json!({ "choices": go, "brief": [row("Who", &"y".repeat(400)), row("B", "y")] }))).is_ok());
+        let shows = |s: &str| json!([row("Who", "Tim"), { "label": "Draft", "text": "Here.", "shows": s }]);
+        assert_eq!(brief_err(shows("images")), "Brief row 'Draft' shows the card's images, but the card has none. Add it, or leave shows out.");
+        assert!(brief_err(shows("link")).starts_with("Brief row 'Draft' shows the card's link, but the card has none"));
+        assert_eq!(brief_err(shows("picture")), "Brief row 'Draft': shows is one of images, file or link.");
+        assert_eq!(card(&asked(json!({ "choices": go, "brief": shows("file"), "file": "draft.md" }))).unwrap().brief[1].shows, Some(Shows::File));
+        let twice = json!([{ "label": "Who", "text": "Tim", "shows": "file" }, { "label": "Draft", "text": "Here.", "shows": "file" }]);
+        assert_eq!(brief_err(twice), "One brief row at most shows each attachment: 'Who' and 'Draft' both show it.");
+        assert!(brief_err(json!("The fix: show it.")).starts_with("brief is a list of rows"));
+        assert!(brief_err(json!([row("Who", "Tim"), "Draft"])).starts_with("Each brief row is"));
+        assert!(brief_err(json!([row("Who", "Tim"), { "label": "Draft", "text": "Here.", "shows": true }])).starts_with("Each brief row is"));
     }
 
     #[test]

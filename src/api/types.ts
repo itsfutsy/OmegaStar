@@ -196,7 +196,11 @@ export type Card = {
   link: string | null; images: string[];
   backAt: string | null; timesBack: number; parked: boolean;
   proposal: Proposal | null;
+  brief: BriefRow[];
 };
+/** A row of a card's brief: a short label, its text (simple markdown), and which of the card's attachments it shows
+ *  under the text. A card with a brief shows it in place of its why and the run's report. */
+export type BriefRow = { label: string; text: string; shows: "images" | "file" | "link" | null };
 /** A weekly review's one number, for Activity's week in numbers. */
 export type Score = { metric: string; value: string; change: string; note: string };
 /** Your answer on a card. */
@@ -368,7 +372,7 @@ export type BackupStatus = {
   nextAt: string | null;          // null when automatic backups are off
   fingerprint: string | null;     // the office at the last successful backup
   checkedAt: string | null;       // the last time a backup was due but nothing had changed
-  leftOut: number;                // large files and build folders the last backup left out
+  leftOut: number;                // installers and build folders the last backup left out
 };
 
 /** The phone link: `off` with no phone, `pairing` while a code shows, then for a paired phone `connecting` to the relay,

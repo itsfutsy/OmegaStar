@@ -687,28 +687,32 @@ function RowList({ rows, selId, held, ctx, onSelect, onEnter, onLeave }: {
     const host = flip.current;
     const box = hl.current;
     if (!host || !box) return;
+    const moved = placed.current !== selId;
     const place = (how: "move" | "settle" | "still"): { top: number; height: number } | null => {
       const el = selId ? host.querySelector<HTMLElement>(`[data-row="${CSS.escape(selId)}"]`) : null;
       if (!el || el.classList.contains("irow-held")) { box.style.opacity = "0"; return null; }
       const h = host.getBoundingClientRect();
       const r = el.getBoundingClientRect();
+      const moveInFlight = new DOMMatrixReadOnly(getComputedStyle(el.closest(".irow-w") ?? el).transform);
+      const landsAt = r.top - moveInFlight.m42;
       // Where the row will be once the rows closing above it have closed.
-      let top = r.top - h.top + host.scrollTop;
+      let top = landsAt - h.top + host.scrollTop;
       for (const w of host.querySelectorAll<HTMLElement>('.irow-w[data-open="false"]')) {
         const wr = w.getBoundingClientRect();
-        if (wr.bottom <= r.top + 1) top -= wr.height;
+        if (wr.bottom <= landsAt + 1) top -= wr.height;
       }
+      const ridesTheRowsMove = !moved && (moveInFlight.m41 !== 0 || moveInFlight.m42 !== 0);
       // Under reduced motion the rows fade, then step at once; the highlight takes its new height on that step.
       box.style.transition = how === "still" ? "none"
         : how === "settle" ? (reducedMotion() ? "transform 1ms linear, height 1ms linear var(--d-fade)" : "transform var(--d-ui) var(--ease), height var(--d-settle) var(--ease-move)")
+        : ridesTheRowsMove ? "transform var(--d-arrive) var(--ease-move), height var(--d-ui) var(--ease)"
         : "transform var(--d-ui) var(--ease), height var(--d-ui) var(--ease)";
-      box.style.transform = `translate(${r.left - h.left}px, ${top}px)`;
+      box.style.transform = `translate(${r.left - moveInFlight.m41 - h.left}px, ${top}px)`;
       box.style.width = `${r.width}px`;
       box.style.height = `${r.height}px`;
       box.style.opacity = "1";
       return { top, height: r.height };
     };
-    const moved = placed.current !== selId;
     const at = place(placed.current === null ? "still" : leavingN ? "settle" : "move");
     placed.current = selId;
     // Keep the open row in view, a row's room clear of the fades at either edge.

@@ -159,8 +159,8 @@ struct Inner {
     /// The CLI proxy turned down the management key, so the usage monitor stops asking (each try
     /// brings the proxy's ban closer) until the proxy settings change or you refresh.
     proxy_refused: AtomicBool,
-    /// Held while a backup runs, so backups never overlap.
-    backing_up: tokio::sync::Mutex<()>,
+    /// Held while a backup writes, even one given up on, so backups never overlap.
+    backing_up: Arc<tokio::sync::Mutex<()>>,
     /// Held while the reply monitor makes a pass, so passes never overlap.
     watching: tokio::sync::Mutex<()>,
     build: Build,
@@ -268,7 +268,7 @@ impl Office {
             usage: Mutex::new(UsageLimits { held_until, held_for_rate_limit: rate_hold && held_until.is_some(), ..UsageLimits::default() }),
             probing: tokio::sync::Mutex::new(()),
             proxy_refused: AtomicBool::new(false),
-            backing_up: tokio::sync::Mutex::new(()),
+            backing_up: Arc::new(tokio::sync::Mutex::new(())),
             watching: tokio::sync::Mutex::new(()),
             build,
             crashed,

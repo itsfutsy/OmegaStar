@@ -279,7 +279,7 @@ pub struct BackupStatus {
     pub fingerprint: Option<String>,
     /// The last time an automatic backup was due but nothing had changed.
     pub checked_at: Option<Ts>,
-    /// Large files and build folders the last successful backup left out.
+    /// Installers and build folders the last successful backup left out.
     pub left_out: u32,
 }
 

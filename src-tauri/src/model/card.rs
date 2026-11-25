@@ -52,6 +52,29 @@ pub struct Card {
     /// What OmegaStar does when you go ahead: the card is its proposal, not an employee's ask.
     #[serde(default)]
     pub proposal: Option<Proposal>,
+    /// The facts needed to decide, each said once in a labelled row; the Inbox shows it in place of why and the
+    /// run's report. Empty on cards without one.
+    #[serde(default)]
+    pub brief: Vec<BriefRow>,
+}
+
+/// A row of a card's brief: a short label, its text (simple markdown), and the attachment it shows under the text.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BriefRow {
+    pub label: String,
+    pub text: String,
+    #[serde(default)]
+    pub shows: Option<Shows>,
+}
+
+/// Which of the card's attachments a brief row shows.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Shows {
+    Images,
+    File,
+    Link,
 }
 
 impl Card {
@@ -73,6 +96,7 @@ impl Card {
             times_back: 0,
             parked: false,
             proposal: None,
+            brief: vec![],
         }
     }
 
@@ -255,7 +279,7 @@ mod tests {
             json!({
                 "message": "Boost it?", "why": null, "key": null, "file": null, "link": null, "images": [],
                 "ask": { "type": "choices", "choices": ["Not now", "Try it"], "recommended": 0 }, "answer": null,
-                "backAt": null, "timesBack": 0, "parked": false, "proposal": null
+                "backAt": null, "timesBack": 0, "parked": false, "proposal": null, "brief": []
             })
         );
         assert_eq!(serde_json::from_value::<Card>(v).unwrap(), card);
@@ -286,7 +310,9 @@ mod tests {
         assert_eq!(reply(json!({ "type": "seen" })), CardReply::Seen);
         // A card an older build saved loads with none of what came later.
         let old: Card = serde_json::from_value(json!({ "message": "Boost it?", "ask": { "type": "choices", "choices": ["Go"], "recommended": 0 }, "answer": null })).unwrap();
-        assert_eq!((old.link, old.images.len(), old.back_at, old.times_back, old.parked, old.proposal), (None, 0, None, 0, false, None));
+        assert_eq!((old.link, old.images.len(), old.back_at, old.times_back, old.parked, old.proposal, old.brief.len()), (None, 0, None, 0, false, None, 0));
+        let row: BriefRow = serde_json::from_value(json!({ "label": "The fix", "text": "Upgrade it.", "shows": "link" })).unwrap();
+        assert_eq!(row, BriefRow { label: "The fix".into(), text: "Upgrade it.".into(), shows: Some(Shows::Link) });
     }
 
     #[test]

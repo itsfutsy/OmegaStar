@@ -20,16 +20,32 @@ export function employeeState(e: EmployeeView, employees: EmployeeView[], people
 }
 
 /** An employee's number ("metric value (change)") split into what it is and how it moved, so a card can show the value
- *  alone and the band can say the change in words: "Open loops 4, down 3". */
+ *  alone and the band can say the change in words: "Open loops 4, down 3". The change is the bracket that closes the
+ *  line, matched by depth, so a change with brackets of its own ("+3 (41 last week)") stays whole. */
 export function numberParts(n: string | null): { metric: string; value: string; change: string | null } | null {
-  if (!n?.trim()) return null;
-  const m = /^(.*?)\s*\(\s*([+\-−]?)\s*([^)]*?)\s*\)\s*$/.exec(n.trim());
-  const base = (m ? m[1] : n).trim();
+  const t = n?.trim();
+  if (!t) return null;
+  const open = closingGroupStart(t);
+  const base = (open < 0 ? t : t.slice(0, open)).trim();
   const cut = base.lastIndexOf(" ");
   const [metric, value] = cut > 0 ? [base.slice(0, cut), base.slice(cut + 1)] : ["", base];
+  const m = open < 0 ? null : /^([+\-−]?)\s*(.*)$/.exec(t.slice(open + 1, -1).trim());
   let change: string | null = null;
-  if (m && m[3] && !/^0+([.,]0+)?%?$/.test(m[3])) change = `${m[2] === "-" || m[2] === "−" ? "down" : "up"} ${m[3]}`;
+  if (m && m[2] && !/^0+([.,]0+)?%?$/.test(m[2])) {
+    change = m[1] === "-" || m[1] === "−" ? `down ${m[2]}` : m[1] === "+" || /^\d/.test(m[2]) ? `up ${m[2]}` : m[2];
+  }
   return { metric, value, change };
+}
+
+/** Where the bracket group that ends `t` opens, or -1 when `t` does not end in a balanced one. */
+function closingGroupStart(t: string): number {
+  if (!t.endsWith(")")) return -1;
+  let depth = 0;
+  for (let i = t.length - 1; i >= 0; i--) {
+    if (t[i] === ")") depth++;
+    else if (t[i] === "(" && --depth === 0) return i;
+  }
+  return -1;
 }
 
 /** The reporting lines that are carrying work right now: a manager's hand-off or question to their own report, while it
