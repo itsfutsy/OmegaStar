@@ -43,7 +43,9 @@ pub fn child_path() -> Option<OsString> {
         #[cfg(unix)]
         {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-            let out = std::process::Command::new(shell).args(["-lc", "printf %s \"$PATH\""]).output().ok()?;
+            let mut c = std::process::Command::new(shell);
+            leave_appimage(&mut c);
+            let out = c.args(["-lc", "printf %s \"$PATH\""]).output().ok()?;
             let p = String::from_utf8(out.stdout).ok()?;
             (!p.trim().is_empty()).then(|| OsString::from(p.trim()))
         }
@@ -86,9 +88,10 @@ pub fn locate(override_path: Option<&str>) -> Option<PathBuf> {
 
 /// A child process with no console window, the login shell's PATH and none of the inherited
 /// Anthropic credentials or provider settings, so a run uses the signed-in account unless the CLI
-/// proxy's variables are added back.
+/// proxy's variables are added back. It sees none of the AppImage OmegaStar may be running from.
 pub(crate) fn command(program: &Path) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(program);
+    leave_appimage(c.as_std_mut());
     if let Some(p) = child_path() {
         c.env("PATH", p);
     }
@@ -109,6 +112,47 @@ fn scrubbed_vars<'a>(names: impl Iterator<Item = &'a OsStr>) -> Vec<OsString> {
         .filter(|n| n.to_str().is_some_and(|n| n.starts_with("ANTHROPIC_") || n.starts_with("CLAUDE_CODE_USE_") || EXACT.contains(&n)))
         .map(OsStr::to_os_string)
         .collect()
+}
+
+/// The variables the AppImage runtime sets for the app it starts. zsh runs every command under
+/// the name in an exported ARGV0, so a Python started there takes the AppImage for itself.
+const APPIMAGE_VARS: [&str; 4] = ["APPDIR", "APPIMAGE", "ARGV0", "OWD"];
+
+/// Gives a child the environment OmegaStar was started from, when OmegaStar runs from an AppImage.
+/// The launcher writes the image's folder both as APPDIR has it and with its symlinks resolved.
+fn leave_appimage(c: &mut std::process::Command) {
+    let Some(appdir) = std::env::var_os("APPDIR").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from) else { return };
+    let Ok(resolved) = appdir.canonicalize() else { return };
+    if !std::env::current_exe().is_ok_and(|exe| exe.starts_with(&resolved)) {
+        return;
+    }
+    for (name, value) in appimage_overrides(std::env::vars_os(), &[appdir, resolved]) {
+        match value {
+            Some(v) => c.env(name, v),
+            None => c.env_remove(name),
+        };
+    }
+}
+
+/// What a child must not inherit as it is from an AppImage, given each spelling of the folder it
+/// is mounted at: the runtime's own variables, and each one its launcher pointed into the image
+/// (PYTHONHOME, LD_LIBRARY_PATH, PATH and the like), which makes a tool that brings its own Python
+/// or libraries load the image's and fail to start. Each comes with what is left once the image's
+/// entries are taken back out, or `None` when nothing is and the variable goes.
+fn appimage_overrides(vars: impl Iterator<Item = (OsString, OsString)>, image: &[PathBuf]) -> Vec<(OsString, Option<OsString>)> {
+    let inside = |entry: &PathBuf| image.iter().any(|dir| entry.starts_with(dir));
+    vars.filter_map(|(name, value)| {
+        if name.to_str().is_some_and(|n| APPIMAGE_VARS.contains(&n)) {
+            return Some((name, None));
+        }
+        let entries: Vec<PathBuf> = std::env::split_paths(&value).collect();
+        if !entries.iter().any(inside) {
+            return None;
+        }
+        let kept = entries.iter().filter(|e| !e.as_os_str().is_empty() && !inside(e));
+        Some((name, std::env::join_paths(kept).ok().filter(|v| !v.is_empty())))
+    })
+    .collect()
 }
 
 async fn capture(program: &Path, env: &[(String, String)], args: &[&str]) -> Option<String> {
@@ -659,6 +703,42 @@ mod tests {
         ];
         let scrubbed = scrubbed_vars(names.iter().map(OsStr::new));
         assert_eq!(scrubbed, ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_gets_back_the_environment_the_appimage_was_started_from() {
+        let (appdir, resolved) = ("/home/sam/tmp/.mount_OmegaSabc123", "/data/tmp/.mount_OmegaSabc123");
+        let inherited = [
+            ("APPDIR", appdir.to_string()),
+            ("APPIMAGE", "/home/sam/Apps/OmegaStar.AppImage".into()),
+            ("ARGV0", "/home/sam/Apps/OmegaStar.AppImage".into()),
+            ("OWD", "/home/sam".into()),
+            ("PYTHONHOME", format!("{resolved}/usr/")),
+            ("PYTHONPATH", format!("{resolved}/usr/share/pyshared/:")),
+            ("GTK_PATH", format!("{appdir}//usr/lib/gtk-3.0")),
+            ("LD_LIBRARY_PATH", format!("{resolved}/usr/lib/:{resolved}/lib64/:/opt/cad/lib")),
+            ("PATH", format!("/home/sam/.local/bin:{resolved}/usr/bin/:{resolved}/sbin/:/usr/local/bin:/usr/bin")),
+            ("XDG_DATA_DIRS", format!("{resolved}/usr/share/:{appdir}//usr/share:/usr/local/share/:/usr/share/")),
+            ("HOME", "/home/sam".into()),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus".into()),
+            ("HTTPS_PROXY", "http://127.0.0.1:8080".into()),
+            ("MANPATH", ":/opt/cad/man".into()),
+        ];
+        let overrides = appimage_overrides(inherited.iter().map(|(n, v)| (n.into(), v.into())), &[appdir.into(), resolved.into()]);
+        let expected: [(&str, Option<&str>); 10] = [
+            ("APPDIR", None),
+            ("APPIMAGE", None),
+            ("ARGV0", None),
+            ("OWD", None),
+            ("PYTHONHOME", None),
+            ("PYTHONPATH", None),
+            ("GTK_PATH", None),
+            ("LD_LIBRARY_PATH", Some("/opt/cad/lib")),
+            ("PATH", Some("/home/sam/.local/bin:/usr/local/bin:/usr/bin")),
+            ("XDG_DATA_DIRS", Some("/usr/local/share/:/usr/share/")),
+        ];
+        assert_eq!(overrides, expected.map(|(n, v)| (OsString::from(n), v.map(OsString::from))));
     }
 
     #[test]
