@@ -1,0 +1,24 @@
+/* The one-time ask for a star: the update card's surface and type (.update, .update-title, .update-sub,
+   .update-btn), its title and line wrapping above the button, and a close in the corner. */
+.update.star-card { position: relative; padding: 10px 12px 12px; }
+.star-card .update-title { padding-right: 22px; white-space: normal; text-wrap: balance; }
+.star-card .update-sub { margin-top: 3px; white-space: normal; line-height: 1.4; text-wrap: balance; }
+.side .star-btn { margin-top: 10px; gap: 6px; }
+.star-btn svg { fill: currentColor; }
+.star-x {
+  position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; display: inline-grid; place-items: center;
+  border-radius: var(--r-inner); color: var(--side-fill-muted); transition: background var(--d-ui) var(--ease), color var(--d-ui) var(--ease);
+}
+.star-x:hover { background: color-mix(in oklab, var(--side-fill) 55%, var(--side)); color: var(--side-ink); }
+
+/* The rail: the star alone, with no dot, since nothing waits on you. */
+.shell-collapsed .star-mini::before { display: none; }
+
+/* A short window (the sidebar's own 760px step): the ask is its button and close alone, no taller than the update
+   card, so the team rows and both usage limits keep their room. */
+@media (max-height: 760px) {
+  .star-card .update-title, .star-card .update-sub { display: none; }
+  .update.star-card { padding: 6px 12px; }
+  .side .star-btn { margin-top: 0; }
+  .star-x { top: 6px; }
+}

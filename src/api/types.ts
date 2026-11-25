@@ -111,7 +111,8 @@ export type HireProposal = {
   createdAt: string; resolvedAt: string | null;
 };
 
-export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[] };
+/** `starAsk`: the sidebar asks you, once, to star OmegaStar on GitHub (after enough messages of your own, until you answer). */
+export type OrgSnapshot = { company: Company; employees: EmployeeView[]; people: PersonView[]; starAsk: boolean };
 
 export type SkillSource = "user" | "synced" | "plugin";
 export type SkillInfo = {
@@ -417,6 +418,8 @@ export type Commands = {
   /** Claude Code's own model list for the signed-in account. */
   models: { args: Record<string, never>; ret: ModelOption[] };
   org: { args: Record<string, never>; ret: OrgSnapshot };
+  /** You starred OmegaStar or said no thanks: the sidebar's ask never comes back. */
+  answer_star_ask: { args: Record<string, never>; ret: null };
   skill_catalog: { args: Record<string, never>; ret: SkillInfo[] };
   skill_sources: { args: Record<string, never>; ret: SkillSources };
   hire: { args: { draft: EmployeeDraft; imports: string[] }; ret: Employee };

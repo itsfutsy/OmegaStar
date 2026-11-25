@@ -94,6 +94,8 @@ const SHOTS = [
   S("shell", "usage", "usage-limit", "#/inbox"),
   S("shell", "usage", "rate-limit", "#/inbox"),
   S("shell", "usage", "api-key", "#/inbox"),
+  S("shell", "star-ask", "star-ask", "#/org", { query: "sidebar=expanded" }),
+  S("shell", "star-ask-rail", "star-ask", "#/org", { query: "sidebar=collapsed" }),
 
   S("onboarding", "setup", "first-run", ""),
   S("onboarding", "setup-filled", "first-run", "", { act: fillSetup }),

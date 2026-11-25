@@ -463,6 +463,8 @@ pub struct OrgSnapshot {
     pub company: Company,
     pub employees: Vec<EmployeeView>,
     pub people: Vec<PersonView>,
+    /// The sidebar asks you, once, to star OmegaStar on GitHub (see `Store::star_ask_due`).
+    pub star_ask: bool,
 }
 
 #[cfg(test)]

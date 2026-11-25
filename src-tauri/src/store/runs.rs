@@ -32,6 +32,9 @@ impl Store {
                 to_json(run)?
             ],
         )?;
+        if n == 1 && run.kind.is_conversation() && !run.omega_wrote {
+            self.count_star_ask()?;
+        }
         Ok(n == 1)
     }
 

@@ -60,6 +60,11 @@ pub async fn org(office: O<'_>) -> Result<OrgSnapshot> {
 }
 
 #[tauri::command]
+pub async fn answer_star_ask(office: O<'_>) -> Result<()> {
+    office.answer_star_ask()
+}
+
+#[tauri::command]
 pub async fn skill_catalog(office: O<'_>) -> Result<Vec<SkillInfo>> {
     Ok(office.skill_catalog())
 }

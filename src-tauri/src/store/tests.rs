@@ -1188,3 +1188,93 @@ fn team_stats_keeps_each_employees_newest_weekly_number() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A message you wrote yourself to `e`, or one OmegaStar wrote for you from a tap when `omega_wrote`, queued now.
+fn message(db: &Store, e: &Employee, kind: RunKind, omega_wrote: bool) {
+    let mut r = run(e, kind, RunState::Queued);
+    r.omega_wrote = omega_wrote;
+    assert!(db.insert_run(&r, &r.id).unwrap());
+}
+
+/// A reply of yours to the run `to`.
+fn reply_to(to: &str) -> RunKind {
+    RunKind::Reply { to_run_id: to.into(), label: "Book the venue".into(), task: true, card: false }
+}
+
+#[test]
+fn the_star_ask_comes_due_at_your_thirtieth_own_message_and_never_returns_once_answered() {
+    let dir = temp_dir();
+    let path = dir.join("office.db");
+    let db = Store::open(&path).unwrap();
+    let ada = employee("Ada", None);
+    db.save_employee(&ada).unwrap();
+    for i in 0..29 {
+        let kind = match i % 3 {
+            0 => fixtures::task("Book the venue"),
+            1 => reply_to("r0"),
+            _ => RunKind::Chat,
+        };
+        message(&db, &ada, kind, false);
+    }
+    for i in 0..10 {
+        message(&db, &ada, RunKind::Reply { to_run_id: "r0".into(), label: "Book the venue".into(), task: true, card: true }, true);
+        message(&db, &ada, RunKind::Answered { asked_run_id: format!("a{i}"), from: "e0".into(), task: false, chat: false, thread: Some("r0".into()) }, true);
+        message(&db, &ada, RunKind::Manual, false);
+        message(&db, &ada, fixtures::scheduled(&format!("s{i}"), false), false);
+        message(&db, &ada, RunKind::Delegated { parent_run_id: "r0".into() }, false);
+    }
+    assert!(!db.star_ask_due().unwrap(), "29 of your own messages, and runs OmegaStar wrote or that are not conversations, do not count");
+
+    message(&db, &ada, reply_to("r0"), false);
+    assert!(db.star_ask_due().unwrap(), "the 30th message of your own");
+
+    db.answer_star_ask().unwrap();
+    assert!(!db.star_ask_due().unwrap(), "answered");
+    db.answer_star_ask().unwrap();
+    for _ in 0..40 {
+        message(&db, &ada, reply_to("r0"), false);
+    }
+    assert!(!db.star_ask_due().unwrap(), "answering twice and 40 more messages leave it answered");
+
+    drop(db);
+    let db = Store::open(&path).unwrap();
+    assert!(!db.star_ask_due().unwrap(), "still answered after the office reopens");
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn messages_sent_before_the_star_ask_existed_count_when_the_office_opens() {
+    let dir = temp_dir();
+    let path = dir.join("office.db");
+    let db = Store::open(&path).unwrap();
+    let ada = employee("Ada", None);
+    db.save_employee(&ada).unwrap();
+    for i in 0..30 {
+        let mut v = serde_json::to_value(run(&ada, fixtures::task("Book the venue"), RunState::Succeeded)).unwrap();
+        v.as_object_mut().unwrap().remove("omegaWrote");
+        raw(&db, &ada, &format!("old-{i}"), "succeeded", &format!("old-{i}"), &v.to_string());
+    }
+    assert!(!db.star_ask_due().unwrap(), "rows an older build wrote are only counted when the office opens");
+
+    drop(db);
+    let db = Store::open(&path).unwrap();
+    assert!(db.star_ask_due().unwrap(), "30 messages from an older build make it due straight after updating");
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn answering_the_star_ask_before_it_is_due_keeps_it_away() {
+    let dir = temp_dir();
+    let db = Store::open(&dir.join("office.db")).unwrap();
+    let ada = employee("Ada", None);
+    db.save_employee(&ada).unwrap();
+    db.answer_star_ask().unwrap();
+    for _ in 0..30 {
+        message(&db, &ada, fixtures::task("Book the venue"), false);
+    }
+    assert!(!db.star_ask_due().unwrap());
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

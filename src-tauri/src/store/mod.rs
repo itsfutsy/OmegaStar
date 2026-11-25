@@ -4,7 +4,7 @@
 use crate::log::log;
 use crate::model::*;
 use rusqlite::{params, Connection, OptionalExtension, Row};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
@@ -70,6 +70,22 @@ pub const DB_FILE: &str = "office.db";
 
 /// The meta key of the last backup's outcome, which the backup's own hash leaves out.
 pub const BACKUP_STATUS: &str = "backup_status";
+
+/// How many messages of your own you send before OmegaStar asks you, once, to star it on GitHub.
+const STAR_ASK_AFTER: i64 = 30;
+
+/// The one-time ask to star OmegaStar on GitHub, kept under the meta key `star_ask` (absent: `Counting`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum StarAsk {
+    /// Fewer than `STAR_ASK_AFTER` of your own messages so far.
+    #[default]
+    Counting,
+    /// The sidebar asks until you answer.
+    Due,
+    /// You starred it or said no thanks, so it never asks again.
+    Answered,
+}
 
 /// The states of a run not finished yet (`RunState::is_finished`), as an SQL list.
 macro_rules! active {
@@ -171,6 +187,7 @@ impl Store {
         if store.meta::<Ts>("typed_answers_since")?.is_none() {
             store.set_meta("typed_answers_since", &chrono::Utc::now())?;
         }
+        store.count_star_ask()?;
         Ok(store)
     }
 
@@ -331,6 +348,40 @@ impl Store {
     }
     pub fn set_transcripts_compacted(&self) -> Result<()> {
         self.set_meta("transcriptsCompacted", &true)
+    }
+
+    /// Whether the sidebar asks you to star OmegaStar on GitHub now.
+    pub fn star_ask_due(&self) -> Result<bool> {
+        Ok(self.star_ask()? == StarAsk::Due)
+    }
+
+    /// You starred OmegaStar or said no thanks, so the ask never comes back. Safe at any time and more than once.
+    pub fn answer_star_ask(&self) -> Result<()> {
+        self.set_meta("star_ask", &StarAsk::Answered)
+    }
+
+    fn star_ask(&self) -> Result<StarAsk> {
+        Ok(self.meta("star_ask")?.unwrap_or_default())
+    }
+
+    /// While still counting, makes the ask due once you have sent `STAR_ASK_AFTER` messages of your own: conversation
+    /// runs OmegaStar did not write. Answers that come back into a conversation are always OmegaStar's, so only a chat
+    /// turn, a task or a reply can be yours. The count stops at the threshold, and nothing is counted once it is due.
+    /// Runs when a message of yours is queued, and when the office opens, so messages from older builds count too.
+    fn count_star_ask(&self) -> Result<()> {
+        if self.star_ask()? != StarAsk::Counting {
+            return Ok(());
+        }
+        let own: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM runs WHERE json_valid(data) AND json_extract(data, '$.kind.type') IN ('chat', 'task', 'reply')
+               AND COALESCE(json_extract(data, '$.omegaWrote'), 0) = 0 LIMIT ?1)",
+            [STAR_ASK_AFTER],
+            |r| r.get(0),
+        )?;
+        if own >= STAR_ASK_AFTER {
+            self.set_meta("star_ask", &StarAsk::Due)?;
+        }
+        Ok(())
     }
 
     /// Writes a consistent copy of the whole database to `path`, which must not exist.

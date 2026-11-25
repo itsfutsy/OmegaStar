@@ -439,6 +439,7 @@ pub fn run() {
             commands::set_background,
             commands::models,
             commands::org,
+            commands::answer_star_ask,
             commands::skill_catalog,
             commands::skill_sources,
             commands::hire,

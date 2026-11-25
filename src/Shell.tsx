@@ -5,6 +5,7 @@ import { Icon, LogoMark, type IconName } from "./components/Icon";
 import { CommandPalette } from "./components/CommandPalette";
 import { HireSheet } from "./components/HireSheet";
 import { AddPersonSheet } from "./components/AddPersonSheet";
+import { StarCard } from "./components/StarCard";
 import { UpdateCard } from "./components/UpdateCard";
 import { UsageCard } from "./components/UsageCard";
 import { Avatar, Roll } from "./components/ui";
@@ -183,6 +184,7 @@ export function Shell({ arriving = false }: { arriving?: boolean }) {
           </nav>
           <div className="side-bottom">
             <UpdateCard />
+            <StarCard />
             <NavItem href="#/settings" icon="settings" label="Settings" active={route.page === "settings"} collapsed={collapsed} />
             <UsageCard />
             {company ? (

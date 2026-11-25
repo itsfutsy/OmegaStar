@@ -99,7 +99,14 @@ impl Office {
             .into_iter()
             .map(|p| PersonView { open_requests: open.iter().filter(|r| r.person_id == p.id).count() as u32, person: p })
             .collect();
-        Ok(OrgSnapshot { company, employees, people })
+        Ok(OrgSnapshot { company, employees, people, star_ask: db.star_ask_due()? })
+    }
+
+    /// You starred OmegaStar on GitHub or said no thanks: the sidebar's ask goes for good.
+    pub fn answer_star_ask(&self) -> Result<()> {
+        self.db().answer_star_ask()?;
+        self.sink().org_changed();
+        Ok(())
     }
 
     pub fn hire(&self, mut draft: EmployeeDraft, imports: Vec<String>) -> Result<Employee> {

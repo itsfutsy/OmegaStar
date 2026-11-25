@@ -59,6 +59,7 @@ http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&toasts
 | `live-arrives` | `full`; 3 seconds in, Juniper asks Mae to update the help centre (`help-1`, delegated from `plan-2`), and Mae starts on it: live work arriving |
 | `live-ends` | `full`; everything live finishes in turn (the sub-agent at 2.5 s, `billing-1` at 4 s, `plan-2` at 6.5 s, the runs waiting to start by 8 s), so nothing is live after that |
 | `phone-paired` | `full` with a phone paired and connected (Maren's iPhone). In every other state no phone is paired, and Connect phone shows a code |
+| `star-ask` | `full` with no update waiting and the one-time ask for a GitHub star due: the sidebar's star card (a star button on the rail); either of its buttons answers it, and it goes |
 
 ### Routes
 

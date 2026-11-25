@@ -26,7 +26,7 @@ const STATES = [
   "full", "empty", "first-run", "first-run-no-claude", "first-run-signed-out", "loading", "loading-boot", "error", "error-boot",
   "update-failed", "usage-limit", "rate-limit", "api-key",
   "first-run-recheck", "first-run-opening", "first-run-error", "slow-saves", "failed-saves", "quiet", "large-org", "inbox-more",
-  "live-more", "thread-error", "notes-gone", "live-arrives", "live-ends", "phone-paired",
+  "live-more", "thread-error", "notes-gone", "live-arrives", "live-ends", "phone-paired", "star-ask",
 ] as const;
 type State = (typeof STATES)[number];
 
@@ -67,6 +67,7 @@ function worldFor(state: State): World {
       }
       if (state === "rate-limit") w.usage = { ...w.usage, heldUntil: ahead(13), heldForRateLimit: true };
       if (state === "api-key") w.usage = { ...w.usage, fiveHour: null, sevenDay: null, subscription: false };
+      if (state === "star-ask") w.update = null;
       return w;
     }
   }
@@ -119,6 +120,8 @@ export function previewTransport(): Transport {
         ],
       }
     : UNPAIRED;
+  /** In the `star-ask` state, the sidebar's ask for a star on GitHub is due until either of its buttons answers it. */
+  let starAsk = state === "star-ask";
 
   installTauriShim();
   const theme = params.get("theme");
@@ -181,6 +184,7 @@ export function previewTransport(): Transport {
     return {
       company: w.company, employees: w.employees.map(view),
       people: w.people.map((p) => ({ ...p, openRequests: w.requests.filter((r) => r.personId === p.id && r.state === "open").length })),
+      starAsk,
     };
   }
 
@@ -421,6 +425,11 @@ export function previewTransport(): Transport {
     org: () => {
       toastsOnce();
       return snapshot();
+    },
+    answer_star_ask: () => {
+      starAsk = false;
+      changed();
+      return null;
     },
     models: () => [
       { id: "claude-opus-5-5", name: "Opus 5.5" }, { id: "claude-fable-5-2", name: "Fable 5.2" }, { id: "claude-sonnet-5-5", name: "Sonnet 5.5" },
