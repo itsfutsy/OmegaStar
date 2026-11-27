@@ -536,9 +536,10 @@ impl Office {
                 None => p,
             });
         }
-        // Before the limit requeue, so what every attempt cost adds up.
+        // Before the limit requeue, so what every attempt cost and used adds up.
         if let Ok(e) = &ended {
             run.cost_usd = [run.cost_usd, e.cost].into_iter().flatten().reduce(|a, b| a + b);
+            add_tokens(&mut run.tokens, &e.tokens);
         }
         // Held before the run is saved back to the queue, so no pump claims it straight into the limit,
         // and held too when it is out of retries, so other queued runs do not start into it.
@@ -871,6 +872,7 @@ impl Office {
         let mut signals = claude::RunSignals::default();
         let mut outcome: Option<Outcome> = None;
         let mut spent: Vec<claude::Spend> = vec![];
+        let mut tokens: Vec<ModelTokens> = vec![];
         let (mut limited, mut context, mut claude_version) = (None, None, None);
         let mut flush = tokio::time::interval(EVENT_BATCH);
         loop {
@@ -906,6 +908,7 @@ impl Office {
                         }
                     }
                     spent.extend(parsed.spend);
+                    add_tokens(&mut tokens, &parsed.tokens);
                     if let Some(mut o) = parsed.outcome {
                         // A message written before this point still runs, as one more turn of this run.
                         if let Some(a) = lock(&self.0.active).get_mut(&run.id) {
@@ -1062,7 +1065,7 @@ impl Office {
         let denied = outcome.as_ref().map(|o| o.denials.clone()).unwrap_or_default();
         let (blocks, mut notes) = signals.sort_denials(denied, |d| covered(&snap.employee, &rules, d), !run.kind.is_conversation());
         notes.extend(omega_notes);
-        Ok(Ended { outcome, exit, stderr, changes, limited, blocks, notes, context, claude_version, cost })
+        Ok(Ended { outcome, exit, stderr, changes, limited, blocks, notes, context, claude_version, cost, tokens })
     }
 
     /// The session's running cost total before this attempt, as Claude Code last reported it: in an earlier attempt
@@ -1225,6 +1228,8 @@ struct Ended {
     claude_version: Option<String>,
     /// What this attempt cost, by Claude Code's reckoning.
     cost: Option<f64>,
+    /// The tokens this attempt used, model by model.
+    tokens: Vec<ModelTokens>,
 }
 
 /// What you did to a run while it worked, after the copy its end holds was taken: you wrote into it or replied in
@@ -1607,7 +1612,7 @@ mod tests {
     }
 
     fn ended(o: Option<Outcome>, stderr: &str) -> Result<Ended> {
-        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None })
+        Ok(Ended { outcome: o, exit: Some(1), stderr: stderr.into(), changes: vec![], limited: None, blocks: vec![], notes: vec![], context: None, claude_version: None, cost: None, tokens: vec![] })
     }
 
     #[test]
@@ -2366,6 +2371,7 @@ mod tests {
             after: Some("new".into()),
         };
         run.cost_usd = Some(0.5);
+        run.tokens = vec![ModelTokens { model: "claude-opus-4-5".into(), tokens: 1200 }];
         reset_for_requeue(&mut run, std::slice::from_ref(&fc.change), Limit::Usage);
         db.tx(|| {
             db.insert_revision(&e.id, &own_skills::revision(fc, Some(run.id.clone()), now()))?;
@@ -2379,6 +2385,7 @@ mod tests {
         assert!(saved.denials.is_empty());
         assert_eq!(saved.skill_changes.len(), 1);
         assert_eq!(saved.cost_usd, Some(0.5), "what it cost so far stays with it");
+        assert_eq!(saved.tokens, run.tokens, "and so do the tokens it used");
         assert_eq!(db.revisions(&e.id).unwrap().iter().filter(|r| r.run_id.as_deref() == Some(run.id.as_str())).count(), 1);
         drop(db);
         let _ = fs::remove_dir_all(&dir);

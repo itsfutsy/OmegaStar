@@ -503,6 +503,10 @@ export function previewTransport(): Transport {
       const now = Date.now(), today = new Date();
       const days: TeamStats["days"] = [];
       const asks: TeamStats["asks"] = [];
+      const tokens: TeamStats["tokens"] = [];
+      // Tokens were kept for the last three weeks only, as from a build that began keeping them.
+      const keptFrom = today.getTime() - 21 * DAY;
+      const models = ["claude-fable-5-2", "claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001"];
       let k = 0;
       w.employees.forEach((e, ei) => {
         const hired = new Date(e.hiredAt);
@@ -513,6 +517,14 @@ export function previewTransport(): Transport {
           if (!runs) continue;
           const workMs = runs * (6 + ((ei + i) % 9)) * 60_000;
           days.push({ day: dayKey(d), employeeId: e.id, runs, workMs, nightMs: Math.round(workMs * [0.1, 0.3, 0.2, 0.4][(ei + i) % 4]) });
+          if (d.getTime() >= keptFrom) {
+            // Each person leans on one main model, with Haiku for small steps; every third day a colleague asked for some of it.
+            const main = models[ei % 3], per = runs * (40_000 + ((ei * 31 + i * 7) % 9) * 15_000);
+            const asker = w.employees[(ei + 1) % w.employees.length].id;
+            tokens.push({ day: dayKey(d), employeeId: e.id, handedOverBy: null, model: main, tokens: per });
+            tokens.push({ day: dayKey(d), employeeId: e.id, handedOverBy: null, model: models[3], tokens: Math.round(per / 6) });
+            if (i % 3 === 0 && asker !== e.id) tokens.push({ day: dayKey(d), employeeId: e.id, handedOverBy: asker, model: main, tokens: Math.round(per / 2) });
+          }
           for (let c = Math.round(runs / (2 + i / 10)); c > 0; c--, k++) {
             const at = d.getTime() + (8 + ((ei * 5 + c * 3) % 11)) * 3_600_000 + ((k * 17) % 60) * 60_000;
             if (at > now) continue;
@@ -531,6 +543,7 @@ export function previewTransport(): Transport {
         days: days.sort((a, b) => a.day.localeCompare(b.day)),
         asks: asks.sort((a, b) => a.at.localeCompare(b.at)),
         numbers,
+        tokens: tokens.sort((a, b) => a.day.localeCompare(b.day)),
       };
     },
     run_detail: ({ runId }) => {

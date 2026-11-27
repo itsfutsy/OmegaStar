@@ -10,6 +10,14 @@ export type TeamPoint = { day: string; workMs: number; asks: number };
 /** Someone on the team now: the hours they worked in the range and the number they answer for, if they have one yet. */
 export type TeamPerson = { employeeId: string; name: string; workMs: number; number: TeamStats["numbers"][number] | null };
 
+/** The model families the page names, in the order it shows them; any other model goes by its own id. */
+const FAMILIES = ["Fable", "Opus", "Sonnet", "Haiku"];
+/** A model id's family: `claude-opus-4-5-20251101` is Opus. */
+export const modelFamily = (id: string) => FAMILIES.find((f) => id.toLowerCase().includes(f.toLowerCase())) ?? id;
+
+/** Someone's tokens in the range: those their own runs used, by model family, and those used by work they handed over. */
+export type TokenPerson = { employeeId: string; name: string; used: Record<string, number>; total: number; handedOver: number };
+
 /** The Analytics page's numbers for one range: what the screen's two sentences, chart and table say. */
 export type TeamSummary = {
   /** Who works here now. */
@@ -30,6 +38,12 @@ export type TeamSummary = {
   per: "day" | "week";
   /** Everyone here now, most hours first. */
   people: TeamPerson[];
+  /** The model families any run used in the range, known ones first. */
+  models: string[];
+  /** Everyone here now who used tokens or handed over work that did, most tokens first. */
+  tokens: TokenPerson[];
+  /** The first day any run kept its tokens, in any range: runs before it count none. */
+  tokensSince: string | null;
 };
 
 const DAY = 86_400_000;
@@ -78,7 +92,26 @@ export function summarise(stats: TeamStats, range: TeamRange, now = new Date()):
     points.unshift({ day: wk[0].day, workMs: wk.reduce((n, d) => n + d.workMs, 0), asks: wk.reduce((n, d) => n + d.asks, 0) });
   }
 
+  const used = new Map<string, Record<string, number>>(), handed = new Map<string, number>(), seen = new Set<string>();
+  for (const t of stats.tokens) {
+    if (!byDay.has(t.day)) continue;
+    const family = modelFamily(t.model), mine = used.get(t.employeeId) ?? {};
+    mine[family] = (mine[family] ?? 0) + t.tokens;
+    used.set(t.employeeId, mine);
+    seen.add(family);
+    if (t.handedOverBy) handed.set(t.handedOverBy, (handed.get(t.handedOverBy) ?? 0) + t.tokens);
+  }
+  const rank = (f: string) => (FAMILIES.includes(f) ? FAMILIES.indexOf(f) : FAMILIES.length);
+  const models = [...seen].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+
   const here = stats.staff.filter((s) => !s.departedAt);
+  const tokens = here
+    .map((s) => {
+      const mine = used.get(s.employeeId) ?? {};
+      return { employeeId: s.employeeId, name: s.name, used: mine, total: Object.values(mine).reduce((n, x) => n + x, 0), handedOver: handed.get(s.employeeId) ?? 0 };
+    })
+    .filter((p) => p.total || p.handedOver)
+    .sort((a, b) => b.total - a.total || b.handedOver - a.handedOver);
   const people = here
     .map((s) => ({ employeeId: s.employeeId, name: s.name, workMs: worked.get(s.employeeId) ?? 0, number: stats.numbers.find((n) => n.employeeId === s.employeeId) ?? null }))
     .sort((a, b) => b.workMs - a.workMs);
@@ -86,6 +119,6 @@ export function summarise(stats: TeamStats, range: TeamRange, now = new Date()):
     team: here.length, since, runs, workMs, nightMs,
     workBefore: before ? workBefore : null,
     asks, medianWaitMs: median !== undefined && Number.isFinite(median) ? median : null, overDay,
-    points, per, people,
+    points, per, people, models, tokens, tokensSince: stats.tokens[0]?.day ?? null,
   };
 }

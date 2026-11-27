@@ -349,6 +349,10 @@ pub struct Run {
     /// What the run cost in US dollars as Claude Code reckons it, summed over its result segments and attempts.
     #[serde(default)]
     pub cost_usd: Option<f64>,
+    /// The tokens it used, model by model, summed over its result segments and attempts. Empty for a run from
+    /// before builds kept them.
+    #[serde(default)]
+    pub tokens: Vec<ModelTokens>,
     /// Not to start before then: a hand-off OmegaStar paused to keep its chain short, an answer queued again
     /// after it failed, or the reports held for a manager.
     #[serde(default)]
@@ -409,6 +413,7 @@ impl Run {
             score: None,
             context_tokens: None,
             cost_usd: None,
+            tokens: vec![],
             not_before: None,
             chain: None,
             reports: vec![],
@@ -582,6 +587,25 @@ pub struct RunDetail {
     pub children: Vec<Run>,
 }
 
+/// The tokens a run used on one model, as Claude Code counts them: what it read fresh, wrote to the prompt cache and
+/// wrote out. Re-reads of the cache are left out: they are most of the volume, at a tenth of the price.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelTokens {
+    /// The model's id, e.g. `claude-opus-4-5-20251101`.
+    pub model: String,
+    pub tokens: u64,
+}
+
+/// Adds `more` to `total`, model by model.
+pub fn add_tokens(total: &mut Vec<ModelTokens>, more: &[ModelTokens]) {
+    for m in more {
+        match total.iter_mut().find(|t| t.model == m.model) {
+            Some(t) => t.tokens += m.tokens,
+            None => total.push(m.clone()),
+        }
+    }
+}
+
 /// What runs did and used since a time, for Activity's digest of today and its usage this week. Usage is what
 /// runs cost in US dollars at API list price, as Claude Code reckons it; a run with no cost recorded adds nothing.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -604,6 +628,8 @@ pub struct TeamStats {
     pub asks: Vec<TeamAsk>,
     /// Each employee's latest weekly number, from their newest weekly review that reported one.
     pub numbers: Vec<TeamNumber>,
+    /// Tokens used, one row per day, employee, model and who handed the work over.
+    pub tokens: Vec<TeamTokens>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -626,6 +652,20 @@ pub struct TeamDay {
     pub work_ms: i64,
     /// The part of `work_ms` from runs begun between 10 pm and 7 am local: work done while you were likely asleep.
     pub night_ms: i64,
+}
+
+/// Tokens an employee's finished runs used on one model in a local day.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamTokens {
+    /// `YYYY-MM-DD`, local.
+    pub day: String,
+    /// Who did the work, and so used the tokens.
+    pub employee_id: String,
+    /// The colleague who asked for it or delegated it; `None` for their own work.
+    pub handed_over_by: Option<String>,
+    pub model: String,
+    pub tokens: u64,
 }
 
 /// One card that asked you something. A card has no time of its own, so `at` is when its run ended, or began if it
@@ -701,6 +741,14 @@ mod tests {
 
     fn build() -> Build {
         Build { version: "1.2.3".into(), commit: "abc1234567".into(), channel: BuildChannel::Dogfood }
+    }
+
+    #[test]
+    fn tokens_add_up_model_by_model() {
+        let m = |model: &str, tokens: u64| ModelTokens { model: model.into(), tokens };
+        let mut total = vec![m("opus", 10)];
+        add_tokens(&mut total, &[m("haiku", 5), m("opus", 7)]);
+        assert_eq!(total, vec![m("opus", 17), m("haiku", 5)]);
     }
 
     #[test]
