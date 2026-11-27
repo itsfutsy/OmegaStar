@@ -405,10 +405,20 @@ alone: each starts its own run on its due date. Do not go hunting. What only {ce
 says \"verify later\" without a tracked check behind it.\n\
 2. **Confirm what you were taught.** For each thing {ceo} told you above, find the line in your skills that holds it. If it is \
 missing, write it now, in the right skill, under `## Rules` or your role skill's `## Standing preferences`, one bullet, ending \
-`(taught YYYY-MM-DD)`. Done when you can name, for each item, the skill and heading where it lives, or say why it is not worth \
+`(taught YYYY-MM-DD)`. An older taught line on the same subject stays as it is in this run: it goes on the card in step 3. Done when you can name, for each item, the skill and heading where it lives, or say why it is not worth \
 keeping (a one-off instruction, or already replaced by a later one). When one is true for your colleagues too (the tools and \
 accounts we use, a fact, our voice, how {ceo} likes to work), also propose it for the company page with `propose_company_line`.\n\
-3. **Tidy.** Bring your family back to the shape `omega-skill-craft` describes, starting with what OmegaStar measured.\n\
+3. **Check your rules agree.** Go through the rules in your skills, what you own and the company page, subject by subject, \
+starting with the subjects {ceo} spoke about above. Where two lines answer the same question differently, the newest word \
+from {ceo} is the current one. A stale line that is yours (a step, a fact, your own reading of a rule, your copy of a \
+colleague's rule or of a company page line) you rewrite now, or turn into a pointer to the line that holds. Any line under \
+`## Rules` or `## Standing preferences`, or marked `(taught ...)`, a copy included, you do not change in this run (OmegaStar \
+would put it back), and what you own and the company page you cannot: put those to {ceo} on one card (`notify`), not in your \
+proposals. Quote both lines with their \
+dates and where each is written, say which you take to be current and what you would rewrite, and give several as one list. \
+Done when, for every subject with more than one line, you can name the line that is current and where it lives, or it is on \
+that card.\n\
+4. **Tidy.** Bring your family back to the shape `omega-skill-craft` describes, starting with what OmegaStar measured.\n\
    Do these yourself, now:\n\
    - Compact a diary or state file in `workspace/`: keep the open conditions and the last few days, and turn older entries into \
 one line each. Keep every id, ticket key and outcome that a later run could need.\n\
@@ -418,8 +428,6 @@ is re-checked when a run next relies on it.\n\
    - Fix pointers: a skill that names one that does not exist, and a skill that nothing points to.\n\
    - Tighten a description that is long; push detail only some runs need into a sibling file behind a pointer that says when to open it.\n\
    - Keep each rule in one place: when you find it twice, keep the better one and point to it.\n\
-   - Find rules that contradict the company page or each other across your skills. Settle one you wrote yourself; one you \
-were taught goes in your proposals below.\n\
    Do NOT do these. Record them with `propose_changes(plan)`, in one call, written so a later run can make them without your \
 report: for each change, the skills involved, exactly what moves or goes, and why. {ceo} approves them in the Inbox and a \
 follow-up run makes them:\n\
@@ -430,7 +438,8 @@ follow-up run makes them:\n\
    Done when everything you got to is either fixed, proposed, or fine as it is.\n\n\
 Finish with one or two plain sentences on what you changed, nothing more: no sections, no list of what you checked and left \
 as it is, and no \"nothing needs you\". A change you only describe in the report is lost: only `propose_changes` puts it in \
-front of {ceo}, and OmegaStar asks them for you. Do not call `notify` for proposals."
+front of {ceo}, and OmegaStar asks them for you. Do not call `notify` for proposals: in a tidy it is only for what only \
+{ceo} can settle (an unfinished note, rules that disagree)."
         )
     };
 
@@ -558,9 +567,11 @@ mod tests {
         assert!(f.contains("Finish with one or two plain sentences") && !f.contains("Could not resolve"), "{f}");
         assert!(!f.contains("flags your proposals") && !f.contains("my_checks"), "{f}");
         assert!(f.contains("When one is true for your colleagues too (the tools and accounts we use, a fact, our voice, how Pat likes to work), also propose it for the company page with `propose_company_line`."), "{f}");
-        assert!(f.contains("Find rules that contradict the company page or each other across your skills. Settle one you wrote yourself; one you were taught goes in your proposals below."), "{f}");
+        assert!(f.contains("3. **Check your rules agree.**") && f.contains("the newest word from Pat is the current one"), "{f}");
+        assert!(f.contains("put those to Pat on one card (`notify`), not in your proposals"), "a clash between taught rules is a question, not a proposal: {f}");
+        assert!(f.contains("An older taught line on the same subject stays as it is in this run") && f.contains("a copy included, you do not change in this run"), "a tidy never asks for an edit OmegaStar puts back: {f}");
         let approved = frame(&snap(), &run(RunKind::Tidy { reason: TidyReason::Approved, signature: vec![], plan: Some("Merge two skills.".into()) }));
-        assert!(!approved.contains("propose_company_line") && !approved.contains("contradict"), "an approved tidy makes only the approved changes: {approved}");
+        assert!(!approved.contains("propose_company_line") && !approved.contains("Check your rules agree"), "an approved tidy makes only the approved changes: {approved}");
     }
 
     #[test]
