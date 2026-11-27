@@ -480,7 +480,8 @@ impl Office {
 
     /// Your question about card `index` of a run, sent now as your reply in its thread. The card stays open, and the
     /// answers its run holds back stay held for it. The question leaves the thread as it was (`Run::about_card`), so a
-    /// later tap still files it. Returns the reply.
+    /// later tap still files it. Returns the reply. The Inbox reads your words back out of its prompt to show them
+    /// under the card (`askedText` in `src/lib/threads.ts`), so the line before them changes there too.
     fn ask_about_card(&self, run_id: &str, index: usize, text: &str) -> Result<Run> {
         let text = text.trim();
         if text.is_empty() {

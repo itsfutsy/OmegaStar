@@ -25,6 +25,20 @@ export function latestFinished(t: Thread): Run {
   return t.root;
 }
 
+/** Your questions about the cards `run` holds, oldest first: the replies in its thread you sent from a card (`aboutCard`),
+ *  from `run` on. A reply that asks again holds the card itself, so it is its own first question. */
+export const askedAbout = (t: Thread, run: Run): Run[] => t.replies.filter((r) => r.aboutCard && r.createdAt >= run.createdAt);
+
+/** The end of the line Rust `ask_about_card` writes before your question, naming the card it is about. */
+const ASKED = '", which stays open until I answer it:\n\n';
+
+/** What you typed in a question about a card: its prompt from after that line on. A reply that could not resume its
+ *  session quotes the report first, so the line is not always at the start, and the last one is yours. */
+export function askedText(r: Run): string {
+  const at = r.prompt.lastIndexOf(ASKED);
+  return at < 0 ? r.prompt : r.prompt.slice(at + ASKED.length);
+}
+
 /** A conversation you started begins with `r`: a task, or an older build's chat message an answer came back into,
  *  which is one now. Mirrors Rust `threads::talking`. */
 export const startedByYou = (r: Run): boolean => r.kind.type === "task" || r.kind.type === "chat";
