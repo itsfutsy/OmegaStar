@@ -101,7 +101,7 @@ export function ProxyGroup({ confirmed, onEdit, onSave }: {
           <Row title="API key" desc="One of the keys in the proxy's config." mark={false} fail={false}>
             {field("apiKey", "CLI proxy API key", { type: "password" })}
           </Row>
-          <Row title="Management key" desc={<>Not an API key: the <span className="mono">secret-key</span> under <span className="mono">remote-management</span> in the proxy's config. The sidebar needs it to show the proxy's Claude usage limits; without it, the sidebar asks for it.</>} mark={false} fail={false}>
+          <Row title="Management key" desc={<>Not an API key: the <span className="mono">secret-key</span> under <span className="mono">management</span> in the proxy's config. The sidebar needs it to show the proxy's Claude usage limits.</>} mark={false} fail={false}>
             {field("managementKey", "CLI proxy management key", { type: "password" })}
           </Row>
           {/* A failed save opens the same line, with Try again, as on every other row. */}

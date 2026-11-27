@@ -84,7 +84,7 @@ function UsageDetails({ usage, now, refreshing, refresh }: { usage: UsageLimits 
   return (
     <div className={`ud ${refreshing ? "ud-refreshing" : ""}`}>
       <div className="ud-head">
-        <span className="ud-title">{several ? `Claude usage · pool of ${usage?.accounts.length} accounts` : "Claude usage"}</span>
+        <span className="ud-title">Claude usage</span>
         <span className="ud-checked">{usage?.observedAt ? `Checked ${relTime(usage.observedAt, now)}` : "Not checked yet"}</span>
         <button className="btn btn-ghost btn-icon btn-sm" onClick={refresh} disabled={refreshing} aria-label="Refresh" data-tip="Refresh"><Icon name="refresh" size={15} /></button>
       </div>
