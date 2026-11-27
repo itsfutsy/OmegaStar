@@ -385,11 +385,16 @@ pub fn report_label(kind: &RunKind) -> String {
     }
 }
 
-/// A reply's label on the thread rooted at `root`, and whether that thread is a task: a conversation you started
-/// (an older build's chat message an answer came back into too) is named as a task is, a report by its label.
+/// A reply's label on the thread rooted at `root`, and whether that thread is a task: a conversation you started (an
+/// older build's chat message an answer came back into too) is named as a task is, work a colleague handed over by the
+/// name the employee gave the thread, else by what was asked, and a report by its label.
 pub fn reply_label(root: &Run) -> (String, bool) {
     let chat = matches!(root.kind, RunKind::Chat);
-    let label = if chat { task_label(&root.prompt, &root.attachments) } else { report_label(&root.kind) };
+    let label = match &root.kind {
+        RunKind::Asked { .. } | RunKind::Delegated { .. } => root.title.clone().unwrap_or_else(|| task_label(&root.prompt, &root.attachments)),
+        _ if chat => task_label(&root.prompt, &root.attachments),
+        kind => report_label(kind),
+    };
     (label, chat || matches!(root.kind, RunKind::Task { .. }))
 }
 
@@ -677,6 +682,21 @@ mod tests {
         let sentence = "Can you check whether the Eastlake booking reminders went out on Saturday morning for every member";
         assert_eq!(task_label(sentence, &[]), "Check whether the Eastlake booking reminders went out on Saturday morning for every member");
         assert_eq!(task_label("hey, draft the Acme reply? Keep it short.", &[]), "Draft the Acme reply");
+    }
+
+    #[test]
+    fn a_handed_over_thread_is_named_by_its_task_not_who_sent_it() {
+        let at = chrono::Utc::now();
+        let asked = Run::new("e2", RunKind::Asked { parent_run_id: "r1".into(), asked_by: "e1".into(), task: true }, "Please check the Eastlake invoices. Then report.".into(), at);
+        let delegated = Run::new("e2", RunKind::Delegated { parent_run_id: "r1".into() }, "Draft the Acme reply".into(), at);
+        assert_eq!(reply_label(&asked), ("Check the Eastlake invoices".into(), false));
+        assert_eq!(reply_label(&delegated).0, "Draft the Acme reply");
+        let named = Run { title: Some("Invoice run".into()), ..asked };
+        assert_eq!(reply_label(&named).0, "Invoice run", "the name the employee gave the thread wins");
+        let report = Run::new("e2", RunKind::Manual, "go".into(), at);
+        assert_eq!(reply_label(&report).0, "Manual run");
+        let titled_chat = Run { title: Some("Invoice run".into()), ..Run::new("e2", RunKind::Chat, "Draft the Acme reply".into(), at) };
+        assert_eq!(reply_label(&titled_chat).0, "Draft the Acme reply", "only a hand-off takes the thread's name");
     }
 
     #[test]

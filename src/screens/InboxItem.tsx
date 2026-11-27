@@ -4,7 +4,7 @@ import { call, errorMessage } from "../api/client";
 import type { BriefRow, Card, CardReply, EmployeeView, HireProposal, NewAttachment, OrgSnapshot, PersonView, Run, SkillInfo, Thread } from "../api/types";
 import { askAboutCard, usePendingAnswers } from "../lib/cardAnswers";
 import type { CardDecision, Decision, Group } from "../lib/decisions";
-import { dateLong, firstName, listNames, plural, runKindLabel, shortAge, taskLabel, threadTitle, whenInline } from "../lib/format";
+import { dateLong, firstName, listNames, plural, shortAge, taskLabel, threadTitle, whenInline } from "../lib/format";
 import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openChat } from "../lib/router";
@@ -53,13 +53,13 @@ export type ItemActions = {
 const handOff = (r: Run): boolean => r.kind.type === "asked" || r.kind.type === "delegated" || r.kind.type === "answered";
 
 /** A thread's own name: its title, a routine's label or a conversation's name. Null for a hand-off with no title of
- *  its own, which `threadTitle` names by how it came, as "Task from Bo". */
+ *  its own, which the Inbox names by who it is for or from, as "for Bo". */
 function ownName(r: Run, employees: EmployeeView[], people: PersonView[]): string | null {
   // A run you started by hand is named by what you asked, not "Manual run".
   if (r.kind.type === "manual" && !r.title) return taskLabel(r.prompt, r.attachments);
   const names = kindNames(r, employees, people);
   const title = threadTitle(r, names);
-  return handOff(r) && title === runKindLabel(r.kind, names) ? null : title;
+  return handOff(r) && !r.title ? null : title;
 }
 
 /** What an entry is about rather than how it came: the thread's own name, and on a hand-off who it is for (or, for an

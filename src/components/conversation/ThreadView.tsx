@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { call, errorMessage } from "../../api/client";
 import type { EmployeeView, NewAttachment, Run, Thread } from "../../api/types";
 import { capitalize, firstName, relTime, typing } from "../../lib/format";
-import { dropConversation, refreshConversations, useOrg, type Conversation } from "../../lib/hooks";
+import { dropConversation, refreshConversations, useOrg, useQuery, type Conversation } from "../../lib/hooks";
 import { closeReader, openReader, ReaderContext, useReaderPath, type ReaderOpener } from "../../lib/reader";
 import { snoozePresets } from "../../lib/status";
 import { toast } from "../../lib/toasts";
@@ -216,12 +216,19 @@ function ReportTurn({ turn, e, blocked, retry, streak = false, earlier = false }
   /** Replies follow it: it steps back so the latest exchange leads. */
   earlier?: boolean;
 }) {
+  const { snap } = useOrg();
   const root = turn.run;
   const failed = didNotFinish(root);
+  // Work handed over says who it is for, as its title no longer does: who asked, or whose run delegated it (not the
+  // manager today, who may not be who handed it over).
+  const parentId = root.kind.type === "delegated" ? root.kind.parentRunId : null;
+  const delegator = useQuery(() => (parentId ? call("run_detail", { runId: parentId }).then((d) => d.run.employeeId) : Promise.resolve(null)), [parentId]);
+  const fromId = root.kind.type === "asked" ? root.kind.askedBy : delegator.data;
+  const from = fromId ? snap?.employees.find((x) => x.id === fromId) : undefined;
   return (
     <div className={`turn ${earlier ? "turn-earlier" : ""}`}>
       <div className="msg-emp">
-        <WhoLine e={e} run={root} label={root.state === "queued" ? "up next" : root.endedAt ? `The report · ${relTime(root.endedAt)}` : isLive(root) ? undefined : "The report"} last={isLive(root)} />
+        <WhoLine e={e} run={root} from={from} label={root.state === "queued" ? "up next" : root.endedAt ? `The report · ${relTime(root.endedAt)}` : isLive(root) ? undefined : "The report"} last={isLive(root)} />
         <div className="msg-body report-body">
           <WorkLine turn={turn} e={e} />
           {turn.events.map((ev, i) => ev.type === "visual" ? <Visual key={i} runId={root.id} id={ev.id} title={ev.title} from={firstName(e.name)} /> : null)}
