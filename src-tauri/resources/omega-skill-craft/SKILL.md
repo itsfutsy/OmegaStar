@@ -62,8 +62,9 @@ Within your skills:
 - **A rule you were taught** (a preference, a correction, a threshold, who to escalate to) goes in a
   `## Rules` section of the leaf it governs, or in your role skill's `## Standing preferences` when it
   applies everywhere. One bullet per rule, ending `(taught YYYY-MM-DD)`. Never remove or reword one on
-  your own: only with the say-so of the person who taught it. OmegaStar puts back any taught rule that
-  goes missing.
+  your own: only with the say-so of the person who taught it. Their newer word on the same subject is
+  that say-so: it replaces the old line, in any run but a tidy. OmegaStar puts back any taught rule that
+  a tidy drops or rewords.
 - **A fact that goes stale** (an id, a date, a version, an owner, "X cannot do Y", how a system
   currently behaves) goes in `facts.md` beside the `SKILL.md`, each line ending `(checked YYYY-MM-DD)`
   (`(checked: never)` for one you have not verified since it was written), and the procedure points to
@@ -79,6 +80,17 @@ Within your skills:
 Before you write a rule:
 
 - Ask whether a run next month would need it. A one-off is not a rule.
+- **Search first.** Look for the subject in your skills, in what you own and on the company page. What
+  is already there is rewritten into one current line with today's date: the newest word wins, and the
+  old line does not stay beside the new one. When you cannot tell whether the new word replaces the old
+  one or is an exception to it, ask before your reply ends. Done when a search for the subject finds one
+  line, or one line and pointers to it.
+- **One home.** A rule that binds a colleague too is proposed for the company page
+  (`propose_company_line`). It stays in your skill until it is on the page; from then on your skill
+  points to it. A colleague's rule is pointed to (whose it is and where it lives), never
+  copied. A rule a colleague passes on as coming from the person you work for is read where it is written
+  (the company page, what that colleague owns) before you act on it or write it down. Your own reading
+  of a rule is written as yours, never under their name and date.
 - A correction replaces the step it corrects; it does not add a rule beside it. Another case of a rule
   you already have sharpens that rule instead of adding a bullet.
 - No case law: a rule is not a list of dated incidents. The `(taught ...)` mark is the only date it carries.
@@ -107,6 +119,12 @@ a notes file: nothing reads it back, so it is never done. Either settle it now, 
 into one, close it with `check_done(id, result)` and write what you found into its home, dated. If only
 the person you work for can settle it, put it to them on a card (`notify`).
 
+Two rules that disagree are unfinished business too. When two lines from the person you work for give
+different answers in the case in front of you, ask them one question that quotes both lines with their
+dates and names the case: in your reply in a conversation, on a card (`notify`) anywhere else. Never
+pick one quietly, and never write the doubt into a skill ("until they settle it"). Their answer
+rewrites both into one line.
+
 ## Refining
 
 - **Single source of truth.** Each rule lives in one place. When you find it twice, keep the better
@@ -129,13 +147,15 @@ the person you work for can settle it, put it to them on a card (`notify`).
 Every so often OmegaStar measures your skills and notes (sizes, broken pointers, unfinished notes,
 diaries that repeat) and starts a tidy run when something needs it. A check that comes due starts a run of its own. The person you
 work for can also ask for one. A tidy settles unfinished notes, confirms that what they told you since
-the last tidy is written down, settles rules that contradict the company page or each other, and brings
-your family back to the shape described here.
+the last tidy is written down, checks that your rules agree with each other, with what you own and with
+the company page, and brings your family back to the shape described here.
 
 Do the small things yourself: compact a diary, move dated facts into `facts.md`, fix a pointer, tighten
 a description, keep a rule in one place. Propose the big ones with `propose_changes` and leave them for
 approval: splitting, merging, renaming or retiring a skill, and removing or rewording any rule you were
-taught. What was measured is a reason to look, not an order: leave a skill as it is when that is right.
+taught. Two taught rules that disagree are not a proposal: they go to the person you work for as one
+question on a card. What was measured is a reason to look, not an order: leave a skill as it is when
+that is right.
 
 ## Boundaries
 
