@@ -32,6 +32,7 @@ const PAGES: Record<string, string> = {
 };
 
 const HEIGHT = "new ResizeObserver(() => parent.postMessage({ omegaHeight: Math.ceil(document.documentElement.getBoundingClientRect().height) }, '*')).observe(document.documentElement);";
+const LINKS = "addEventListener('click', (e) => { const a = e.target.closest?.('a[href]'); const url = a && String(a.href.baseVal ?? a.href); if (url && /^https?:/.test(url) && !url.startsWith(location.origin + '/') && !e.defaultPrevented) { e.preventDefault(); parent.postMessage({ omegaOpen: url }, '*'); } });";
 // The UI adds `?theme=dark` to the address; in a data URL that lands at the end of the page, so the page ends in an
 // open comment that swallows it, and reads the theme from its own address.
 const THEME = "if (/theme=dark$/.test(location.href)) document.documentElement.dataset.theme = 'dark';";
@@ -41,7 +42,7 @@ html { color: var(--ink); background: transparent; font-family: var(--font-ui); 
 
 function pageUrl(id: string): string {
   const page = PAGES[id] ?? `<p style="padding:16px;color:var(--muted)">This page is no longer there.</p>`;
-  const html = `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><style>${tokens}\n${BASE}</style><script>${THEME}${HEIGHT}</script></head><body>${page}</body></html><!--`;
+  const html = `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><style>${tokens}\n${BASE}</style><script>${THEME}${HEIGHT}${LINKS}</script></head><body>${page}</body></html><!--`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 

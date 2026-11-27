@@ -1,5 +1,6 @@
 //! Pages an employee shows in a message (`show`): saved with the run, and served on the `omega-visual` scheme
-//! to a sealed frame, in OmegaStar's look, with no way out to the network or the app.
+//! to a sealed frame, in OmegaStar's look, with no way out to the network or the app. A click on a web link is
+//! the one thing a page passes out: its address, for the app to open in your browser.
 
 use super::*;
 use base64::Engine;
@@ -23,6 +24,13 @@ line-height: 1.5; font-feature-settings: var(--font-features); -webkit-font-smoo
 /// Tells the frame how tall the page is, whenever that changes.
 const HEIGHT: &str = "new ResizeObserver(() => parent.postMessage({ omegaHeight: \
 Math.ceil(document.documentElement.getBoundingClientRect().height) }, \"*\")).observe(document.documentElement);";
+/// Tells the frame which web link was clicked, since the sealed frame can open nothing itself: not a new window,
+/// and not the link in its own place, which would only blank the page. A link into the page itself (on Windows the
+/// page's own address is a web address too) and a click the page handled are left alone.
+const LINKS: &str = "addEventListener(\"click\", (e) => { const a = e.target.closest?.(\"a[href]\"); \
+const url = a && String(a.href.baseVal ?? a.href); \
+if (url && /^https?:/.test(url) && !url.startsWith(location.origin + \"/\") && !e.defaultPrevented) { e.preventDefault(); \
+parent.postMessage({ omegaOpen: url }, \"*\"); } });";
 
 /// The MIME type of a local image, by its extension.
 pub fn image_mime(path: &Path) -> Option<&'static str> {
@@ -69,7 +77,7 @@ impl Office {
         Ok(json!({ "shown": true, "note": "It appears above your message. Do not repeat in words what it shows." }))
     }
 
-    /// A page as its frame loads it: OmegaStar's look and the height reporter first, then the page.
+    /// A page as its frame loads it: OmegaStar's look and the height and link reporters first, then the page.
     pub fn visual_page(&self, run_id: &str, id: &str, dark: bool) -> Result<Vec<u8>> {
         let plain = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
         if !plain(run_id) || !plain(id) {
@@ -92,7 +100,7 @@ src: url(data:font/woff2;base64,{inter}) format(\"woff2\"); }}\n{BASE}"
         )
     });
     let theme = if dark { "dark" } else { "light" };
-    format!("<!doctype html><html data-theme=\"{theme}\"><head><meta charset=\"utf-8\"><style>{style}</style><script>{HEIGHT}</script></head>")
+    format!("<!doctype html><html data-theme=\"{theme}\"><head><meta charset=\"utf-8\"><style>{style}</style><script>{HEIGHT}{LINKS}</script></head>")
 }
 
 /// The page with every local image it names by full path (`src="/Users/me/shot.png"`, `url(/Users/me/bg.webp)`,
@@ -152,10 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn a_page_gets_the_theme_and_the_height_reporter_first() {
+    fn a_page_gets_the_theme_and_the_height_and_link_reporters_first() {
         let h = head(true);
         assert!(h.starts_with("<!doctype html><html data-theme=\"dark\"><head>"), "{h}");
-        assert!(h.contains("--ink:") && h.contains("font-family: \"Inter Variable\"") && h.contains("omegaHeight"), "{h}");
+        assert!(h.contains("--ink:") && h.contains("font-family: \"Inter Variable\"") && h.contains("omegaHeight") && h.contains("omegaOpen"), "{h}");
         assert!(head(false).contains("data-theme=\"light\""));
     }
 }
