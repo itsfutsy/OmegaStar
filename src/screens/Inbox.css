@@ -172,6 +172,12 @@
 .d-sec-n { font-weight: 600; color: var(--muted); }
 .d-report-body { margin-top: 14px; }
 .d-report-body .md { font-size: var(--t-base); line-height: 1.6; color: var(--ink-2); }
+/* Your questions about a card: each in your words, its answer under it, a rule between two. */
+.d-qa { padding: 14px 0 2px; }
+.d-qa + .d-qa { margin-top: 14px; border-top: 1px solid var(--line); }
+.d-qa-q { margin: 0; max-width: 64ch; font-size: var(--t-base); font-weight: 600; line-height: 1.5; color: var(--ink); text-wrap: pretty; white-space: pre-wrap; }
+.d-qa .d-report-body { margin-top: 8px; }
+.d-qa-wait { margin: 8px 0 0; font-size: var(--t-sm); color: var(--muted); }
 .d-also-list { list-style: none; margin: 0; padding: 0; }
 .d-also-list > li + li { border-top: 1px solid var(--line); }
 /* A row's hover fill is inset past its words and rounded; the rules between rows keep the heading's edges. */

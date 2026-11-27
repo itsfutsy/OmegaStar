@@ -343,7 +343,7 @@ export function previewTransport(): Transport {
     const c = r.cards[card];
     if (!c) throw notFound("That card is gone.");
     const root = need(rootOf(r));
-    if (answer.type === "ask") return [respond(newRun(r.employeeId, { type: "reply", toRunId: root.id, label: root.title ?? "Report", task: startedByYou(root), card: true }, answer.text, { aboutCard: true }))];
+    if (answer.type === "ask") return [respond(newRun(r.employeeId, { type: "reply", toRunId: root.id, label: root.title ?? "Report", task: startedByYou(root), card: true }, `About your card "${c.message}", which stays open until I answer it:\n\n${answer.text}`, { aboutCard: true }))];
     if (answer.type === "later") {
       Object.assign(c, { backAt: answer.until, parked: c.timesBack > 0 });
       w.inbox = w.inbox.filter((id) => id !== root.id);

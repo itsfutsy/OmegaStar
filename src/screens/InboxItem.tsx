@@ -10,7 +10,7 @@ import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openChat } from "../lib/router";
 import { toolName } from "../lib/rules";
 import { toast } from "../lib/toasts";
-import { activityAt, archivable, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
+import { activityAt, archivable, askedAbout, askedText, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
 import { kindNames } from "../lib/workTitle";
 import { BlockedCard } from "../components/BlockedCard";
 import { Icon, type IconName } from "../components/Icon";
@@ -360,6 +360,26 @@ function Report({ who, text }: { who: string; text: string | null }) {
   );
 }
 
+/** What you asked about a decision's cards and what came back, oldest first. The answer is a reply in the card's
+ *  thread, which an open card's entry does not show, so it is said here, under the card it is about. */
+function Asked({ runs, who }: { runs: Run[]; who: string }) {
+  if (!runs.length) return null;
+  return (
+    <section className="d-sec d-asked" aria-label={`Your questions to ${who}`}>
+      <h3 className="d-sec-h">You asked {who}</h3>
+      {runs.map((r) => (
+        <div key={r.id} className="d-qa">
+          <p className="d-qa-q">{askedText(r)}</p>
+          {isLive(r)
+            ? <p className="d-qa-wait">{r.state === "queued" ? `${who} hasn't started on it yet.` : `${who} is answering…`}</p>
+            : r.summary?.trim() ? <div className="d-report-body"><Markdown text={r.summary} /></div>
+            : <p className="d-qa-wait">{firstLine(r)}</p>}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 /** The main action's button for the action bar: black, with ↵ on it. */
 function Main({ label, icon, disabled, title, onClick }: { label: string; icon?: IconName; disabled?: boolean; title?: string; onClick: () => void }) {
   return (
@@ -466,7 +486,9 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
   const open = d.type === "card" ? d.cards.filter((c) => isOpen(c.card)) : [];
   const briefed = open.length > 0 && open.every((c) => c.card.brief.length > 0);
   const memo = d.type === "card" && d.cards.length === 1 && d.cards[0].card.brief.length > 0;
-  const report = d.type === "answered" || d.type === "proposal" || failures || briefed ? null : d.run.summary;
+  const asked = d.type === "card" ? askedAbout(d.thread, d.run) : [];
+  // A reply that asks again holds the card, and its report is the answer above.
+  const report = d.type === "answered" || d.type === "proposal" || failures || briefed || (d.type === "card" && d.run.aboutCard) ? null : d.run.summary;
   return (
     <>
       {failures
@@ -475,6 +497,7 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
       <Title text={d.type === "answered" ? topic(d.thread, employees, people) : title} memo={memo} />
       {why && !memo ? <p className="d-why">{why}</p> : null}
       {body}
+      <Asked runs={asked} who={who} />
       <Report who={who} text={report} />
       {foot ? actions(foot) : null}
     </>
