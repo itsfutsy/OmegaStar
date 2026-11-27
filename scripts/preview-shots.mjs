@@ -178,7 +178,6 @@ const SHOTS = [
   S("inbox", "inbox-keys", "full", "#/inbox", { act: (p) => p.getByRole("button", { name: "Keyboard shortcuts" }).click() }),
   S("inbox", "proposal-sheet", "full", "#/inbox", { act: (p) => p.getByRole("button", { name: "Review & hire" }).click() }),
   S("inbox", "snoozed", "full", "#/inbox/snoozed"),
-  S("inbox", "parked", "full", "#/inbox/parked"),
   S("inbox", "archive", "full", "#/inbox/archive"),
   S("inbox", "inbox", "empty", "#/inbox"),
   S("inbox", "archive", "empty", "#/inbox/archive"),

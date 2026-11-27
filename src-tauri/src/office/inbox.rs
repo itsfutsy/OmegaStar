@@ -473,7 +473,7 @@ impl Office {
         Ok(back)
     }
 
-    /// The runs holding a card you parked, newest first: your Parked list.
+    /// The runs holding a card you parked, newest first: the parked cards in your Later list.
     pub fn parked_runs(&self) -> Result<Vec<Run>> {
         self.db().parked_runs()
     }
