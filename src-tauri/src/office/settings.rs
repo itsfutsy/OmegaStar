@@ -653,6 +653,11 @@ mod tests {
         };
 
         assert!(office.save_settings(with("api-key", "api-key")).is_err(), "an API key is not the management key");
+        office.save_settings(with("api-key", "")).unwrap();
+        office.refresh_usage().await;
+        let u = office.usage_limits();
+        assert!(u.subscription, "a pool with no management key is not taken for an API-key account with no limits");
+        assert!(u.proxy_issue.is_some_and(|i| i.contains("management key")), "it says how to show the limits");
         office.save_settings(with("api-key", "wrong-key")).unwrap();
         assert_eq!(office.usage_limits().held_until, None, "the signed-in account's hold means nothing for the pool");
         assert_eq!(office.db().held_until().unwrap(), None);
