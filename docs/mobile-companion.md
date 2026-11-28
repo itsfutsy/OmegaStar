@@ -30,6 +30,7 @@ Goals for version 1:
 
 - See the Inbox on the phone and act on it: answer cards, reply, allow blocked tools, approve tidies, decide hire
   proposals, mark done, retry a failed run.
+- See what each employee is doing, and start a conversation with one.
 - Push notifications when something needs you.
 - Pair by scanning a QR code. No accounts, no logins.
 - The relay cannot read or forge anything.
@@ -279,7 +280,7 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 |---|---|---|---|
 | `inbox` | none | `{ threads: Thread[] }` | New. Only the threads that lead an Inbox row, taken from `Office::conversations`. |
 | `proposals` | none | `HireProposal[]` | Open proposals only. |
-| `team` | none | `{ id, name, title, hue, hasImage }[]` | New. You, employees and people, without the image data. |
+| `team` | none | `{ id, name, title, hue, hasImage, activity }[]` | New. You, employees and people, without the image data. `activity` is below. |
 | `member_image` | `{ id }` | data URL | New. One member's picture. The phone caches it. |
 | `thread` | `{ runId }` | `Thread` | Existing. |
 | `card_file` | `{ runId, card }` | text | Existing. Up to 200 KB. |
@@ -299,6 +300,18 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 | `set_archived` | `{ runId, archived }` | `string[]` | Existing. Done. |
 | `unarchive_runs` | `{ runIds }` | `null` | Existing. Undo for Done. |
 | `retry_run` | `{ runId }` | `Run` | Existing. |
+
+`activity` is what an employee is doing, as the org chart shows it, and `null` for you and the people you added:
+
+| `kind` | Other fields | Means |
+|---|---|---|
+| `working` | `run: Run` | Working on `run`. With several, the oldest running. |
+| `queued` | `run: Run` | Nothing running; `run` is up next. |
+| `attention` | `run: Run` | Their last run needs you: "Needs your OK" when `run.denials` is not empty, "Interrupted" when `run.state` is `lost`, else "Last run failed". |
+| `idle` | `nextRun: string \| null` | When a schedule runs them next, or `null`. |
+
+`thread` with `run.id` opens that run's conversation. The "Start with" suggestions of a new conversation are fixed
+text in the desktop's interface, not per employee, so the remote API has no command for them.
 
 ### Session
 
@@ -489,9 +502,10 @@ It never starts in a sandbox office.
 
 | Existing method | Added call |
 |---|---|
-| `run_updated` | `remote.changed(Inbox)` |
+| `run_updated` | `remote.changed(Inbox)` and `remote.changed(Team)`: what each employee is doing follows their runs |
 | `proposal_updated` | `remote.changed(Proposals)` |
 | `org_changed` | `remote.changed(Team)` and `remote.changed(Inbox)`: who is in the Inbox follows the team |
+| `settings_changed` | `remote.changed(Team)`: pausing schedules takes away each employee's next run |
 | `show` | `remote.push(title)` |
 
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.
@@ -573,7 +587,7 @@ code while pairing (blurred until clicked), the paired phone's name, the push sw
 - **Register for push** and send `push_register` when the token is new or changed.
 
 Screens for version 1: pairing scanner, Inbox list, item (report, cards and their actions), reply, blocked tool,
-hire proposal, settings.
+hire proposal, team, new conversation, settings.
 
 ## 14. Security and privacy
 

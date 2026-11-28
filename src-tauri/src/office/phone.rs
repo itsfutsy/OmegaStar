@@ -20,6 +20,35 @@ pub struct TeamMember {
     pub title: String,
     pub hue: u16,
     pub has_image: bool,
+    pub activity: Option<Activity>,
+}
+
+/// What an employee is doing.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Activity {
+    Working { run: Run },
+    Queued { run: Run },
+    Attention { run: Run },
+    Idle {
+        #[serde(rename = "nextRun")]
+        next_run: Option<Ts>,
+    },
+}
+
+impl From<&EmployeeView> for Activity {
+    fn from(v: &EmployeeView) -> Activity {
+        let live = |state| v.live.iter().find(|r| r.state == state).cloned();
+        if let Some(run) = live(RunState::Running) {
+            Activity::Working { run }
+        } else if let Some(run) = live(RunState::Queued) {
+            Activity::Queued { run }
+        } else if let (Presence::Attention, Some(run)) = (v.presence, &v.last_run) {
+            Activity::Attention { run: run.clone() }
+        } else {
+            Activity::Idle { next_run: v.next_fire }
+        }
+    }
 }
 
 /// The Inbox, as the phone shows it.
@@ -41,13 +70,16 @@ impl Office {
         Ok(self.db().company()?.unwrap_or_else(Company::unset).name)
     }
 
-    /// You, your employees and the people you added, without their pictures.
+    /// You, your employees with what each is doing, and the people you added, without their pictures.
     pub fn members(&self) -> Result<Vec<TeamMember>> {
-        let db = self.db();
-        let company = db.company()?.unwrap_or_else(Company::unset);
-        let you = TeamMember { id: YOU_ID.into(), name: company.ceo_name, title: company.title, hue: 0, has_image: company.image.is_some() };
-        let employees = db.employees()?.into_iter().map(|e| TeamMember { id: e.id, name: e.name, title: e.title, hue: e.hue, has_image: e.image.is_some() });
-        let people = db.people()?.into_iter().map(|p| TeamMember { id: p.id, name: p.name, title: p.title, hue: p.hue, has_image: p.image.is_some() });
+        let OrgSnapshot { company, employees, people, .. } = self.org()?;
+        let you = TeamMember { id: YOU_ID.into(), name: company.ceo_name, title: company.title, hue: 0, has_image: company.image.is_some(), activity: None };
+        let employees = employees.into_iter().map(|v| {
+            let activity = Some(Activity::from(&v));
+            let e = v.employee;
+            TeamMember { id: e.id, name: e.name, title: e.title, hue: e.hue, has_image: e.image.is_some(), activity }
+        });
+        let people = people.into_iter().map(|p| p.person).map(|p| TeamMember { id: p.id, name: p.name, title: p.title, hue: p.hue, has_image: p.image.is_some(), activity: None });
         Ok(std::iter::once(you).chain(employees).chain(people).collect())
     }
 

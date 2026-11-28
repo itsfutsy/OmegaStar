@@ -359,7 +359,9 @@ fn too_large() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Run, RunKind, RunState};
     use crate::remote::fixture::{self, Fixture};
+    use crate::store::Store;
 
     fn req(id: u64, cmd: &str, args: Value, op: Option<&str>) -> Request {
         Request { id, cmd: cmd.into(), args, op: op.map(String::from) }
@@ -471,6 +473,45 @@ mod tests {
             let refused = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap_err();
             assert_eq!(serde_json::to_value(&refused).unwrap()["code"], code, "{args}");
         }
+    }
+
+    /// Member `id`'s `activity` in the phone's `team` read.
+    fn activity_of(f: &Fixture, id: &str) -> Value {
+        let team = call(&f.office, &req(0, "team", Value::Null, None)).unwrap();
+        team.as_array().unwrap().iter().find(|m| m["id"] == id).unwrap()["activity"].clone()
+    }
+
+    #[tokio::test]
+    async fn team_says_what_each_employee_is_doing_as_the_org_chart_does() {
+        let f = Fixture::new("remote-api-team").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let team = call(&f.office, &req(0, "team", Value::Null, None)).unwrap();
+        for m in team.as_array().unwrap().iter().filter(|m| m["id"] != f.ada.as_str()) {
+            assert_eq!(m["activity"], Value::Null, "you and the people you added never run: {}", m["name"]);
+        }
+        let next = f.office.org().unwrap().employees.into_iter().find(|v| v.employee.id == f.ada).unwrap().next_fire;
+        assert!(next.is_some(), "Ada's weekly review");
+        assert_eq!(activity_of(&f, &f.ada), json!({"kind": "idle", "nextRun": next}), "the org chart's next run");
+
+        let mut failed = Run::new(&f.ada, RunKind::Manual, "Count the stock again.".into(), chrono::Utc::now());
+        failed.state = RunState::Failed;
+        failed.ended_at = Some(failed.created_at);
+        let mut running = Run::new(&f.ada, RunKind::Manual, "Price the new menu.".into(), chrono::Utc::now());
+        running.state = RunState::Running;
+        let db = Store::open(&f.dir.join("office.db")).unwrap();
+        assert!(db.insert_run(&failed, &failed.id).unwrap());
+        let needs_you = activity_of(&f, &f.ada);
+        assert_eq!((needs_you["kind"].as_str(), needs_you["run"]["id"].as_str()), (Some("attention"), Some(failed.id.as_str())));
+
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": "Draft the spring menu."}), Some(OP));
+        let started = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap();
+        let queued = activity_of(&f, &f.ada);
+        assert_eq!((queued["kind"].as_str(), &queued["run"]["id"]), (Some("queued"), &started["id"]), "up next, with the run to open");
+
+        assert!(db.insert_run(&running, &running.id).unwrap());
+        let working = activity_of(&f, &f.ada);
+        assert_eq!((working["kind"].as_str(), working["run"]["id"].as_str()), (Some("working"), Some(running.id.as_str())), "working comes before up next");
     }
 
     #[tokio::test]
