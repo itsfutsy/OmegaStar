@@ -68,20 +68,30 @@ impl From<&EmployeeView> for Activity {
     }
 }
 
-/// What a run is about, on one line of at most `WHAT_CHARS` characters: its name, else a conversation's or a reply's
-/// label, else what was asked in its first sentence, else what kind of run it is. A Rust copy of the desktop's
-/// `workTitle` (`lib/workTitle.ts`), except that a run about a person or a colleague is not named after them.
+/// A short name for what a run is about, on one line of at most `WHAT_CHARS` characters, a long one ending in `…`: its
+/// name, else a conversation's or a reply's label, else what was asked in its first sentence, else what kind of run
+/// it is. Close to the org chart's `workTitle` (`lib/workTitle.ts`) but not word for word: it names no person or
+/// colleague, drops more openers from what was asked ("ok", "hey, can you"), says "New task" for a blank one, names
+/// other kinds in the words written for the employee ("A colleague's answer"), keeps up to 120, and capitalises.
 fn what(run: &Run) -> String {
     let what = match (&run.title, &run.kind) {
         (Some(title), _) => title.clone(),
         (None, RunKind::Reply { label, .. } | RunKind::Task { label, .. }) => label.clone(),
         (None, RunKind::Manual) if run.prompt == DEFAULT_PROMPT => threads::report_label(&run.kind),
         (None, RunKind::Manual | RunKind::Delegated { .. } | RunKind::Asked { .. }) => threads::task_label(&run.prompt, &run.attachments),
+        // The org chart's words: `claude::kind_label` is written to the employee, so its "your skills" would read as yours.
+        (None, RunKind::Tidy { reason: TidyReason::Approved, .. }) => "Tidy: approved changes".into(),
+        (None, RunKind::Tidy { .. }) => "Tidy".into(),
         (None, kind) => threads::report_label(kind),
     };
-    let what = claude::clip(&claude::one_line(&what), WHAT_CHARS);
+    let what = claude::one_line(&what);
     let mut chars = what.chars();
-    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+    let what: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
+    if what.chars().count() <= WHAT_CHARS {
+        return what;
+    }
+    let cut: String = what.chars().take(WHAT_CHARS - 1).collect();
+    format!("{}…", cut.trim_end_matches(|c: char| c == '…' || c.is_whitespace()))
 }
 
 /// The Inbox, as the phone shows it.

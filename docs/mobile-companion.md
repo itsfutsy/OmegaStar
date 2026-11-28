@@ -310,8 +310,11 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 | `attention` | `runId`, `reason` | Their last run needs you. `reason` is `needsYourOk` (it was denied a tool), `interrupted` (it was cut off before it finished) or `failed`. |
 | `idle` | `nextRun: string \| null` | When a schedule runs them next, or `null`. |
 
-`what` is the run's name as the org chart writes it after "Working" or "Up next", on one line of at most 120
-characters and an ellipsis, so `team` stays small whatever anyone typed. `thread` with `runId` opens that
+`what` is a short name for the run, on one line of at most 120 characters, a long one ending in `…`, so `team`
+stays small whatever anyone typed. It is close to what the org chart writes after "Working" or "Up next" but not word
+for word: it names no person or colleague, drops more openers from what was asked, says "New task" for a blank one,
+names other kinds in the words written for the employee ("A colleague's answer"), keeps 120 characters where the card
+shows 52, and starts with a capital. `thread` with `runId` opens that
 run's conversation. The "Start with" suggestions of a new conversation are fixed
 text in the desktop's interface, not per employee, so the remote API has no command for them.
 

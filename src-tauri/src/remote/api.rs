@@ -365,7 +365,7 @@ fn too_large() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Denial, Run, RunKind, RunState};
+    use crate::model::{Denial, Run, RunKind, RunState, TidyReason};
     use crate::remote::fixture::{self, Fixture};
     use crate::store::Store;
 
@@ -538,9 +538,28 @@ mod tests {
         let team = run(&f.office, &mut ops, Kind::Read, &req(2, "team", Value::Null, None), now).unwrap();
         let ada = team.as_array().unwrap().iter().find(|m| m["id"] == f.ada.as_str()).unwrap();
         assert_eq!(ada["activity"]["kind"], "queued");
-        assert!(ada["activity"]["what"].as_str().unwrap().chars().count() <= 123, "120 and an ellipsis: {}", ada["activity"]["what"]);
+        assert!(ada["activity"]["what"].as_str().unwrap().chars().count() <= 120, "{}", ada["activity"]["what"]);
         let after = serde_json::to_string(&team).unwrap().len();
         assert!(after < before + 300, "team grew from {before} to {after} bytes");
+    }
+
+    #[tokio::test]
+    async fn what_names_a_run_in_at_most_120_characters_ending_in_one_ellipsis() {
+        let tidy = |reason| RunKind::Tidy { reason, signature: vec![], plan: None };
+        let schedule = |label: String| RunKind::Scheduled { schedule_id: "s1".into(), slot: chrono::Utc::now(), label, quiet: true, model: None, effort: None, review: false };
+        let cases = [
+            (tidy(TidyReason::Auto), "Tidy".to_string()),
+            (tidy(TidyReason::Approved), "Tidy: approved changes".into()),
+            (schedule("weekly review of every shelf ".repeat(10)), "Weekly review of every shelf ".to_string() + &"weekly review of every shelf ".repeat(3) + "wee…"),
+            (RunKind::Manual, format!("X{}…", "x".repeat(118))),
+        ];
+        for (kind, what) in cases {
+            let f = Fixture::new("remote-api-what").await;
+            let mut running = Run::new(&f.ada, kind, "x".repeat(300), chrono::Utc::now());
+            running.state = RunState::Running;
+            assert!(Store::open(&f.dir.join("office.db")).unwrap().insert_run(&running, &running.id).unwrap());
+            assert_eq!(activity_of(&f, &f.ada)["what"], what.as_str());
+        }
     }
 
     #[tokio::test]
