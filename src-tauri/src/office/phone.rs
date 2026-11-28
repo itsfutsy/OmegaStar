@@ -23,32 +23,65 @@ pub struct TeamMember {
     pub activity: Option<Activity>,
 }
 
-/// What an employee is doing.
+/// The longest `what` the phone is sent, so `team` stays small whatever anyone typed.
+const WHAT_CHARS: usize = 120;
+
+/// What an employee is doing, as the org chart's status line says it (`employeeState` in `lib/memberState.ts`), with
+/// the run it is about, which the phone opens with `thread`.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Activity {
-    Working { run: Run },
-    Queued { run: Run },
-    Attention { run: Run },
-    Idle {
-        #[serde(rename = "nextRun")]
-        next_run: Option<Ts>,
-    },
+    Working { run_id: String, what: String },
+    Queued { run_id: String, what: String },
+    Attention { run_id: String, reason: Attention },
+    Idle { next_run: Option<Ts> },
+}
+
+/// Why an employee's last run needs you.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Attention {
+    NeedsYourOk,
+    Interrupted,
+    Failed,
 }
 
 impl From<&EmployeeView> for Activity {
     fn from(v: &EmployeeView) -> Activity {
-        let live = |state| v.live.iter().find(|r| r.state == state).cloned();
+        let live = |state| v.live.iter().find(|r| r.state == state);
         if let Some(run) = live(RunState::Running) {
-            Activity::Working { run }
+            Activity::Working { run_id: run.id.clone(), what: what(run) }
         } else if let Some(run) = live(RunState::Queued) {
-            Activity::Queued { run }
+            Activity::Queued { run_id: run.id.clone(), what: what(run) }
         } else if let (Presence::Attention, Some(run)) = (v.presence, &v.last_run) {
-            Activity::Attention { run: run.clone() }
+            let reason = if !run.denials.is_empty() {
+                Attention::NeedsYourOk
+            } else if run.state == RunState::Lost {
+                Attention::Interrupted
+            } else {
+                Attention::Failed
+            };
+            Activity::Attention { run_id: run.id.clone(), reason }
         } else {
             Activity::Idle { next_run: v.next_fire }
         }
     }
+}
+
+/// What a run is about, on one line of at most `WHAT_CHARS` characters: its name, else a conversation's or a reply's
+/// label, else what was asked in its first sentence, else what kind of run it is. A Rust copy of the desktop's
+/// `workTitle` (`lib/workTitle.ts`), except that a run about a person or a colleague is not named after them.
+fn what(run: &Run) -> String {
+    let what = match (&run.title, &run.kind) {
+        (Some(title), _) => title.clone(),
+        (None, RunKind::Reply { label, .. } | RunKind::Task { label, .. }) => label.clone(),
+        (None, RunKind::Manual) if run.prompt == DEFAULT_PROMPT => threads::report_label(&run.kind),
+        (None, RunKind::Manual | RunKind::Delegated { .. } | RunKind::Asked { .. }) => threads::task_label(&run.prompt, &run.attachments),
+        (None, kind) => threads::report_label(kind),
+    };
+    let what = claude::clip(&claude::one_line(&what), WHAT_CHARS);
+    let mut chars = what.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 /// The Inbox, as the phone shows it.

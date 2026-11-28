@@ -305,12 +305,14 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 
 | `kind` | Other fields | Means |
 |---|---|---|
-| `working` | `run: Run` | Working on `run`. With several, the oldest running. |
-| `queued` | `run: Run` | Nothing running; `run` is up next. |
-| `attention` | `run: Run` | Their last run needs you: "Needs your OK" when `run.denials` is not empty, "Interrupted" when `run.state` is `lost`, else "Last run failed". |
+| `working` | `runId`, `what` | Working on `what`. With several runs going, the oldest running. |
+| `queued` | `runId`, `what` | Nothing running; `what` is up next. |
+| `attention` | `runId`, `reason` | Their last run needs you. `reason` is `needsYourOk` (it was denied a tool), `interrupted` (it was cut off before it finished) or `failed`. |
 | `idle` | `nextRun: string \| null` | When a schedule runs them next, or `null`. |
 
-`thread` with `run.id` opens that run's conversation. The "Start with" suggestions of a new conversation are fixed
+`what` is the run's name as the org chart writes it after "Working" or "Up next", on one line of at most 120
+characters and an ellipsis, so `team` stays small whatever anyone typed. `thread` with `runId` opens that
+run's conversation. The "Start with" suggestions of a new conversation are fixed
 text in the desktop's interface, not per employee, so the remote API has no command for them.
 
 ### Session

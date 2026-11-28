@@ -359,7 +359,7 @@ fn too_large() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Run, RunKind, RunState};
+    use crate::model::{Denial, Run, RunKind, RunState};
     use crate::remote::fixture::{self, Fixture};
     use crate::store::Store;
 
@@ -501,17 +501,40 @@ mod tests {
         running.state = RunState::Running;
         let db = Store::open(&f.dir.join("office.db")).unwrap();
         assert!(db.insert_run(&failed, &failed.id).unwrap());
-        let needs_you = activity_of(&f, &f.ada);
-        assert_eq!((needs_you["kind"].as_str(), needs_you["run"]["id"].as_str()), (Some("attention"), Some(failed.id.as_str())));
+        assert_eq!(activity_of(&f, &f.ada), json!({"kind": "attention", "runId": failed.id, "reason": "failed"}));
+        let denial = Denial { tool: "Bash".into(), brief: "npm publish".into(), suggested_rule: "Bash(npm publish)".into() };
+        for (state, denials, reason) in [(RunState::Lost, vec![], "interrupted"), (RunState::Succeeded, vec![denial], "needsYourOk")] {
+            let later = chrono::Utc::now() + chrono::Duration::seconds(1);
+            let ended = Run { state, denials, ended_at: Some(later), ..Run::new(&f.ada, RunKind::Manual, "Count it.".into(), later) };
+            assert!(db.insert_run(&ended, &ended.id).unwrap());
+            assert_eq!(activity_of(&f, &f.ada), json!({"kind": "attention", "runId": ended.id, "reason": reason}));
+        }
 
         let start = req(1, "start_task", json!({"employeeId": f.ada, "text": "Draft the spring menu."}), Some(OP));
         let started = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap();
-        let queued = activity_of(&f, &f.ada);
-        assert_eq!((queued["kind"].as_str(), &queued["run"]["id"]), (Some("queued"), &started["id"]), "up next, with the run to open");
+        let queued = json!({"kind": "queued", "runId": started["id"], "what": "Draft the spring menu"});
+        assert_eq!(activity_of(&f, &f.ada), queued, "up next, with the run to open");
 
         assert!(db.insert_run(&running, &running.id).unwrap());
-        let working = activity_of(&f, &f.ada);
-        assert_eq!((working["kind"].as_str(), working["run"]["id"].as_str()), (Some("working"), Some(running.id.as_str())), "working comes before up next");
+        let working = json!({"kind": "working", "runId": running.id, "what": "Price the new menu"});
+        assert_eq!(activity_of(&f, &f.ada), working, "working comes before up next");
+    }
+
+    #[tokio::test]
+    async fn team_stays_small_after_a_conversation_started_with_a_huge_message() {
+        let f = Fixture::new("remote-api-team-huge").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let before = serde_json::to_string(&run(&f.office, &mut ops, Kind::Read, &req(0, "team", Value::Null, None), now).unwrap()).unwrap().len();
+        let huge = "Count every jar on every shelf ".repeat(100_000);
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": huge}), Some(OP));
+        assert!(run(&f.office, &mut ops, Kind::Write, &start, now).is_ok());
+        let team = run(&f.office, &mut ops, Kind::Read, &req(2, "team", Value::Null, None), now).unwrap();
+        let ada = team.as_array().unwrap().iter().find(|m| m["id"] == f.ada.as_str()).unwrap();
+        assert_eq!(ada["activity"]["kind"], "queued");
+        assert!(ada["activity"]["what"].as_str().unwrap().chars().count() <= 123, "120 and an ellipsis: {}", ada["activity"]["what"]);
+        let after = serde_json::to_string(&team).unwrap().len();
+        assert!(after < before + 300, "team grew from {before} to {after} bytes");
     }
 
     #[tokio::test]
