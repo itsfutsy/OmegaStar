@@ -166,7 +166,7 @@ impl Ops {
 }
 
 /// Answers a read or write in the paired room. A write runs once per `op`, a UUID: a resent one gets the saved
-/// answer, which is `too_large` when the result would not fit in a frame.
+/// answer, which is `too_large` when the write worked and its result would not fit in a frame.
 pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Instant) -> Answer {
     if kind != Kind::Write {
         return call(office, req);
@@ -178,7 +178,7 @@ pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Insta
         return saved;
     }
     let mut answer = call(office, req);
-    if !fits(&res(req.id, &answer)) {
+    if answer.is_ok() && !fits(&res(req.id, &answer)) {
         answer = Err(too_large());
     }
     ops.put(op, now, answer.clone());
