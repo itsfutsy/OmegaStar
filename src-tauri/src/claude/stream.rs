@@ -82,6 +82,8 @@ pub struct Parsed {
     pub chrome: Option<bool>,
     /// From a top-level result line.
     pub spend: Option<Spend>,
+    /// From a top-level result line: the tokens used since the previous result, model by model.
+    pub tokens: Vec<ModelTokens>,
     /// Claude Code took this message from stdin: the id it was sent with (`steer_line`). Its echo is not kept.
     pub replayed: Option<String>,
 }
@@ -200,6 +202,19 @@ fn limit_of(v: &Value, ok: bool) -> Option<Limit> {
 fn spend_of(v: &Value) -> Spend {
     let own = v["model_usage_since_last_result"].as_object().and_then(|m| m.values().map(|u| u["costUSD"].as_f64()).sum::<Option<f64>>());
     Spend { own, total: v["total_cost_usd"].as_f64() }
+}
+
+/// The tokens a result line says each model used since the previous result (`model_usage_since_last_result`), less
+/// cache re-reads (`ModelTokens`). A model that used none is left out.
+fn tokens_of(v: &Value) -> Vec<ModelTokens> {
+    let count = |u: &Value| ["inputTokens", "cacheCreationInputTokens", "outputTokens"].iter().filter_map(|k| u[k].as_u64()).sum::<u64>();
+    v["model_usage_since_last_result"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(model, u)| ModelTokens { model: model.clone(), tokens: count(u) })
+        .filter(|m| m.tokens > 0)
+        .collect()
 }
 
 /// The text of a tool result, whether its content is a string or a list of text blocks.
@@ -335,7 +350,10 @@ pub fn parse_line(line: &str, home: &Path) -> Parsed {
                 duration_ms: o.duration_ms,
             });
             p.outcome = Some(o);
-            p.spend = (!nested).then(|| spend_of(&v));
+            if !nested {
+                p.spend = Some(spend_of(&v));
+                p.tokens = tokens_of(&v);
+            }
         }
         "rate_limit_event" => {
             let info = &v["rate_limit_info"];
@@ -1179,6 +1197,16 @@ mod tests {
         assert_eq!(parse_line(&nested, home()).spend, None);
         assert_eq!(last_total(&format!("{}\n{}\n{nested}", line(""), line(r#","model_usage_since_last_result":{}"#).replace("4.5", "6.25"))), Some(6.25));
         assert_eq!(last_total(MULTI_RESULT), None);
+    }
+
+    #[test]
+    fn tokens_are_read_model_by_model_from_result_lines_without_cache_rereads() {
+        let line = |extra: &str| format!(r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":10,"result":"Done.","permission_denials":[]{extra}}}"#);
+        let used = line(r#","model_usage_since_last_result":{"claude-opus-4-5":{"inputTokens":10,"cacheCreationInputTokens":200,"cacheReadInputTokens":90000,"outputTokens":30,"costUSD":0.5},"claude-haiku-4-5":{"inputTokens":0,"outputTokens":0,"costUSD":0}}"#);
+        assert_eq!(parse_line(&used, home()).tokens, vec![ModelTokens { model: "claude-opus-4-5".into(), tokens: 240 }], "a model that used nothing is left out");
+        assert_eq!(parse_line(&line(""), home()).tokens, vec![], "an older build reports none");
+        let nested = used.replace(r#""permission_denials":[]"#, r#""permission_denials":[],"parent_tool_use_id":"toolu_sub""#);
+        assert_eq!(parse_line(&nested, home()).tokens, vec![], "a sub-agent's result is already in its parent's");
     }
 
     #[test]

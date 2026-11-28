@@ -217,7 +217,7 @@ impl Store {
     }
 
     /// The Analytics page's numbers: everyone hired, finished runs per employee per local day, every card that asked you
-    /// something, and each employee's latest weekly number. A run's night is judged by when it was made, as its day is.
+    /// something, each employee's latest weekly number, and the tokens finished runs used. A run's night is judged by when it was made, as its day is.
     pub fn team_stats(&self) -> Result<TeamStats> {
         let mut st = self.conn.prepare("SELECT data, departed_at FROM employees")?;
         let staff = readable(
@@ -269,7 +269,20 @@ impl Store {
         let numbers = st
             .query_map([], |r| Ok(TeamNumber { employee_id: r.get(0)?, metric: text(r, 2)?, value: text(r, 3)?, change: text(r, 4)? }))?
             .collect::<rusqlite::Result<_>>()?;
-        Ok(TeamStats { staff, days, asks, numbers })
+        // A run a colleague asked for or delegated has that colleague's run as its parent.
+        let mut st = self.conn.prepare(concat!(
+            "SELECT date(r.created_at / 1000, 'unixepoch', 'localtime') AS d, r.employee_id, p.employee_id, json_extract(t.value, '$.model') AS m,
+               TOTAL(json_extract(t.value, '$.tokens'))
+             FROM runs r JOIN json_each(r.data, '$.tokens') t LEFT JOIN runs p ON p.id = r.parent_run_id
+             WHERE r.state NOT IN ", active!(), " AND json_valid(r.data)
+             GROUP BY d, r.employee_id, p.employee_id, m ORDER BY d",
+        ))?;
+        let tokens = st
+            .query_map([], |r| {
+                Ok(TeamTokens { day: r.get(0)?, employee_id: r.get(1)?, handed_over_by: r.get(2)?, model: r.get(3)?, tokens: r.get::<_, f64>(4)? as u64 })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(TeamStats { staff, days, asks, numbers, tokens })
     }
 
     /// The newest `limit` runs of the employees still here whose instruction, report or a card's question

@@ -1278,3 +1278,38 @@ fn answering_the_star_ask_before_it_is_due_keeps_it_away() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn team_stats_counts_tokens_to_whoever_did_the_work_and_names_who_handed_it_over() {
+    let dir = temp_dir();
+    let db = Store::open(&dir.join("office.db")).unwrap();
+    let (ada, bo) = (employee("Ada", None), employee("Bo", None));
+    for e in [&ada, &bo] {
+        db.save_employee(e).unwrap();
+    }
+    let used = |model: &str, tokens: u64| ModelTokens { model: model.into(), tokens };
+    let mut own = run(&ada, RunKind::Manual, RunState::Succeeded);
+    own.tokens = vec![used("claude-opus-4-5", 1_000), used("claude-haiku-4-5", 50)];
+    assert!(db.insert_run(&own, &own.id).unwrap());
+    let mut asked = run(&bo, RunKind::Asked { parent_run_id: own.id.clone(), asked_by: ada.id.clone(), task: true }, RunState::Succeeded);
+    asked.tokens = vec![used("claude-opus-4-5", 300)];
+    assert!(db.insert_run(&asked, &asked.id).unwrap());
+    let mut working = run(&bo, RunKind::Manual, RunState::Running);
+    working.tokens = vec![used("claude-opus-4-5", 9)];
+    assert!(db.insert_run(&working, &working.id).unwrap());
+    assert!(db.insert_run(&run(&bo, RunKind::Manual, RunState::Succeeded), "old").unwrap());
+
+    let s = db.team_stats().unwrap();
+    let mut seen: Vec<_> = s.tokens.iter().map(|t| (t.employee_id.as_str(), t.handed_over_by.as_deref(), t.model.as_str(), t.tokens)).collect();
+    seen.sort();
+    let mut want = vec![
+        (ada.id.as_str(), None, "claude-haiku-4-5", 50),
+        (ada.id.as_str(), None, "claude-opus-4-5", 1_000),
+        (bo.id.as_str(), Some(ada.id.as_str()), "claude-opus-4-5", 300),
+    ];
+    want.sort();
+    assert_eq!(seen, want, "finished runs only; a run from before tokens were kept adds nothing");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

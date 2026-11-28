@@ -70,6 +70,18 @@ const scrollToEnd = (p) => p.evaluate(() => {
   }
 });
 
+/** Asks a question on a card in the Inbox, then waits for its answer under the card, or with `answered` off for the
+ *  employee to start on it. */
+const askOnCard = (answered) => async (p) => {
+  await p.locator('[data-row="summary-1:cards"]').click();
+  await p.getByRole("button", { name: "Reply in words" }).click();
+  await p.locator("[data-card-reply]").fill("Which studios still had double bookings?");
+  await p.locator('button[data-tip^="Sends it as a question"]').click();
+  const asked = p.locator(".d-asked");
+  await (answered ? asked.locator(".d-report-body") : asked.getByText("is answering")).waitFor();
+  await asked.scrollIntoViewIfNeeded();
+};
+
 /** Opens the first notes file a reply names in the reader beside it. */
 const openNotes = (p) => p.locator(".msg-emp .md-path").first().click();
 
@@ -163,10 +175,11 @@ const SHOTS = [
 
   S("inbox", "inbox", "full", "#/inbox"),
   S("inbox", "inbox-entry-open", "full", "#/inbox", { act: (p) => p.locator(".inbox-list .item-title").first().click() }),
+  S("inbox", "card-asked", "full", "#/inbox", { act: askOnCard(false) }),
+  S("inbox", "card-answered", "full", "#/inbox", { act: askOnCard(true) }),
   S("inbox", "inbox-keys", "full", "#/inbox", { act: (p) => p.getByRole("button", { name: "Keyboard shortcuts" }).click() }),
   S("inbox", "proposal-sheet", "full", "#/inbox", { act: (p) => p.getByRole("button", { name: "Review & hire" }).click() }),
   S("inbox", "snoozed", "full", "#/inbox/snoozed"),
-  S("inbox", "parked", "full", "#/inbox/parked"),
   S("inbox", "archive", "full", "#/inbox/archive"),
   S("inbox", "inbox", "empty", "#/inbox"),
   S("inbox", "archive", "empty", "#/inbox/archive"),

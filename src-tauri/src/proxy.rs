@@ -7,6 +7,8 @@ use std::time::Duration;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
+const NO_MANAGEMENT_KEY: &str = "Add the CLI proxy's management key in Settings to see its accounts' usage limits.";
+
 /// Why the proxy could not report usage.
 #[derive(Debug)]
 pub struct Failure {
@@ -53,11 +55,12 @@ async fn management(client: &reqwest::Client, p: &ProxySettings, path: &str, bod
     Ok(answer)
 }
 
-/// The pool's usage, as if it were one account, and each account's own. An empty sample when there is no management key or
-/// no Claude account, so the office has no limits to wait for.
+/// The pool's usage, as if it were one account, and each account's own. An empty sample when there is no Claude account,
+/// so the office has no limits to wait for. Without a management key nothing can be read: that is a failure, so the
+/// sidebar says how to show the limits instead of taking the pool for an API-key account with none.
 pub async fn usage(p: &ProxySettings) -> Result<UsageSample, Failure> {
     if p.management_key.is_empty() {
-        return Ok(UsageSample::default());
+        return Err(failure(NO_MANAGEMENT_KEY));
     }
     let client = client();
     let files = management(&client, p, "auth-files", None).await?;
@@ -214,5 +217,7 @@ mod tests {
         assert!(wrong.refused && wrong.message.contains("invalid management key"), "{}", wrong.message);
         let away = usage(&proxy("http://127.0.0.1:1", "right-key")).await.unwrap_err();
         assert!(!away.refused, "a proxy that is down is asked again later");
+        let keyless = usage(&proxy(&url, "")).await.unwrap_err();
+        assert_eq!((keyless.message.as_str(), keyless.refused), (NO_MANAGEMENT_KEY, false), "no key says how to show the limits");
     }
 }

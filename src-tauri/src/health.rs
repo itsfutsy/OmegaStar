@@ -149,9 +149,9 @@ fn find_bare_word(hay: &str, word: &str) -> Option<usize> {
     })
 }
 
-const LOOSE_PHRASES: [&str; 12] = [
+const LOOSE_PHRASES: [&str; 13] = [
     "not yet verified", "not yet confirmed", "not yet tested", "not yet checked", "to be verified", "to be confirmed", "to be checked",
-    "verify next", "check next", "verify later", "check later", "revisit",
+    "verify next", "check next", "verify later", "check later", "revisit", "to be decided",
 ];
 
 /// Where, in characters, a line reads like a reminder to self rather than an instruction. Deliberately
@@ -160,7 +160,7 @@ const LOOSE_PHRASES: [&str; 12] = [
 /// a finding only says a line may be unfinished.
 fn loose_note(line: &str) -> Option<usize> {
     let l = without_code(line).to_lowercase();
-    let word = ["todo", "tbc", "tbd"].into_iter().filter_map(|w| find_bare_word(&l, w));
+    let word = ["todo", "tbc", "tbd", "undecided", "settles it"].into_iter().filter_map(|w| find_bare_word(&l, w));
     let phrase = LOOSE_PHRASES.into_iter().filter_map(|p| l.find(p));
     word.chain(phrase).min().map(|i| l[..i].chars().count())
 }
@@ -484,6 +484,16 @@ mod tests {
         let at = loose_note(line).unwrap();
         assert_eq!(line.chars().skip(at).take(4).collect::<String>(), "TODO", "the code span keeps positions");
         assert!(excerpt(line, at).contains("TODO: confirm the rate."), "{}", excerpt(line, at));
+    }
+
+    #[test]
+    fn a_doubt_written_into_a_rule_is_a_loose_note() {
+        for line in ["The newer rule may cover them, so until Pat settles it, leave them unticked.", "Local or served: undecided.", "Who signs: to be decided."] {
+            assert!(loose_note(line).is_some(), "{line}");
+        }
+        for line in ["Nothing goes out until Pat approves the exact text.", "The gain is booked when the payable is settled.", "The bank settles items overnight."] {
+            assert_eq!(loose_note(line), None, "{line}");
+        }
     }
 
     #[test]

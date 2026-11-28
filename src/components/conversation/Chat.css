@@ -41,6 +41,9 @@
 .who-line b { font-size: 13.5px; font-weight: 700; color: var(--ink); }
 .who-line > .av { flex: none; }
 .who-meta { white-space: nowrap; }
+.who-name { font-weight: inherit; color: inherit; border-radius: 3px; }
+.who-name:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.who-name:focus-visible { outline: none; box-shadow: var(--focus); }
 .msg-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* Conversation prose at reading size. Cards and files keep their own. */
 .msg-body > .md, .chat-inner .report-body > .md { font-size: var(--t-md); line-height: 1.6; }

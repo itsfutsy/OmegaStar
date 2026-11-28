@@ -4,13 +4,13 @@ import { call, errorMessage } from "../api/client";
 import type { BriefRow, Card, CardReply, EmployeeView, HireProposal, NewAttachment, OrgSnapshot, PersonView, Run, SkillInfo, Thread } from "../api/types";
 import { askAboutCard, usePendingAnswers } from "../lib/cardAnswers";
 import type { CardDecision, Decision, Group } from "../lib/decisions";
-import { dateLong, firstName, listNames, plural, runKindLabel, shortAge, taskLabel, threadTitle, whenInline } from "../lib/format";
+import { dateLong, firstName, listNames, plural, shortAge, taskLabel, threadTitle, whenInline } from "../lib/format";
 import { useThread } from "../lib/hooks";
 import { lastMoved, useMarkSeen } from "../lib/marks";
 import { openChat } from "../lib/router";
 import { toolName } from "../lib/rules";
 import { toast } from "../lib/toasts";
-import { activityAt, archivable, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
+import { activityAt, archivable, askedAbout, askedText, didNotFinish, isLive, isOpen, isTeamWeek, latestFinished, rowThreads, STREAK, threadBusy, threadFocus, wasArchived, type OpenCard } from "../lib/threads";
 import { kindNames } from "../lib/workTitle";
 import { BlockedCard } from "../components/BlockedCard";
 import { Icon, type IconName } from "../components/Icon";
@@ -53,13 +53,13 @@ export type ItemActions = {
 const handOff = (r: Run): boolean => r.kind.type === "asked" || r.kind.type === "delegated" || r.kind.type === "answered";
 
 /** A thread's own name: its title, a routine's label or a conversation's name. Null for a hand-off with no title of
- *  its own, which `threadTitle` names by how it came, as "Task from Bo". */
+ *  its own, which the Inbox names by who it is for or from, as "for Bo". */
 function ownName(r: Run, employees: EmployeeView[], people: PersonView[]): string | null {
   // A run you started by hand is named by what you asked, not "Manual run".
   if (r.kind.type === "manual" && !r.title) return taskLabel(r.prompt, r.attachments);
   const names = kindNames(r, employees, people);
   const title = threadTitle(r, names);
-  return handOff(r) && title === runKindLabel(r.kind, names) ? null : title;
+  return handOff(r) && !r.title ? null : title;
 }
 
 /** What an entry is about rather than how it came: the thread's own name, and on a hand-off who it is for (or, for an
@@ -170,8 +170,8 @@ function ageLong(iso: string | null): string {
 
 export type RowContext = { employees: EmployeeView[]; people: PersonView[] };
 
-/** What a row shows in the list: who, the title, the line under it, its word and its age. */
-export type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | null; side: string; sideTip: string; unread: boolean };
+/** What a row shows in the list: who, the title, the line under it, its word (or, in Later, the parked tag) and its age. */
+export type RowView = { title: string; meta: string; avatar: ReactNode; word: Word | "Parked" | null; side: string; sideTip: string; unread: boolean };
 
 export function rowView(row: Row, { employees, people }: RowContext): RowView {
   if (row.kind === "hire") {
@@ -190,7 +190,7 @@ export function rowView(row: Row, { employees, people }: RowContext): RowView {
       title: cards.length === 1 ? cards[0].message : `${Count(cards.length)} parked questions`,
       meta: `${e ? firstName(e.name) : "Former employee"} · ${topic({ root: row.run, replies: [], related: [] }, employees, people)}`,
       avatar: e ? <Avatar name={e.name} hue={e.hue} image={e.image} size={28} /> : <span className="irow-noav" />,
-      word: null, side: shortAge(at), sideTip: dateLong(at), unread: false,
+      word: "Parked", side: shortAge(at), sideTip: dateLong(at), unread: false,
     };
   }
   if (row.kind === "archived") {
@@ -267,7 +267,7 @@ export type DetailContext = RowContext & {
   /** Settle entries `ids` while `go` runs; they come back if it resolves false. */
   settle: (ids: string[], go: () => Promise<boolean>) => void;
   /** Every other row from this employee, for a hire proposal's "Also waiting from". */
-  alsoFrom: (employeeId: string, except: string) => { id: string; title: string; word: Word | null; age: string }[];
+  alsoFrom: (employeeId: string, except: string) => { id: string; title: string; word: RowView["word"]; age: string }[];
   select: (id: string) => void;
   reviewProposal: (p: HireProposal, from: HTMLElement | null) => void;
   reopen: (id: string) => void;
@@ -356,6 +356,26 @@ function Report({ who, text }: { who: string; text: string | null }) {
     <section className="d-sec d-report" aria-label={`${who}'s report`}>
       <h3 className="d-sec-h">From {who}'s report</h3>
       <div className="d-report-body"><Markdown text={text} /></div>
+    </section>
+  );
+}
+
+/** What you asked about a decision's cards and what came back, oldest first. The answer is a reply in the card's
+ *  thread, which an open card's entry does not show, so it is said here, under the card it is about. */
+function Asked({ runs, who }: { runs: Run[]; who: string }) {
+  if (!runs.length) return null;
+  return (
+    <section className="d-sec d-asked" aria-label={`Your questions to ${who}`}>
+      <h3 className="d-sec-h">You asked {who}</h3>
+      {runs.map((r) => (
+        <div key={r.id} className="d-qa">
+          <p className="d-qa-q">{askedText(r)}</p>
+          {isLive(r)
+            ? <p className="d-qa-wait">{r.state === "queued" ? `${who} hasn't started on it yet.` : `${who} is answering…`}</p>
+            : r.summary?.trim() ? <div className="d-report-body"><Markdown text={r.summary} /></div>
+            : <p className="d-qa-wait">{firstLine(r)}</p>}
+        </div>
+      ))}
     </section>
   );
 }
@@ -466,7 +486,9 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
   const open = d.type === "card" ? d.cards.filter((c) => isOpen(c.card)) : [];
   const briefed = open.length > 0 && open.every((c) => c.card.brief.length > 0);
   const memo = d.type === "card" && d.cards.length === 1 && d.cards[0].card.brief.length > 0;
-  const report = d.type === "answered" || d.type === "proposal" || failures || briefed ? null : d.run.summary;
+  const asked = d.type === "card" ? askedAbout(d.thread, d.run) : [];
+  // A reply that asks again holds the card, and its report is the answer above.
+  const report = d.type === "answered" || d.type === "proposal" || failures || briefed || (d.type === "card" && d.run.aboutCard) ? null : d.run.summary;
   return (
     <>
       {failures
@@ -475,6 +497,7 @@ function DecisionBody({ d, group, ctx, actions, slot }: { d: Decision<Item>; gro
       <Title text={d.type === "answered" ? topic(d.thread, employees, people) : title} memo={memo} />
       {why && !memo ? <p className="d-why">{why}</p> : null}
       {body}
+      <Asked runs={asked} who={who} />
       <Report who={who} text={report} />
       {foot ? actions(foot) : null}
     </>

@@ -58,8 +58,9 @@ under `{dir}`, never under `.claude` and never in your user profile.\n\n",
         "## What carries over\n\n\
 Nothing you only say or think lasts past this run. What you learn has four homes:\n\n\
 - **Skills**, for how you work: the steps, the commands and what done looks like, following `omega-skill-craft`. \
-A correction changes the step it corrects; it does not add a rule beside it. A one-off is not a rule: ask whether a run \
-next month would need it.\n\
+A correction changes the step it corrects; it does not add a rule beside it. Before you write down what {ceo} said, search \
+your skills, what you own and the company page for the same subject and rewrite what is there into one current line: \
+their newest word wins, and when you cannot tell whether it replaces the old line, ask. A one-off is not a rule: ask whether a run next month would need it.\n\
 - **Notes in `workspace/`**, for where things stand and what is open, one notes file per piece of ongoing work. Before \
 you answer about that work, open its notes file.\n\
 - **`check_later`**, for what can only be done or looked at on a later date.\n\
@@ -207,8 +208,8 @@ only in the report. Keep each row to a few plain lines.\n\
 never the answer you assume for spending, public posts, customer messages, deleting data, new vendors or payment details. Their \
 answers come back to this conversation as one short message, once they have answered every card the run raised. Choices, items, \
 tasks and questions have Later built in, and choices and items No, so never add those yourself. Later is not a no: leave it as \
-it is. It comes back to {ceo} by itself on the day they pick, and a second Later parks it. No means do not do it, and do not ask \
-again.\n\
+it is. It comes back to {ceo} by itself on the day they pick, and a second Later keeps it in their Later list, marked parked, \
+where it no longer comes back by itself. No means do not do it, and do not ask again.\n\
 - `propose_company_line(section, line, why)` puts a line for the company page to {ceo} on a card, from any run. Use it when they \
 teach you something true for everyone, such as a tool you all use or how they like to work.\n\
 - `check_later(what, how, inDays)` is how you keep a promise: on its due date OmegaStar starts a quiet run of yours to \
@@ -306,6 +307,9 @@ these, call `notify` only when one needs action by a date. Never copy a code or 
 - A message from {ceo} that arrives while you work is their instruction for this run: act on it, and answer it in your \
 report.\n\
 - A rule you wrote yourself is your judgement, not a limit. When it gets in the way of the outcome, change it.\n\
+- When two things {ceo} told you disagree in the case in front of you, ask one question that quotes both and names the \
+case: on a card, or in your reply in a conversation. Never pick one quietly or write the doubt into a skill. A rule a \
+colleague passes on as {ceo}'s is read where it is written before you act on it.\n\
 - A blocker you hit twice gets removed: an API key, a script, a question to a colleague. If only {ceo} can remove it, it \
 becomes one chore card with the one thing to do.\n\
 - Check yourself. Before you say something is unknown or ask {ceo}, search mail, the repos, your skills and notes and your \
@@ -370,7 +374,7 @@ mod tests {
         for want in ["the question, at most 80 characters", "close_ask(key, reason)", "at most 300 characters", "Never write that nothing needs Pat"] {
             assert!(h.contains(want), "{want}: {h}");
         }
-        let notify = ["`task` for a to-do", "`question: true`", "`news: true`", "`link` for a pull request", "up to three `images`", "notify again with its key", "a list joins your", "Never edit with `close_ask", "a second Later parks it", "propose_company_line(section, line, why)"];
+        let notify = ["`task` for a to-do", "`question: true`", "`news: true`", "`link` for a pull request", "up to three `images`", "notify again with its key", "a list joins your", "Never edit with `close_ask", "a second Later keeps it in their Later list, marked parked", "propose_company_line(section, line, why)"];
         for want in notify {
             assert!(h.contains(want), "{want}: {h}");
         }

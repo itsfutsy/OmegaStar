@@ -191,7 +191,7 @@ export type Proposal = { type: "companyLine"; section: string; line: string } | 
  *  so the same question from anyone is one Inbox item; null on cards asked before keys. file: the markdown or text
  *  file it is about, e.g. a draft, as a full path; `card_file` reads it. link: a web address it is about, such as a
  *  pull request. images: up to 3 full local image paths. backAt: when a card you put off comes back; timesBack: how
- *  often it has; parked: you put it off again once it came back, so it waits in Parked and never comes back by itself. */
+ *  often it has; parked: you put it off again once it came back, so it waits in Later, marked parked, and never comes back by itself. */
 export type Card = {
   message: string; why: string | null; key: string | null; file: string | null; ask: CardAsk; answer: CardAnswer | null;
   link: string | null; images: string[];
@@ -310,6 +310,9 @@ export type TeamStats = {
   asks: { at: string; answeredAt: string | null; open: boolean }[];
   /** Each employee's latest weekly number, from their newest weekly review that reported one. */
   numbers: { employeeId: string; metric: string; value: string; change: string }[];
+  /** Tokens finished runs used, per local day, employee (who did the work), model id and the colleague who handed the
+   *  work over (null for their own). Re-reads of the prompt cache are left out. Runs from before tokens were kept add none. */
+  tokens: { day: string; employeeId: string; handedOverBy: string | null; model: string; tokens: number }[];
 };
 
 /** What runs did and used since a time. Usage (costUsd) is what runs cost at API list price, as Claude Code reckons it. */
