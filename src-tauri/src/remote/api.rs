@@ -19,8 +19,9 @@ const OPS_KEPT: usize = 200;
 const OPS_FOR: Duration = Duration::from_secs(600);
 
 const READS: [&str; 7] = ["inbox", "proposals", "team", "member_image", "thread", "card_file", "card_image"];
-const WRITES: [&str; 9] =
-    ["answer_card", "reply_to_run", "approve_blocked", "approve_tidy", "approve_proposal", "decline_proposal", "set_archived", "unarchive_runs", "retry_run"];
+const WRITES: [&str; 10] = [
+    "start_task", "answer_card", "reply_to_run", "approve_blocked", "approve_tidy", "approve_proposal", "decline_proposal", "set_archived", "unarchive_runs", "retry_run",
+];
 
 /// The room a request came in.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -165,7 +166,7 @@ impl Ops {
 }
 
 /// Answers a read or write in the paired room. A write runs once per `op`, a UUID: a resent one gets the saved
-/// answer, which is `too_large` when the result would not fit in a frame.
+/// answer, which is `too_large` when the write worked and its result would not fit in a frame.
 pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Instant) -> Answer {
     if kind != Kind::Write {
         return call(office, req);
@@ -177,11 +178,17 @@ pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Insta
         return saved;
     }
     let mut answer = call(office, req);
-    if !fits(&res(req.id, &answer)) {
+    if answer.is_ok() && !fits(&res(req.id, &answer)) {
         answer = Err(too_large());
     }
     ops.put(op, now, answer.clone());
     answer
+}
+
+/// Whether a write answered `answer`, run for the first time, changed the office: it worked, or it worked and its
+/// result was too large to send.
+pub fn acted(answer: &Answer) -> bool {
+    answer.as_ref().err().is_none_or(|e| e.code == Code::Remote(RemoteCode::TooLarge))
 }
 
 /// `runId`.
@@ -212,6 +219,14 @@ struct CardImageArgs {
 #[derive(Deserialize)]
 struct MemberArgs {
     id: String,
+}
+
+/// `start_task`'s arguments.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartArgs {
+    employee_id: String,
+    text: String,
 }
 
 /// `answer_card`'s arguments.
@@ -286,6 +301,10 @@ pub fn call(office: &Office, req: &Request) -> Answer {
             let a: CardImageArgs = args(req)?;
             ok(office.card_image(&a.run_id, a.card, a.index))
         }
+        "start_task" => {
+            let a: StartArgs = args(req)?;
+            ok(office.start_task(&a.employee_id, &a.text, vec![]))
+        }
         "answer_card" => {
             let a: AnswerArgs = args(req)?;
             ok(office.answer_card(&a.run_id, a.card, a.answer))
@@ -346,7 +365,9 @@ fn too_large() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Denial, Run, RunKind, RunState, TidyReason};
     use crate::remote::fixture::{self, Fixture};
+    use crate::store::Store;
 
     fn req(id: u64, cmd: &str, args: Value, op: Option<&str>) -> Request {
         Request { id, cmd: cmd.into(), args, op: op.map(String::from) }
@@ -423,6 +444,122 @@ mod tests {
         let later = run(&f.office, &mut ops, Kind::Write, &archive, now + OPS_FOR + Duration::from_secs(1)).unwrap();
         assert_eq!(later, first);
         assert!(f.office.run(&f.done).unwrap().archived_at.is_some(), "after ten minutes the op runs again");
+    }
+
+    #[tokio::test]
+    async fn start_task_starts_one_conversation_per_op_that_the_phone_can_open() {
+        let f = Fixture::new("remote-api-start").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let before = f.office.runs(Some(&f.ada), 100).unwrap().len();
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": "Draft the spring menu."}), Some(OP));
+        let started = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap();
+        assert_eq!(started["employeeId"], f.ada.as_str());
+        assert_eq!(started["prompt"], "Draft the spring menu.");
+        assert_eq!((started["kind"]["type"].as_str(), started["state"].as_str()), (Some("task"), Some("queued")));
+
+        assert_eq!(run(&f.office, &mut ops, Kind::Write, &start, now).unwrap(), started);
+        assert_eq!(f.office.runs(Some(&f.ada), 100).unwrap().len(), before + 1, "the resent op started nothing more");
+
+        let thread = run(&f.office, &mut ops, Kind::Read, &req(2, "thread", json!({"runId": started["id"]}), None), now).unwrap();
+        assert_eq!(thread["root"]["id"], started["id"]);
+    }
+
+    #[tokio::test]
+    async fn start_task_refuses_an_empty_message_an_unknown_employee_and_a_missing_one() {
+        let f = Fixture::new("remote-api-start-bad").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        for (args, code) in [
+            (json!({"employeeId": f.ada, "text": "  "}), "invalid"),
+            (json!({"employeeId": "nope", "text": "Hi."}), "notFound"),
+            (json!({"text": "Hi."}), "bad_request"),
+        ] {
+            let start = req(1, "start_task", args.clone(), Some(&uuid::Uuid::new_v4().to_string()));
+            let refused = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap_err();
+            assert_eq!(serde_json::to_value(&refused).unwrap()["code"], code, "{args}");
+        }
+    }
+
+    /// Member `id`'s `activity` in the phone's `team` read.
+    fn activity_of(f: &Fixture, id: &str) -> Value {
+        let team = call(&f.office, &req(0, "team", Value::Null, None)).unwrap();
+        team.as_array().unwrap().iter().find(|m| m["id"] == id).unwrap()["activity"].clone()
+    }
+
+    #[tokio::test]
+    async fn team_says_what_each_employee_is_doing_as_the_org_chart_does() {
+        let f = Fixture::new("remote-api-team").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let team = call(&f.office, &req(0, "team", Value::Null, None)).unwrap();
+        for m in team.as_array().unwrap().iter().filter(|m| m["id"] != f.ada.as_str()) {
+            assert_eq!(m["activity"], Value::Null, "you and the people you added never run: {}", m["name"]);
+        }
+        let next = f.office.org().unwrap().employees.into_iter().find(|v| v.employee.id == f.ada).unwrap().next_fire;
+        assert!(next.is_some(), "Ada's weekly review");
+        assert_eq!(activity_of(&f, &f.ada), json!({"kind": "idle", "nextRun": next}), "the org chart's next run");
+
+        let mut failed = Run::new(&f.ada, RunKind::Manual, "Count the stock again.".into(), chrono::Utc::now());
+        failed.state = RunState::Failed;
+        failed.ended_at = Some(failed.created_at);
+        let mut running = Run::new(&f.ada, RunKind::Manual, "Price the new menu.".into(), chrono::Utc::now());
+        running.state = RunState::Running;
+        let db = Store::open(&f.dir.join("office.db")).unwrap();
+        assert!(db.insert_run(&failed, &failed.id).unwrap());
+        assert_eq!(activity_of(&f, &f.ada), json!({"kind": "attention", "runId": failed.id, "reason": "failed"}));
+        let denial = Denial { tool: "Bash".into(), brief: "npm publish".into(), suggested_rule: "Bash(npm publish)".into() };
+        for (state, denials, reason) in [(RunState::Lost, vec![], "interrupted"), (RunState::Succeeded, vec![denial], "needsYourOk")] {
+            let later = chrono::Utc::now() + chrono::Duration::seconds(1);
+            let ended = Run { state, denials, ended_at: Some(later), ..Run::new(&f.ada, RunKind::Manual, "Count it.".into(), later) };
+            assert!(db.insert_run(&ended, &ended.id).unwrap());
+            assert_eq!(activity_of(&f, &f.ada), json!({"kind": "attention", "runId": ended.id, "reason": reason}));
+        }
+
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": "Draft the spring menu."}), Some(OP));
+        let started = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap();
+        let queued = json!({"kind": "queued", "runId": started["id"], "what": "Draft the spring menu"});
+        assert_eq!(activity_of(&f, &f.ada), queued, "up next, with the run to open");
+
+        assert!(db.insert_run(&running, &running.id).unwrap());
+        let working = json!({"kind": "working", "runId": running.id, "what": "Price the new menu"});
+        assert_eq!(activity_of(&f, &f.ada), working, "working comes before up next");
+    }
+
+    #[tokio::test]
+    async fn team_stays_small_after_a_conversation_started_with_a_huge_message() {
+        let f = Fixture::new("remote-api-team-huge").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let before = serde_json::to_string(&run(&f.office, &mut ops, Kind::Read, &req(0, "team", Value::Null, None), now).unwrap()).unwrap().len();
+        let huge = "Count every jar on every shelf ".repeat(100_000);
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": huge}), Some(OP));
+        assert!(run(&f.office, &mut ops, Kind::Write, &start, now).is_ok());
+        let team = run(&f.office, &mut ops, Kind::Read, &req(2, "team", Value::Null, None), now).unwrap();
+        let ada = team.as_array().unwrap().iter().find(|m| m["id"] == f.ada.as_str()).unwrap();
+        assert_eq!(ada["activity"]["kind"], "queued");
+        assert!(ada["activity"]["what"].as_str().unwrap().chars().count() <= 120, "{}", ada["activity"]["what"]);
+        let after = serde_json::to_string(&team).unwrap().len();
+        assert!(after < before + 300, "team grew from {before} to {after} bytes");
+    }
+
+    #[tokio::test]
+    async fn what_names_a_run_in_at_most_120_characters_ending_in_one_ellipsis() {
+        let tidy = |reason| RunKind::Tidy { reason, signature: vec![], plan: None };
+        let schedule = |label: String| RunKind::Scheduled { schedule_id: "s1".into(), slot: chrono::Utc::now(), label, quiet: true, model: None, effort: None, review: false };
+        let cases = [
+            (tidy(TidyReason::Auto), "Tidy".to_string()),
+            (tidy(TidyReason::Approved), "Tidy: approved changes".into()),
+            (schedule("weekly review of every shelf ".repeat(10)), "Weekly review of every shelf ".to_string() + &"weekly review of every shelf ".repeat(3) + "wee…"),
+            (RunKind::Manual, format!("X{}…", "x".repeat(118))),
+        ];
+        for (kind, what) in cases {
+            let f = Fixture::new("remote-api-what").await;
+            let mut running = Run::new(&f.ada, kind, "x".repeat(300), chrono::Utc::now());
+            running.state = RunState::Running;
+            assert!(Store::open(&f.dir.join("office.db")).unwrap().insert_run(&running, &running.id).unwrap());
+            assert_eq!(activity_of(&f, &f.ada)["what"], what.as_str());
+        }
     }
 
     #[tokio::test]

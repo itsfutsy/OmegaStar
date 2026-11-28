@@ -651,13 +651,13 @@ impl Actor {
                 let now = Instant::now();
                 let resent = req.op.as_deref().is_some_and(|op| self.ops.has(op, now));
                 let answer = api::run(&self.office, &mut self.ops, kind, req, now);
-                if answer.is_ok() && !resent {
+                if api::acted(&answer) && !resent {
                     // Taking a conversation back out of Done is the same change by either command.
                     let back = req.cmd == "set_archived" && req.args["archived"] == false;
                     let what = if back { "unarchive_runs" } else { &req.cmd };
                     // Only what reads as an id goes in the log, so the phone cannot write lines of its own there.
                     let id = |key: &str| req.args[key].as_str().filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
-                    log!("phone link: the phone sent {what} for {}", id("runId").or(id("proposalId")).unwrap_or("its runs"));
+                    log!("phone link: the phone sent {what} for {}", id("runId").or(id("proposalId")).or(id("employeeId")).unwrap_or("its runs"));
                     self.did(what);
                 }
                 answer

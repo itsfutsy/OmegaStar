@@ -30,6 +30,7 @@ Goals for version 1:
 
 - See the Inbox on the phone and act on it: answer cards, reply, allow blocked tools, approve tidies, decide hire
   proposals, mark done, retry a failed run.
+- See what each employee is doing, and start a conversation with one.
 - Push notifications when something needs you.
 - Pair by scanning a QR code. No accounts, no logins.
 - The relay cannot read or forge anything.
@@ -39,7 +40,7 @@ Not in version 1:
 
 - Anything while the computer is asleep or OmegaStar is closed. The phone shows the computer as offline.
 - Watching a run's live transcript, or browsing every conversation.
-- Starting new conversations, or attaching files and photos.
+- Attaching files and photos.
 - More than one phone per computer, or more than one computer per phone.
 - A web client.
 
@@ -279,7 +280,7 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 |---|---|---|---|
 | `inbox` | none | `{ threads: Thread[] }` | New. Only the threads that lead an Inbox row, taken from `Office::conversations`. |
 | `proposals` | none | `HireProposal[]` | Open proposals only. |
-| `team` | none | `{ id, name, title, hue, hasImage }[]` | New. You, employees and people, without the image data. |
+| `team` | none | `{ id, name, title, hue, hasImage, activity }[]` | New. You, employees and people, without the image data. `activity` is below. |
 | `member_image` | `{ id }` | data URL | New. One member's picture. The phone caches it. |
 | `thread` | `{ runId }` | `Thread` | Existing. |
 | `card_file` | `{ runId, card }` | text | Existing. Up to 200 KB. |
@@ -289,6 +290,7 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
+| `start_task` | `{ employeeId, text }` | `Run` | Existing, always with no attachments. Starts a conversation, as typing to them on the computer does. |
 | `answer_card` | `{ runId, card, answer: CardReply }` | `Run[]` | Existing. Includes Later, through `{ type: "later", until }`. |
 | `reply_to_run` | `{ runId, text, archive }` | `Run` | Existing, always with no attachments. |
 | `approve_blocked` | `{ runId, rules, always }` | `Run` | Existing. Allow once or Always allow. |
@@ -298,6 +300,23 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 | `set_archived` | `{ runId, archived }` | `string[]` | Existing. Done. |
 | `unarchive_runs` | `{ runIds }` | `null` | Existing. Undo for Done. |
 | `retry_run` | `{ runId }` | `Run` | Existing. |
+
+`activity` is what an employee is doing, as the org chart shows it, and `null` for you and the people you added:
+
+| `kind` | Other fields | Means |
+|---|---|---|
+| `working` | `runId`, `what` | Working on `what`. With several runs going, the oldest running. |
+| `queued` | `runId`, `what` | Nothing running; `what` is up next. |
+| `attention` | `runId`, `reason` | Their last run needs you. `reason` is `needsYourOk` (it was denied a tool), `interrupted` (it was cut off before it finished) or `failed`. |
+| `idle` | `nextRun: string \| null` | When a schedule runs them next, or `null`. |
+
+`what` is a short name for the run, on one line of at most 120 characters, a long one ending in `…`, so `team`
+stays small whatever anyone typed. It is close to what the org chart writes after "Working" or "Up next" but not word
+for word: it names no person or colleague, drops more openers from what was asked, says "New task" for a blank one,
+names other kinds in the words written for the employee ("A colleague's answer"), keeps 120 characters where the card
+shows 52, and starts with a capital. `thread` with `runId` opens that
+run's conversation. The "Start with" suggestions of a new conversation are fixed
+text in the desktop's interface, not per employee, so the remote API has no command for them.
 
 ### Session
 
@@ -488,16 +507,17 @@ It never starts in a sandbox office.
 
 | Existing method | Added call |
 |---|---|
-| `run_updated` | `remote.changed(Inbox)` |
+| `run_updated` | `remote.changed(Inbox)` and `remote.changed(Team)`: what each employee is doing follows their runs |
 | `proposal_updated` | `remote.changed(Proposals)` |
 | `org_changed` | `remote.changed(Team)` and `remote.changed(Inbox)`: who is in the Inbox follows the team |
+| `settings_changed` | `remote.changed(Team)`: pausing schedules takes away each employee's next run |
 | `show` | `remote.push(title)` |
 
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.
 
-**Phone activity.** Each session the phone starts, and each change it makes (a write that worked, counted once per
-`op`), is kept with the pairing as `{ at, what }`, the latest 10, and written to the log, which outlasts the pairing.
-`what` is `connected`, the write's command (`set_archived` to false counts as `unarchive_runs`), or `push_register`
+**Phone activity.** Each session the phone starts, and each change it makes (a write the computer carried out, even
+one whose result was too large to send, counted once per `op`), is kept with the pairing as `{ at, what }`, the latest
+10, and written to the log, which outlasts the pairing. `what` is `connected`, the write's command (`set_archived` to false counts as `unarchive_runs`), or `push_register`
 when the phone changes where its pushes go. Settings lists them under the paired phone, so use of the link that is
 not the owner's shows on the computer.
 
@@ -572,7 +592,7 @@ code while pairing (blurred until clicked), the paired phone's name, the push sw
 - **Register for push** and send `push_register` when the token is new or changed.
 
 Screens for version 1: pairing scanner, Inbox list, item (report, cards and their actions), reply, blocked tool,
-hire proposal, settings.
+hire proposal, team, new conversation, settings.
 
 ## 14. Security and privacy
 
@@ -584,8 +604,8 @@ hire proposal, settings.
 | A stranger joins a room | They would need the 256-bit room id. Even with it they cannot read or write frames. The worst they can do is knock a client off. A phone reconnects. A computer knocked out of the long-term room stays out until the next pairing or app start (section 6), and Settings says so. |
 | The QR code is seen or photographed | Settings blurs it until clicked, so it is on screen only when the user chooses. It works once, for 5 minutes, and whoever scans it first is paired; the desktop shows which phone that was. After that it opens nothing. |
 | The phone is lost | Unpair on the desktop. The room and key are abandoned. |
-| The phone app is taken over | It can do what the API allows and nothing else: no file reads, no settings, no skills, no arbitrary commands. It can allow tools and approve hires, so an app lock is worth adding later. |
-| Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it. Whoever copies it can act as the phone until Unpair. Settings lists what the phone did lately and the log keeps it, so that use shows on the computer. |
+| The phone app is taken over | It can do what the API allows and nothing else: no file reads, no settings, no skills, no commands of its own. That is still a lot. It can start a conversation with any employee and give them any instruction, and reply in any conversation it can see. Each one runs with that employee's own tools and permissions and spends model usage, and nothing caps how many it starts. It can also answer any card in the Inbox, which is where employees ask for a go-ahead, allow a blocked tool, always as well as once, approve a tidy's changes to an employee's skills, approve or decline a hire, mark conversations done or bring them back, and run a failed run again, which spends usage too. What limits it today: Unpair on the desktop ends it, Settings lists what the phone did lately, and the log keeps every write it made, so that use shows on the computer. An app lock is worth adding later. |
+| Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it. Whoever copies it can act as the phone until Unpair, with everything the row above lists: starting a conversation with any employee, in their own tools and permissions, as many as they like. Settings lists what the phone did lately and the log keeps it, so that use shows on the computer. |
 | An employee is talked into reading `remote.json` by an email or a web page | Every run's settings deny it the file, in every permission mode, and no approval lifts that. Claude Code's file tools and the shell commands it knows read a file are refused. A program the employee runs could still open the file, so this narrows the gap and does not close it. |
 | Strangers use the relay for free or to run up a bill | Rate limits, the frame cap, two sockets per room |
 

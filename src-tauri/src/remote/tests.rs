@@ -288,6 +288,32 @@ async fn what_the_phone_does_shows_in_settings_once_per_change() {
 }
 
 #[tokio::test]
+async fn a_write_that_worked_shows_in_settings_though_its_answer_was_too_large() {
+    let f = Fixture::new("remote-activity-big").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let mut phone = paired_phone(&remote, &relay).await;
+    let start = json!({ "employeeId": f.ada, "text": "x".repeat(api::MAX_FRAME - 300) });
+    let answer = phone.call("start_task", start, Some("3b5c6d3e-8f1a-4b2c-9d7e-6a5f4e3d2c1b")).await;
+    assert_eq!(answer["err"]["code"], "too_large");
+    assert_eq!(activity(&remote), ["start_task", "connected"], "the run started, so the computer shows it");
+}
+
+#[tokio::test]
+async fn a_refused_write_is_not_shown_in_settings_though_its_refusal_was_too_large() {
+    let f = Fixture::new("remote-activity-refused").await;
+    let relay = fake_relay().await;
+    let remote = Remote::new(relay.clone());
+    remote.start(f.office.clone());
+    let mut phone = paired_phone(&remote, &relay).await;
+    let archive = json!({ "runId": "r1", "archived": "\"".repeat(api::MAX_FRAME / 3) });
+    let answer = phone.call("set_archived", archive, Some("7d2e9a41-5c3b-4f6a-8e1d-2b4c6a8e0f13")).await;
+    assert_eq!(answer["err"]["code"], "too_large");
+    assert_eq!(activity(&remote), ["connected"], "nothing changed, so the computer shows nothing");
+}
+
+#[tokio::test]
 async fn only_the_phones_latest_activity_is_kept() {
     let f = Fixture::new("remote-activity-kept").await;
     let remote = Remote::new(RELAY.into());

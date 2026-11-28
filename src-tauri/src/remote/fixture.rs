@@ -162,7 +162,8 @@ fn merge(a: Value, b: Value) -> Value {
     }
 }
 
-/// The shape of every remote command's result in `f`, reads first, then each write once.
+/// The shape of every remote command's result in `f`: reads first, each write once, then `team` again, once the writes
+/// have given an employee work, merged into its first shape.
 pub fn shapes(f: &Fixture) -> Value {
     let calls = [
         ("inbox", json!({})),
@@ -172,6 +173,7 @@ pub fn shapes(f: &Fixture) -> Value {
         ("thread", json!({ "runId": f.carded })),
         ("card_file", json!({ "runId": f.carded, "card": 0 })),
         ("card_image", json!({ "runId": f.carded, "card": 0, "index": 0 })),
+        ("start_task", json!({ "employeeId": f.ada, "text": "Draft the spring menu." })),
         ("answer_card", json!({ "runId": f.carded, "card": 0, "answer": { "type": "choice", "index": 1 } })),
         ("reply_to_run", json!({ "runId": f.done, "text": "Thanks.", "archive": false })),
         ("approve_blocked", json!({ "runId": f.blocked, "rules": ["Bash(npm publish)"], "always": false })),
@@ -181,6 +183,7 @@ pub fn shapes(f: &Fixture) -> Value {
         ("set_archived", json!({ "runId": f.failed, "archived": true })),
         ("unarchive_runs", json!({ "runIds": [f.failed] })),
         ("retry_run", json!({ "runId": f.failed })),
+        ("team", json!({})),
     ];
     let mut ops = Ops::default();
     let mut out = Map::new();
@@ -189,7 +192,11 @@ pub fn shapes(f: &Fixture) -> Value {
         let op = (kind == Kind::Write).then(|| format!("00000000-0000-4000-8000-{i:012}"));
         let req = Request { id: i as u64, cmd: cmd.into(), args, op };
         let ret = api::run(&f.office, &mut ops, kind, &req, Instant::now()).unwrap_or_else(|e| panic!("{cmd}: {}", e.message));
-        out.insert(cmd.into(), shape(&ret));
+        let shaped = match out.remove(cmd) {
+            Some(before) => merge(before, shape(&ret)),
+            None => shape(&ret),
+        };
+        out.insert(cmd.into(), shaped);
     }
     Value::Object(out)
 }

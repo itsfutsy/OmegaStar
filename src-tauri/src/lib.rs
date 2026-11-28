@@ -111,6 +111,7 @@ impl EventSink for TauriSink {
     fn run_updated(&self, run: &Run) {
         let _ = self.app.emit("run:updated", run);
         self.remote.changed(remote::What::Inbox);
+        self.remote.changed(remote::What::Team);
     }
     fn run_events(&self, run_id: &str, events: &[RunEvent]) {
         let _ = self.app.emit("run:event", serde_json::json!({ "runId": run_id, "events": events }));
@@ -151,6 +152,7 @@ impl EventSink for TauriSink {
             let _ = item.set_text(pause_label(s.paused));
         }
         self.notices().set(s.notifications.clone());
+        self.remote.changed(remote::What::Team);
     }
 }
 

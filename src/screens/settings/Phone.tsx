@@ -14,6 +14,7 @@ const PUSH = "Notifications on your phone";
 /** What the phone did, in words, by what the status calls it. */
 const DID: Record<string, string> = {
   connected: "Connected",
+  start_task: "Started a conversation",
   answer_card: "Answered a card",
   reply_to_run: "Replied",
   approve_blocked: "Allowed a blocked tool",
