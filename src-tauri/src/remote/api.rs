@@ -185,6 +185,12 @@ pub fn run(office: &Office, ops: &mut Ops, kind: Kind, req: &Request, now: Insta
     answer
 }
 
+/// Whether a write answered `answer`, run for the first time, changed the office: it worked, or it worked and its
+/// result was too large to send.
+pub fn acted(answer: &Answer) -> bool {
+    answer.as_ref().err().is_none_or(|e| e.code == Code::Remote(RemoteCode::TooLarge))
+}
+
 /// `runId`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

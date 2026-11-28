@@ -651,7 +651,7 @@ impl Actor {
                 let now = Instant::now();
                 let resent = req.op.as_deref().is_some_and(|op| self.ops.has(op, now));
                 let answer = api::run(&self.office, &mut self.ops, kind, req, now);
-                if answer.is_ok() && !resent {
+                if api::acted(&answer) && !resent {
                     // Taking a conversation back out of Done is the same change by either command.
                     let back = req.cmd == "set_archived" && req.args["archived"] == false;
                     let what = if back { "unarchive_runs" } else { &req.cmd };

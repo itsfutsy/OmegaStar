@@ -512,9 +512,9 @@ It never starts in a sandbox office.
 
 `remote.changed` does nothing unless a phone session is live, so an idle computer sends nothing to the relay.
 
-**Phone activity.** Each session the phone starts, and each change it makes (a write that worked, counted once per
-`op`), is kept with the pairing as `{ at, what }`, the latest 10, and written to the log, which outlasts the pairing.
-`what` is `connected`, the write's command (`set_archived` to false counts as `unarchive_runs`), or `push_register`
+**Phone activity.** Each session the phone starts, and each change it makes (a write the computer carried out, even
+one whose result was too large to send, counted once per `op`), is kept with the pairing as `{ at, what }`, the latest
+10, and written to the log, which outlasts the pairing. `what` is `connected`, the write's command (`set_archived` to false counts as `unarchive_runs`), or `push_register`
 when the phone changes where its pushes go. Settings lists them under the paired phone, so use of the link that is
 not the owner's shows on the computer.
 
