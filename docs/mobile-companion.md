@@ -524,6 +524,9 @@ task, on a blocking thread, and are answered with an error after 10 seconds, so 
   not bring a second computer into the same room.
 - Left out of sandbox copies too ([`office-copy.sh`](../scripts/office-copy.sh)). Whoever is given a copy must not
   be able to act as the phone in the office it was copied from.
+- Denied to every employee's run, with its temporary file, by deny rules in the run's `settings.json`
+  ([`settings.rs`](../src-tauri/src/claude/settings.rs)). The key lets whoever holds it answer as you, so an employee
+  must not be able to read it out or swap it.
 - Not in the system keychain. Release builds are not signed with a stable identity, so the keychain would ask again
   after every update.
 
@@ -577,11 +580,12 @@ hire proposal, settings.
 | The relay, or Cloudflare, reads content | Everything is sealed with a key the relay never has |
 | Someone records the traffic and later gets `key` or a pairing code | Each session's keys also need a private key that lived only for that handshake |
 | The relay replays, reorders or alters frames | Fresh keys per session, counters, and authenticated encryption |
-| A stranger joins a room | They would need the 256-bit room id. Even with it they cannot read or write frames. The worst they can do is knock a client off, which reconnects. |
+| A stranger joins a room | They would need the 256-bit room id. Even with it they cannot read or write frames. The worst they can do is knock a client off. A phone reconnects. A computer knocked out of the long-term room stays out until the next pairing or app start (section 6), and Settings says so. |
 | The QR code is seen or photographed | Settings blurs it until clicked, so it is on screen only when the user chooses. It works once, for 5 minutes, and whoever scans it first is paired; the desktop shows which phone that was. After that it opens nothing. |
 | The phone is lost | Unpair on the desktop. The room and key are abandoned. |
 | The phone app is taken over | It can do what the API allows and nothing else: no file reads, no settings, no skills, no arbitrary commands. It can allow tools and approve hires, so an app lock is worth adding later. |
 | Someone reads the computer's disk | `remote.json` is as exposed as the office database beside it. Whoever copies it can act as the phone until Unpair. Settings lists what the phone did lately and the log keeps it, so that use shows on the computer. |
+| An employee is talked into reading `remote.json` by an email or a web page | Every run's settings deny it the file, in every permission mode, and no approval lifts that. Claude Code's file tools and the shell commands it knows read a file are refused. A program the employee runs could still open the file, so this narrows the gap and does not close it. |
 | Strangers use the relay for free or to run up a bill | Rate limits, the frame cap, two sockets per room |
 
 **What the relay can see:** client addresses, room ids, when frames pass and how large they are, and for a push the
