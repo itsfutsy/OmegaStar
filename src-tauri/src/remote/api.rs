@@ -19,8 +19,9 @@ const OPS_KEPT: usize = 200;
 const OPS_FOR: Duration = Duration::from_secs(600);
 
 const READS: [&str; 7] = ["inbox", "proposals", "team", "member_image", "thread", "card_file", "card_image"];
-const WRITES: [&str; 9] =
-    ["answer_card", "reply_to_run", "approve_blocked", "approve_tidy", "approve_proposal", "decline_proposal", "set_archived", "unarchive_runs", "retry_run"];
+const WRITES: [&str; 10] = [
+    "start_task", "answer_card", "reply_to_run", "approve_blocked", "approve_tidy", "approve_proposal", "decline_proposal", "set_archived", "unarchive_runs", "retry_run",
+];
 
 /// The room a request came in.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -214,6 +215,14 @@ struct MemberArgs {
     id: String,
 }
 
+/// `start_task`'s arguments.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartArgs {
+    employee_id: String,
+    text: String,
+}
+
 /// `answer_card`'s arguments.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -285,6 +294,10 @@ pub fn call(office: &Office, req: &Request) -> Answer {
         "card_image" => {
             let a: CardImageArgs = args(req)?;
             ok(office.card_image(&a.run_id, a.card, a.index))
+        }
+        "start_task" => {
+            let a: StartArgs = args(req)?;
+            ok(office.start_task(&a.employee_id, &a.text, vec![]))
         }
         "answer_card" => {
             let a: AnswerArgs = args(req)?;
@@ -423,6 +436,41 @@ mod tests {
         let later = run(&f.office, &mut ops, Kind::Write, &archive, now + OPS_FOR + Duration::from_secs(1)).unwrap();
         assert_eq!(later, first);
         assert!(f.office.run(&f.done).unwrap().archived_at.is_some(), "after ten minutes the op runs again");
+    }
+
+    #[tokio::test]
+    async fn start_task_starts_one_conversation_per_op_that_the_phone_can_open() {
+        let f = Fixture::new("remote-api-start").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        let before = f.office.runs(Some(&f.ada), 100).unwrap().len();
+        let start = req(1, "start_task", json!({"employeeId": f.ada, "text": "Draft the spring menu."}), Some(OP));
+        let started = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap();
+        assert_eq!(started["employeeId"], f.ada.as_str());
+        assert_eq!(started["prompt"], "Draft the spring menu.");
+        assert_eq!((started["kind"]["type"].as_str(), started["state"].as_str()), (Some("task"), Some("queued")));
+
+        assert_eq!(run(&f.office, &mut ops, Kind::Write, &start, now).unwrap(), started);
+        assert_eq!(f.office.runs(Some(&f.ada), 100).unwrap().len(), before + 1, "the resent op started nothing more");
+
+        let thread = run(&f.office, &mut ops, Kind::Read, &req(2, "thread", json!({"runId": started["id"]}), None), now).unwrap();
+        assert_eq!(thread["root"]["id"], started["id"]);
+    }
+
+    #[tokio::test]
+    async fn start_task_refuses_an_empty_message_an_unknown_employee_and_a_missing_one() {
+        let f = Fixture::new("remote-api-start-bad").await;
+        let mut ops = Ops::default();
+        let now = Instant::now();
+        for (args, code) in [
+            (json!({"employeeId": f.ada, "text": "  "}), "invalid"),
+            (json!({"employeeId": "nope", "text": "Hi."}), "notFound"),
+            (json!({"text": "Hi."}), "bad_request"),
+        ] {
+            let start = req(1, "start_task", args.clone(), Some(&uuid::Uuid::new_v4().to_string()));
+            let refused = run(&f.office, &mut ops, Kind::Write, &start, now).unwrap_err();
+            assert_eq!(serde_json::to_value(&refused).unwrap()["code"], code, "{args}");
+        }
     }
 
     #[tokio::test]

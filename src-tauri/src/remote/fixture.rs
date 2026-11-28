@@ -172,6 +172,7 @@ pub fn shapes(f: &Fixture) -> Value {
         ("thread", json!({ "runId": f.carded })),
         ("card_file", json!({ "runId": f.carded, "card": 0 })),
         ("card_image", json!({ "runId": f.carded, "card": 0, "index": 0 })),
+        ("start_task", json!({ "employeeId": f.ada, "text": "Draft the spring menu." })),
         ("answer_card", json!({ "runId": f.carded, "card": 0, "answer": { "type": "choice", "index": 1 } })),
         ("reply_to_run", json!({ "runId": f.done, "text": "Thanks.", "archive": false })),
         ("approve_blocked", json!({ "runId": f.blocked, "rules": ["Bash(npm publish)"], "always": false })),

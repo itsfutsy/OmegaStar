@@ -39,7 +39,7 @@ Not in version 1:
 
 - Anything while the computer is asleep or OmegaStar is closed. The phone shows the computer as offline.
 - Watching a run's live transcript, or browsing every conversation.
-- Starting new conversations, or attaching files and photos.
+- Attaching files and photos.
 - More than one phone per computer, or more than one computer per phone.
 - A web client.
 
@@ -289,6 +289,7 @@ Only these commands are accepted. Anything else returns `not_allowed`. Type name
 
 | Command | Arguments | Result | Notes |
 |---|---|---|---|
+| `start_task` | `{ employeeId, text }` | `Run` | Existing, always with no attachments. Starts a conversation, as typing to them on the computer does. |
 | `answer_card` | `{ runId, card, answer: CardReply }` | `Run[]` | Existing. Includes Later, through `{ type: "later", until }`. |
 | `reply_to_run` | `{ runId, text, archive }` | `Run` | Existing, always with no attachments. |
 | `approve_blocked` | `{ runId, rules, always }` | `Run` | Existing. Allow once or Always allow. |
