@@ -48,6 +48,7 @@
       "steered": "boolean",
       "summary": "null",
       "title": "null",
+      "tokens": [],
       "transientRetries": "number",
       "turns": "null"
     }
@@ -102,6 +103,7 @@
     "steered": "boolean",
     "summary": "null",
     "title": "null",
+    "tokens": [],
     "transientRetries": "number",
     "turns": "null"
   },
@@ -176,6 +178,7 @@
     "steered": "boolean",
     "summary": "null",
     "title": "null",
+    "tokens": [],
     "transientRetries": "number",
     "turns": "null"
   },
@@ -303,6 +306,7 @@
           "steered": "boolean",
           "summary": "null|string",
           "title": "null",
+          "tokens": [],
           "transientRetries": "number",
           "turns": "null"
         }
@@ -392,6 +396,7 @@
     "steered": "boolean",
     "summary": "null",
     "title": "null",
+    "tokens": [],
     "transientRetries": "number",
     "turns": "null"
   },
@@ -443,6 +448,7 @@
     "steered": "boolean",
     "summary": "null",
     "title": "null",
+    "tokens": [],
     "transientRetries": "number",
     "turns": "null"
   },
@@ -537,6 +543,7 @@
       "steered": "boolean",
       "summary": "string",
       "title": "null",
+      "tokens": [],
       "transientRetries": "number",
       "turns": "null"
     }
