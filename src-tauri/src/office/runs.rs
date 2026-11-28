@@ -474,7 +474,7 @@ impl Office {
         Ok(claude::Snapshot {
             granted,
             claude: claude_path,
-            settings: claude::render_settings(&e.skills, &catalog, &own, &allowed_rules(&e, &run.allow_once)),
+            settings: claude::render_settings(&e.skills, &catalog, &own, &allowed_rules(&e, &run.allow_once), &self.0.data_dir),
             employee_dir,
             run_dir: self.run_dir(&run.id),
             mcp_url: format!("http://127.0.0.1:{}/mcp/{token}", self.0.mcp_port),

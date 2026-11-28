@@ -379,6 +379,25 @@ export type BackupStatus = {
   leftOut: number;                // installers and build folders the last backup left out
 };
 
+/** The phone link: `off` with no phone, `pairing` while a code shows, then for a paired phone `connecting` to the relay,
+ *  `online` there with no phone, and `session` while the phone is connected. */
+export type RemoteState = "off" | "pairing" | "connecting" | "online" | "session";
+export type RemoteStatus = {
+  state: RemoteState;
+  deviceName: string | null;   // the paired phone; null when none is
+  pairedAt: string | null;
+  lastSeenAt: string | null;   // the last time the phone connected
+  pushOn: boolean;             // phone notifications
+  error: string | null;        // why the relay can't be reached; cleared once it can
+  code: PairCode | null;       // the code showing while pairing
+  activity: RemoteActivity[];  // what the paired phone did lately, newest first
+};
+/** Something the paired phone did: `connected` when it started a session, else the change it made, by its remote
+ *  command (`answer_card`, `reply_to_run`, …, and `push_register` for a new push token). */
+export type RemoteActivity = { at: string; what: string };
+/** A code for a phone to scan: the QR as a data URL, the link it holds, and when it stops working. */
+export type PairCode = { qr: string; link: string; expiresAt: string };
+
 export type UsageWindow = { percent: number; resetsAt: string | null; resetsText: string | null };   // percent 0-100
 export type UsageLimits = {
   fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; observedAt: string | null; subscription: boolean;
@@ -501,6 +520,13 @@ export type Commands = {
   backup_now: { args: Record<string, never>; ret: BackupStatus };
   pick_backup_dir: { args: Record<string, never>; ret: string | null };
   open_backup_dir: { args: Record<string, never>; ret: null };
+  remote_status: { args: Record<string, never>; ret: RemoteStatus };
+  /** Starts pairing a phone; pairing again replaces the paired one once the new phone pairs. */
+  remote_pair_start: { args: Record<string, never>; ret: PairCode };
+  remote_pair_cancel: { args: Record<string, never>; ret: null };
+  /** Forgets the paired phone, telling it first if it is connected. */
+  remote_unpair: { args: Record<string, never>; ret: null };
+  remote_set_push: { args: { on: boolean }; ret: RemoteStatus };
   usage_limits: { args: Record<string, never>; ret: UsageLimits };
   refresh_usage: { args: Record<string, never>; ret: UsageLimits };
   use_signed_in_account: { args: Record<string, never>; ret: Company };
@@ -520,6 +546,7 @@ export type Events = {
   "proposal:updated": HireProposal;
   "usage:updated": UsageLimits;
   "backup:updated": BackupStatus;
+  "remote:updated": RemoteStatus;
   /** An employee's `open` of a notes file: show it beside the conversation whose first run is `rootId`. */
   "reader:open": { rootId: string; path: string };
 };

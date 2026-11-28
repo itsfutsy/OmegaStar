@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { reducedMotion } from "../../lib/motion";
 import { Section, Skeleton } from "../../components/ui";
 
-const SECTIONS = ["Claude Code", "Running", "Notifications", "Replies from people", "Appearance", "Data and backups", "CLI proxy", "About"] as const;
+const SECTIONS = ["Claude Code", "Running", "Notifications", "Replies from people", "Phone", "Appearance", "Data and backups", "CLI proxy", "About"] as const;
 type SectionName = (typeof SECTIONS)[number];
 const secId = (t: SectionName) => `set-${t.toLowerCase().replace(/[^a-z]+/g, "-")}`;
 
@@ -86,7 +86,7 @@ const LOADING: { head: number; link?: number; sub?: number[]; rows: { t: number;
     { t: 120, d: [400, 76], c: [[188, 28, 5]] },
   ] },
 ];
-const INDEX_WIDTHS = [76, 50, 76, 112, 72, 98, 56, 40];
+const INDEX_WIDTHS = [76, 50, 76, 112, 40, 72, 98, 56, 40];
 
 /** Loading: the first four sections at their own geometry and the section list's place, held still. */
 export function SettingsLoading() {

@@ -4,6 +4,7 @@ use crate::backup;
 use crate::cards;
 use crate::model::*;
 use crate::office::{self, Office};
+use crate::remote::{self, Remote};
 use crate::update;
 use crate::vibe_typer;
 use std::path::Path;
@@ -544,6 +545,36 @@ pub async fn open_backup_dir(app: AppHandle, office: O<'_>) -> Result<()> {
     let dir = backup::validate_dir(&office.settings()?.backup.dir, office.data_dir())?;
     std::fs::create_dir_all(&dir)?;
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| AppError::internal(format!("Could not open the backup folder: {e}")))
+}
+
+/// Where the phone link stands.
+#[tauri::command]
+pub async fn remote_status(remote: State<'_, Remote>) -> Result<remote::Status> {
+    Ok(remote.status())
+}
+
+/// Shows a pairing code for a phone to scan.
+#[tauri::command]
+pub async fn remote_pair_start(remote: State<'_, Remote>) -> Result<remote::PairCode> {
+    remote.pair_start().await
+}
+
+/// Stops pairing; the code stops working.
+#[tauri::command]
+pub async fn remote_pair_cancel(remote: State<'_, Remote>) -> Result<()> {
+    remote.pair_cancel().await
+}
+
+/// Forgets the paired phone.
+#[tauri::command]
+pub async fn remote_unpair(remote: State<'_, Remote>) -> Result<()> {
+    remote.unpair().await
+}
+
+/// Turns phone pushes on or off.
+#[tauri::command]
+pub async fn remote_set_push(remote: State<'_, Remote>, on: bool) -> Result<remote::Status> {
+    remote.set_push(on).await
 }
 
 #[tauri::command]

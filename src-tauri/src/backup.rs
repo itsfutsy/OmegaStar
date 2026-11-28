@@ -4,6 +4,7 @@
 
 use crate::model::*;
 use crate::office::RUNNING_MARKER;
+use crate::remote::store as remote;
 use crate::own_skills;
 use crate::store::{BACKUP_STATUS, DB_FILE};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, Timelike};
@@ -195,8 +196,9 @@ fn items(root: &Path, dir: &Path) -> Option<Vec<Item>> {
             continue;
         }
         let Some(name) = entry_name(root, &path) else { continue };
-        // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash.
-        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER) {
+        // The clean-exit marker is always there while OmegaStar runs: restored, it would read as a crash. A restored
+        // phone pairing, or its copy mid-save, would bring a second computer into the same relay room.
+        if dir == root && (DB_FILES.contains(&name.as_str()) || name == RUNNING_MARKER || name == remote::FILE || name == remote::TEMP) {
             continue;
         }
         let meta = e.metadata().ok();
@@ -435,6 +437,9 @@ mod tests {
         big(&ws.join("film.mp4"));
         big(&office.join("runs/r1/transcript.jsonl"));
         put(&office.join(RUNNING_MARKER), "");
+        put(&office.join(remote::FILE), "{}");
+        put(&office.join(remote::TEMP), "{}");
+        put(&office.join("remote.json-notes/keep.md"), "keep me");
         let out = temp_office("bulk-out");
         let snapshot = out.join("snapshot.db");
         put(&snapshot, "db");
@@ -448,9 +453,11 @@ mod tests {
         assert!(names.contains(&"employees/e1/notes.md"), "{names:?}");
         assert!(names.contains(&"employees/e1/film.mp4"), "large files are kept: {names:?}");
         assert!(names.contains(&"runs/r1/transcript.jsonl"), "{names:?}");
+        assert!(names.contains(&"remote.json-notes/keep.md"), "only the pairing's own files are left out: {names:?}");
         for gone in ["node_modules", "Tool.app", "scratch", "env-tools", "Setup.dmg", RUNNING_MARKER] {
             assert!(!names.iter().any(|n| n.contains(gone)), "{gone} left out: {names:?}");
         }
+        assert!(!names.iter().any(|n| [remote::FILE, remote::TEMP].contains(n)), "the pairing is left out: {names:?}");
 
         let _ = fs::remove_dir_all(&office);
         let _ = fs::remove_dir_all(&out);

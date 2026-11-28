@@ -58,6 +58,7 @@ http://localhost:1420/?preview=<state>&theme=<theme>[&sidebar=collapsed][&toasts
 | `notes-gone` | `full`, but the notes files replies name are gone: the reader beside a conversation says so |
 | `live-arrives` | `full`; 3 seconds in, Juniper asks Mae to update the help centre (`help-1`, delegated from `plan-2`), and Mae starts on it: live work arriving |
 | `live-ends` | `full`; everything live finishes in turn (the sub-agent at 2.5 s, `billing-1` at 4 s, `plan-2` at 6.5 s, the runs waiting to start by 8 s), so nothing is live after that |
+| `phone-paired` | `full` with a phone paired and connected (Maren's iPhone). In every other state no phone is paired, and Connect phone shows a code |
 | `star-ask` | `full` with no update waiting and the one-time ask for a GitHub star due: the sidebar's star card (a star button on the rail); either of its buttons answers it, and it goes |
 
 ### Routes
@@ -112,7 +113,7 @@ Thursday 5 November 2026, 2:30 pm Sydney time (en-AU), so two runs pair up as be
 
 Beyond one shot per screen and state, the list covers onboarding pressed with a name
 missing, the re-check passing, "Opening…", the create failing and the hand-off (its fields are found by label);
-Settings' middle sections, the proxy, and a save in progress, saved and failed; the quiet, large, Inbox and live-work
+Settings' middle sections, the proxy, the phone not paired, pairing and paired, and a save in progress, saved and failed; the quiet, large, Inbox and live-work
 states; the sidebar expanded at every size and with the macOS title bar's room; the update's confirm and the rail's
 armed button; the palette finding nothing.
 

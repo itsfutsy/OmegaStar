@@ -44,9 +44,11 @@ if [ -e "$dest" ]; then
 fi
 mkdir -p "$dest"
 
-# Everything, cloned where the disk allows (cp -c on APFS), less the log, the running marker and the database, which
-# is put back as a consistent snapshot read from the source read-only, so a running OmegaStar is never blocked or
-# changed.
+# Everything, cloned where the disk allows (cp -c on APFS), less the log, the running marker, the phone pairing (its
+# key would let whoever holds the copy act as your phone in the release office) and the database, which is put back as
+# a consistent snapshot read from the source read-only, so a running OmegaStar is never blocked or changed. The pairing
+# goes however this script ends, so a copy that fails or is stopped part-way does not keep it either.
+trap 'rm -f "$dest"/remote.json{,.partial}' EXIT
 cp -cR "$src/" "$dest" 2>/dev/null || cp -R "$src/" "$dest"
 rm -f "$dest"/office.db{,-wal,-shm,-journal} "$dest/omega.log" "$dest/omega.running"
 sqlite3 "file:$src/office.db?mode=ro" ".backup '$dest/office.db'"

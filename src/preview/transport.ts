@@ -4,7 +4,7 @@
 import type { Transport } from "../api/client";
 import type {
   AnswerHow, Card, CardReply, CommandName, Commands, Employee, EmployeeView, EventName, Events, HumanRequest, OrgSnapshot,
-  Run, RunEvent, RunKind, TeamStats, Thread,
+  RemoteStatus, Run, RunEvent, RunKind, TeamStats, Thread,
 } from "../api/types";
 import { describeCron } from "../lib/cron";
 import { setMark } from "../lib/marks";
@@ -19,13 +19,14 @@ import {
   onDay, own, quietOffice, review, tool, type World,
 } from "./office";
 import { imageUrl, installTauriShim } from "./pages";
+import pairQr from "./pair-qr.svg";
 
 /** What `?preview=` can be. */
 const STATES = [
   "full", "empty", "first-run", "first-run-no-claude", "first-run-signed-out", "loading", "loading-boot", "error", "error-boot",
   "update-failed", "usage-limit", "rate-limit", "api-key", "proxy-no-key",
   "first-run-recheck", "first-run-opening", "first-run-error", "slow-saves", "failed-saves", "quiet", "large-org", "inbox-more",
-  "live-more", "thread-error", "notes-gone", "live-arrives", "live-ends", "star-ask",
+  "live-more", "thread-error", "notes-gone", "live-arrives", "live-ends", "phone-paired", "star-ask",
 ] as const;
 type State = (typeof STATES)[number];
 
@@ -44,6 +45,8 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const notFound = (message: string) => ({ code: "notFound", message });
 const never = <T>() => new Promise<T>(() => {});
 const DAY = 86_400_000;
+/** No phone paired. */
+const UNPAIRED: RemoteStatus = { state: "off", deviceName: null, pairedAt: null, lastSeenAt: null, pushOn: true, error: null, code: null, activity: [] };
 /** The prompt of a run started with no instruction. Mirrors Rust `DEFAULT_PROMPT`. */
 const DEFAULT_PROMPT = "Work toward your objective. Start from your role skill, pick the most valuable next step, do it, and report.";
 
@@ -110,6 +113,17 @@ export function previewTransport(): Transport {
   const params = new URLSearchParams(location.search);
   const state: State = STATES.find((s) => s === params.get("preview")) ?? "full";
   const w = worldFor(state);
+  let remote: RemoteStatus = state === "phone-paired"
+    ? {
+        state: "session", deviceName: "Maren's iPhone", pairedAt: iso(NOW - 3 * DAY), lastSeenAt: iso(NOW - 2 * 60_000), pushOn: true, error: null, code: null,
+        activity: [
+          { at: iso(NOW - 2 * 60_000), what: "connected" },
+          { at: iso(NOW - 3 * 3_600_000), what: "reply_to_run" },
+          { at: iso(NOW - 3 * 3_600_000 - 40_000), what: "answer_card" },
+          { at: iso(NOW - 3 * 3_600_000 - 90_000), what: "connected" },
+        ],
+      }
+    : UNPAIRED;
   /** In the `star-ask` state, the sidebar's ask for a star on GitHub is due until either of its buttons answers it. */
   let starAsk = state === "star-ask";
 
@@ -764,6 +778,28 @@ export function previewTransport(): Transport {
     },
     pick_backup_dir: () => `${HOME}/Backups/OmegaStar`,
     open_backup_dir: () => null,
+    remote_status: () => remote,
+    remote_pair_start: () => {
+      const code = { qr: pairQr, link: "omegastar://pair?v=1&relay=relay.example.com&room=preview&key=preview", expiresAt: iso(Date.now() + 5 * 60_000) };
+      remote = { ...remote, state: "pairing", code };
+      emit("remote:updated", remote);
+      return code;
+    },
+    remote_pair_cancel: () => {
+      remote = { ...remote, state: remote.deviceName ? "online" : "off", code: null };
+      emit("remote:updated", remote);
+      return null;
+    },
+    remote_unpair: () => {
+      remote = UNPAIRED;
+      emit("remote:updated", remote);
+      return null;
+    },
+    remote_set_push: ({ on }) => {
+      remote = { ...remote, pushOn: on };
+      emit("remote:updated", remote);
+      return remote;
+    },
     usage_limits: () => w.usage,
     refresh_usage: () => {
       w.usage = { ...w.usage, observedAt: iso(Date.now()) };
