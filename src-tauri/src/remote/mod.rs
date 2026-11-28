@@ -657,7 +657,7 @@ impl Actor {
                     let what = if back { "unarchive_runs" } else { &req.cmd };
                     // Only what reads as an id goes in the log, so the phone cannot write lines of its own there.
                     let id = |key: &str| req.args[key].as_str().filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
-                    log!("phone link: the phone sent {what} for {}", id("runId").or(id("proposalId")).unwrap_or("its runs"));
+                    log!("phone link: the phone sent {what} for {}", id("runId").or(id("proposalId")).or(id("employeeId")).unwrap_or("its runs"));
                     self.did(what);
                 }
                 answer
