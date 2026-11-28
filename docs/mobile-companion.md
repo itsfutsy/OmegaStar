@@ -506,7 +506,8 @@ not the owner's shows on the computer.
 (the `team` command; `Office::team` already exists), `member_image` and `card_image`, plus `company_name` for the
 `pair` answer and `approve_proposal_as_proposed` for `approve_proposal`. `card_image` must take the path from the card
 itself, never from the phone. `card_image` and `card_file` read a regular file only, through the one handle they
-checked, opened without waiting so a pipe in its place is refused, and stop at their size limit. Reads run off the link's
+checked, opened without waiting so a pipe in its place is refused, and stop at their size limit. On Mac and Linux a
+link put in the file's place is refused as it opens, not followed. Reads run off the link's
 task, on a blocking thread, and are answered with an error after 10 seconds, so a slow disk never holds up the link.
 
 **The saved pairing** lives in `remote.json` in the office folder:
@@ -522,8 +523,8 @@ task, on a blocking thread, and are answered with an error after 10 seconds, so 
 - Left out of backups, with its temporary `remote.json.partial`, by adding it beside the database files that
   [`backup.rs`](../src-tauri/src/backup.rs) already skips at the top of the office folder. A restored backup must
   not bring a second computer into the same room.
-- Left out of sandbox copies too ([`office-copy.sh`](../scripts/office-copy.sh)). Whoever is given a copy must not
-  be able to act as the phone in the office it was copied from.
+- Left out of sandbox copies too ([`office-copy.sh`](../scripts/office-copy.sh)), one that fails or is stopped
+  part-way included. Whoever is given a copy must not be able to act as the phone in the office it was copied from.
 - Denied to every employee's run, with its temporary file, by deny rules in the run's `settings.json`
   ([`settings.rs`](../src-tauri/src/claude/settings.rs)). The key lets whoever holds it answer as you, so an employee
   must not be able to read it out or swap it.

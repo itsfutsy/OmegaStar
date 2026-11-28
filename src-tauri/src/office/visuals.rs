@@ -44,13 +44,14 @@ pub fn image_mime(path: &Path) -> Option<&'static str> {
 }
 
 /// The file at `path`, read through the one handle that was checked, or `None` when it is over `limit` bytes. It
-/// must be a regular file: opened without waiting, a pipe put in its place is refused rather than read forever.
+/// must be a regular file: opened without waiting, a pipe put in its place is refused rather than read forever. On
+/// Unix a link put in its place is refused as it opens too, not followed to what it points at.
 pub fn read_file(path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
     use std::io::Read;
     let mut opts = OpenOptions::new();
     opts.read(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut opts, libc::O_NONBLOCK);
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut opts, libc::O_NONBLOCK | libc::O_NOFOLLOW);
     let gone = || AppError::not_found(format!("Nothing is at {} any more.", path.display()));
     let file = opts.open(path).map_err(|_| gone())?;
     if !file.metadata()?.is_file() {
@@ -175,6 +176,18 @@ mod tests {
         assert!(out.contains(&format!("url({data})")), "{out}");
         assert!(out.contains("gone.png\"") && out.contains("https://example.com/a.png"), "a missing or remote image stays: {out}");
         assert!(out.ends_with("<p>Don't (touch) this.</p>"), "{out}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_not_read_as_the_file_it_points_at() {
+        let dir = crate::fixtures::temp_dir("visuals-link");
+        fs::write(dir.join("real.md"), "private").unwrap();
+        std::os::unix::fs::symlink(dir.join("real.md"), dir.join("link.md")).unwrap();
+        let (real, link) = (read_file(&dir.join("real.md"), 10), read_file(&dir.join("link.md"), 10));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(real.unwrap(), Some(b"private".to_vec()));
+        assert!(link.unwrap_err().message.starts_with("Nothing is at"));
     }
 
     #[test]
